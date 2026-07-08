@@ -281,6 +281,170 @@ def gui_receive_and_plot():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
+def receive_ifc_sweep(
+    bind_ip="0.0.0.0",
+    port=6666,
+    expected_packets=8,
+    packet_size=512,
+    timeout=15.0,
+    reconstruct=True,
+):
+    ifc_values = ["2.04", "1.93", "1.81", "1.70", "1.59", "1.47", "1.36"]
+
+    sweep_dir = SAVE_DIR / f"ifc_sweep_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    saved_files = []
+
+    for index, ifc in enumerate(ifc_values, start=1):
+        print(f"\nWaiting for sweep frame {index}/7, IFC = {ifc} Vpp")
+
+        csv_file = receive_adc_data(
+            bind_ip=bind_ip,
+            port=port,
+            expected_packets=expected_packets,
+            packet_size=packet_size,
+            timeout=timeout,
+        )
+
+        if csv_file is None:
+            results.append({
+                "index": index,
+                "ifc_vpp": ifc,
+                "mean_error": None,
+                "mean": None,
+                "min": None,
+                "max": None,
+                "peak": None,
+                "rms": None,
+                "csv_file": "TIMEOUT",
+            })
+            continue
+
+        raw = pd.read_csv(csv_file)["byte"].to_numpy(dtype=np.uint8)
+
+        samples = raw.view("<i2")
+        samples = (samples >> 2).astype(np.int16)
+        samples = samples[:-8]
+
+        if reconstruct:
+            words = samples.reshape(-1, 8)
+
+            pos = words[:, :4].reshape(-1)
+            neg = (-words[:, 4:]).reshape(-1)
+
+            adc = np.empty(pos.size + neg.size, dtype=np.int32)
+            adc[0::2] = pos
+            adc[1::2] = neg
+        else:
+            adc = samples.astype(np.int32)
+
+        mean_val = float(np.mean(adc))
+        mean_error = mean_val          # target mean is 0
+        min_val = int(np.min(adc))
+        max_val = int(np.max(adc))
+        peak_val = float((max_val - min_val) / 2)
+        rms_val = float(np.sqrt(np.mean(adc.astype(float) ** 2)))
+
+        out_csv = sweep_dir / f"sweep_{index:02d}_ifc_{ifc.replace('.', 'p')}_vpp.csv"
+
+        pd.DataFrame({
+            "sample_index": np.arange(len(adc)),
+            "adc_code": adc,
+            "ifc_vpp": ifc,
+            "sweep_index": index,
+        }).to_csv(out_csv, index=False)
+
+        saved_files.append(out_csv)
+
+        results.append({
+            "index": index,
+            "ifc_vpp": ifc,
+            "mean_error": mean_error,
+            "mean": mean_val,
+            "min": min_val,
+            "max": max_val,
+            "peak": peak_val,
+            "rms": rms_val,
+            "csv_file": str(out_csv),
+        })
+
+        # remove temporary raw byte csv created by receive_adc_data()
+        try:
+            Path(csv_file).unlink()
+        except Exception:
+            pass
+
+    summary_df = pd.DataFrame(results)
+    summary_file = sweep_dir / "ifc_sweep_summary.csv"
+    summary_df.to_csv(summary_file, index=False)
+
+    print("\nIFC Sweep Summary")
+    print(summary_df.to_string(index=False))
+
+    print(f"\nSweep folder: {sweep_dir}")
+    print(f"Summary file: {summary_file}")
+
+    return sweep_dir, summary_file, summary_df, saved_files
+
+def gui_receive_ifc_sweep():
+    try:
+        sweep_dir, summary_file, summary_df, saved_files = receive_ifc_sweep(
+            expected_packets=8,
+            packet_size=512,
+            timeout=15.0,
+        )
+
+        top = tk.Toplevel(root)
+        top.title("IFC Sweep Summary")
+        top.geometry("900x360")
+
+        text = tk.Text(top, wrap="none", font=("Consolas", 10))
+        text.pack(fill="both", expand=True)
+
+        text.insert("end", "IFC Sweep Summary\n")
+        text.insert("end", "=" * 80 + "\n")
+        text.insert("end", summary_df.to_string(index=False))
+        text.insert("end", "\n\n")
+        text.insert("end", f"Sweep folder:\n{sweep_dir}\n\n")
+        text.insert("end", f"Summary file:\n{summary_file}\n")
+
+        def ask_plot():
+            answer = messagebox.askyesno(
+                "Plot Sweep Result",
+                "Do you want to plot one of the sweep CSV files?"
+            )
+
+            if not answer:
+                return
+
+            csv_file = filedialog.askopenfilename(
+                initialdir=sweep_dir,
+                title="Select one sweep CSV file to plot",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+
+            if csv_file:
+                df = pd.read_csv(csv_file)
+
+                fig, ax = plt.subplots(figsize=(12, 5))
+                ax.plot(df["sample_index"], df["adc_code"], lw=0.8)
+                ax.grid(True)
+                ax.set_xlabel("Sample")
+                ax.set_ylabel("ADC Code")
+                ax.set_title(Path(csv_file).name)
+                plt.show()
+
+        btn_plot_one = tk.Button(
+            top,
+            text="Plot One Sweep CSV",
+            command=ask_plot,
+        )
+        btn_plot_one.pack(pady=8)
+
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
 
 PROJECT_DIR = Path(r"C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl")
 SAVE_DIR = PROJECT_DIR / "adc_data"
@@ -302,7 +466,9 @@ btn_plot.pack(pady=8)
 btn_both = tk.Button(root, text="Receive + Plot", width=25, command=gui_receive_and_plot)
 btn_both.pack(pady=8)
 
+btn_sweep = tk.Button(root, text="Receive IFC Sweep", width=25, command=gui_receive_ifc_sweep)
+btn_sweep.pack(pady=8)
+
 btn_exit = tk.Button(root, text="Exit", width=25, command=root.destroy)
 btn_exit.pack(pady=8)
-
 root.mainloop()

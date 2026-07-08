@@ -27,8 +27,12 @@ extern XAxiDma dma_inst;
 extern u8 *RxBufferPtr;
 
 extern uint8_t uart_send_flag; //Send flag enabled by the uart
+volatile uint8_t adc_sweep_active = 0;
 
 #define ERR(fmt, ...) xil_printf("Command Error: " fmt "\r\n", ##__VA_ARGS__)
+
+static int adc_capture_frame(void);
+static void adc_ifc_sweep(void);
 
 static int next_tok(char **ctx, char *out, size_t len) {
     char *t = strtok(NULL, " ");
@@ -118,6 +122,11 @@ void handle_dma_cmd(char* line) {
 
     if (strcmp(option, "-w") == 0) {
         xil_printf("Starting DMA capture of %d bytes...\r\n", DMA_CMD_BUF_SIZE);
+        if (adc_sweep_active)
+        {
+            ERR("DMA commands are disabled while an ADC sweep is in progress.");
+            return;
+        }
         Xil_DCacheFlushRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
         int res =XAxiDma_SimpleTransfer(&dma_inst, (UINTPTR) RxBufferPtr,
                         DMA_CMD_BUF_SIZE, XAXIDMA_DEVICE_TO_DMA);
@@ -139,6 +148,11 @@ void handle_dma_cmd(char* line) {
         xil_printf("dma -w complete.\r\n");
     } else if (strcmp(option, "-r") == 0) {
             Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+        if (adc_sweep_active)
+        {
+            ERR("DMA commands are disabled while an ADC sweep is in progress.");
+            return;
+        }
         xil_printf("Reading back %d bytes:\r\n", DMA_CMD_BUF_SIZE);
         for (uint32_t i = 0; i < DMA_CMD_BUF_SIZE; i+=16) {
             xil_printf("@0x%02X = 0x%02X ", i, RxBufferPtr[i]);
@@ -146,9 +160,19 @@ void handle_dma_cmd(char* line) {
         }
         xil_printf("\r\n");
     } else if (strcmp(option, "-d") == 0) {
+        if (adc_sweep_active)
+        {
+            ERR("DMA commands are disabled while an ADC sweep is in progress.");
+            return;
+        }
         XAxiDma_Reset(&dma_inst);
         xil_printf("reset completed!\r\n");
     } else if (strcmp(option, "-c") == 0) {
+        if (adc_sweep_active)
+        {
+            ERR("DMA commands are disabled while an ADC sweep is in progress.");
+            return;
+        }
         XAxiDma_Resume(&dma_inst);
         xil_printf("resume completed!\r\n");
     } else { ERR("Invalid option \"%s\" (use -r or -w or -d)", option); }
@@ -191,8 +215,14 @@ void handle_dma_dbg_cmd(char* line) {
     } else { ERR("Invalid option \"%s\" (use -r or -w)", option); }
 } 
 
-void handle_udp_cmd(char* line)
+void handle_udp_cmd(char *line)
 {
+    if (adc_sweep_active)
+    {
+        ERR("UDP transmission is disabled while an ADC sweep is in progress.");
+        return;
+    }
+
     uart_send_flag = 1;
 }
 
@@ -366,6 +396,7 @@ void handle_adc_gain_cmd(void)
                     xil_printf("  status      Check current input full-scale status\r\n");
                     xil_printf("  back        Back to gain mode selection\r\n");
                     xil_printf("  quit        Quit gain setting menu\r\n");
+                    xil_printf("  sweep       Sweep all supported IFC values\r\n");
                 }
 
                 else if (strcmp(token, "status") == 0)
@@ -385,6 +416,11 @@ void handle_adc_gain_cmd(void)
                     {
                         ad9695_set_input_full_scale(token);
                     }
+                } 
+                
+                else if (strcmp(token, "sweep") == 0)
+                {
+                    adc_ifc_sweep();
                 }
 
                 else
@@ -496,4 +532,92 @@ void handle_adc_offset_cmd(void)
             xil_printf("Invalid offset command. Use on, off, status, help, or back.\r\n");
         }
     }
+}
+
+static int adc_capture_frame(void)
+{
+    int res;
+
+    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+
+    res = XAxiDma_SimpleTransfer(&dma_inst,
+                                 (UINTPTR)RxBufferPtr,
+                                 DMA_CMD_BUF_SIZE,
+                                 XAXIDMA_DEVICE_TO_DMA);
+
+    if (res != XST_SUCCESS)
+    {
+        ERR("DMA transfer failed.");
+        return XST_FAILURE;
+    }
+
+    u32 timeout = 100000;
+
+    while (XAxiDma_Busy(&dma_inst, XAXIDMA_DEVICE_TO_DMA))
+    {
+        if (--timeout == 0)
+        {
+            ERR("DMA timeout.");
+            return XST_FAILURE;
+        }
+
+        usleep(1);
+    }
+
+    Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+
+    return XST_SUCCESS;
+}
+
+static void adc_ifc_sweep(void)
+{
+    adc_sweep_active = 1;
+    static const char *ifc[] =
+    {
+        "2.04",
+        "1.93",
+        "1.81",
+        "1.70",
+        "1.59",
+        "1.47",
+        "1.36"
+    };
+
+    xil_printf("\r\n===============================\r\n");
+    xil_printf("Starting  Input Full-Scale Sweep\r\n");
+    xil_printf("===============================\r\n");
+
+    for (int i = 0; i < 7; i++)
+    {
+        xil_printf("----------------------------------\r\n");
+        xil_printf("Step %d of %d\r\n", i + 1, 7);
+        xil_printf("Input Full-Scale : %s Vpp\r\n", ifc[i]);
+
+        ad9695_set_input_full_scale(ifc[i]);
+
+        usleep(100000);
+
+        if (adc_capture_frame() != XST_SUCCESS)
+        {
+            xil_printf("Capture failed.\r\n");
+            continue;
+        }
+
+        xil_printf("Transmitting frame...\r\n");
+
+        uart_send_flag = 1;
+
+        while (uart_send_flag)
+        {
+            usleep(1000);
+        }
+
+        xil_printf("Transmission complete.\r\n");
+    }
+    
+    adc_sweep_active = 0;
+    xil_printf("\r\n=================================\r\n");
+    xil_printf("IFC sweep completed successfully.\r\n");
+    xil_printf("=================================\r\n");
+
 }

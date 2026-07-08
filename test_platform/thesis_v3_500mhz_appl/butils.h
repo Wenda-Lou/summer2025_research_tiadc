@@ -54,6 +54,7 @@
 #define CONSOLE_CMDS_H
 
 #include <stdint.h>
+extern volatile uint8_t adc_sweep_active;
 
 /* Top‑level dispatcher */
 void handle_cmd(char *line);
@@ -67,5 +68,6 @@ void handle_dma_dbg_cmd(char *line);
 void handle_mem_cmd (char *line);
 void handle_adc_gain_cmd(void);
 void handle_adc_offset_cmd(void);
+
 
 #endif /* CONSOLE_CMDS_H */
