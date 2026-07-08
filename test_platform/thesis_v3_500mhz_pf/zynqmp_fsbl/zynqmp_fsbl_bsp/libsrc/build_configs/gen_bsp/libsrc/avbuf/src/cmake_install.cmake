@@ -1,4 +1,4 @@
-# Install script for directory: D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/avbuf/src
+# Install script for directory: C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/avbuf/src
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -34,6 +34,6 @@ endif()
 
 # Set default install directory permissions.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
 endif()
 

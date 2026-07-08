@@ -283,8 +283,11 @@
 #define AD9695_JESD_CF(x) (((x)&0x1F) << 0)
 
 // DC offset calibration enable
-#define AD9695_DC_OFFSET_CAL_CTRL 0x0701
-#define AD9695_DC_OFFSET_CAL_EN SET_BIT(7)
+#define AD9695_DC_OFFSET_CAL_CTRL      0x0701
+#define AD9695_DC_OFFSET_CAL_EN        SET_BIT(7)
+
+#define AD9695_DC_OFFSET_CAL_CTRL2     0x073B
+#define AD9695_DC_OFFSET_CAL_MODE_DIS  SET_BIT(7)
 
 // VREF external select
 #define AD9695_VREF_CTRL_REG 0x18A6

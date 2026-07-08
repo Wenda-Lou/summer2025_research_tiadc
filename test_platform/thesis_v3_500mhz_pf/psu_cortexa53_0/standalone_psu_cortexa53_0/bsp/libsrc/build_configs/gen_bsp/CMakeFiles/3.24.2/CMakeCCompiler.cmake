@@ -1,4 +1,4 @@
-set(CMAKE_C_COMPILER "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-gcc.exe")
+set(CMAKE_C_COMPILER "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-gcc.exe")
 set(CMAKE_C_COMPILER_ARG1 "")
 set(CMAKE_C_COMPILER_ID "GNU")
 set(CMAKE_C_COMPILER_VERSION "13.3.0")
@@ -18,15 +18,15 @@ set(CMAKE_C_SIMULATE_ID "")
 set(CMAKE_C_COMPILER_FRONTEND_VARIANT "")
 set(CMAKE_C_SIMULATE_VERSION "")
 
-set(CMAKE_C_COMPILER_SYSROOT "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin//../aarch64-xilinx-elf/usr")
-set(CMAKE_COMPILER_SYSROOT "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin//../aarch64-xilinx-elf/usr")
+set(CMAKE_C_COMPILER_SYSROOT "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin//../aarch64-xilinx-elf/usr")
+set(CMAKE_COMPILER_SYSROOT "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin//../aarch64-xilinx-elf/usr")
 
 
 set(CMAKE_AR "aarch64-none-elf-ar")
-set(CMAKE_C_COMPILER_AR "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-gcc-ar.exe")
-set(CMAKE_RANLIB "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-ranlib.exe")
-set(CMAKE_C_COMPILER_RANLIB "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-gcc-ranlib.exe")
-set(CMAKE_LINKER "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-ld.exe")
+set(CMAKE_C_COMPILER_AR "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-gcc-ar.exe")
+set(CMAKE_RANLIB "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-ranlib.exe")
+set(CMAKE_C_COMPILER_RANLIB "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-gcc-ranlib.exe")
+set(CMAKE_LINKER "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-ld.exe")
 set(CMAKE_MT "")
 set(CMAKE_COMPILER_IS_GNUCC 1)
 set(CMAKE_C_COMPILER_LOADED 1)
@@ -67,7 +67,7 @@ endif()
 
 
 
-set(CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES "D:/vitis/us+/thesis_v3_500mhz_pf/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/include;D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf/13.3.0/include;D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf/13.3.0/include-fixed;D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/aarch64-xilinx-elf/usr/include")
+set(CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES "C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/include;C:/AMD/2025.1/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf/13.3.0/include;C:/AMD/2025.1/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf/13.3.0/include-fixed;C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/aarch64-xilinx-elf/usr/include")
 set(CMAKE_C_IMPLICIT_LINK_LIBRARIES "gcc;c;gcc")
-set(CMAKE_C_IMPLICIT_LINK_DIRECTORIES "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf/13.3.0;D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc;D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/aarch64-xilinx-elf/usr/lib64/aarch64-xilinx-elf/13.3.0;D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/aarch64-xilinx-elf/usr/lib64")
+set(CMAKE_C_IMPLICIT_LINK_DIRECTORIES "C:/AMD/2025.1/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc/aarch64-xilinx-elf/13.3.0;C:/AMD/2025.1/gnu/aarch64/nt/aarch64-none/x86_64-oesdk-mingw32/usr/lib/aarch64-xilinx-elf/gcc;C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/aarch64-xilinx-elf/usr/lib64/aarch64-xilinx-elf/13.3.0;C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/aarch64-xilinx-elf/usr/lib64")
 set(CMAKE_C_IMPLICIT_LINK_FRAMEWORK_DIRECTORIES "")

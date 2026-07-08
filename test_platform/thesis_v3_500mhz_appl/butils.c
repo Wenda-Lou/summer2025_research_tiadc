@@ -18,6 +18,10 @@
 #include "sleep.h"
 #include "ad9695_registers.h"
 
+#include "xil_cache.h"
+#include "xuartps.h"
+
+extern XUartPs uart_inst;
 extern XSpiPs spi_inst;
 extern XAxiDma dma_inst;
 extern u8 *RxBufferPtr;
@@ -119,7 +123,7 @@ void handle_dma_cmd(char* line) {
                         DMA_CMD_BUF_SIZE, XAXIDMA_DEVICE_TO_DMA);
 
         if (res != XST_SUCCESS) { ERR("XAxiDma_SimpleTransfer failed. Error Code: %d.", res); return; }
-        u32 timeout = 1000;
+        u32 timeout = 100000;
         int busy;
         do {
             busy = XAxiDma_Busy(&dma_inst, XAXIDMA_DEVICE_TO_DMA);
@@ -128,9 +132,13 @@ void handle_dma_cmd(char* line) {
             usleep(1);
         }while(timeout > 0);
         if (busy) { xil_printf("DMA was still busy and timed out.\r\n"); }
-        else { xil_printf("DMA Finished Successfully.\r\n"); }
+        else { 
+            xil_printf("DMA Finished Successfully.\r\n"); 
+            Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+        }
         xil_printf("dma -w complete.\r\n");
     } else if (strcmp(option, "-r") == 0) {
+            Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
         xil_printf("Reading back %d bytes:\r\n", DMA_CMD_BUF_SIZE);
         for (uint32_t i = 0; i < DMA_CMD_BUF_SIZE; i+=16) {
             xil_printf("@0x%02X = 0x%02X ", i, RxBufferPtr[i]);
@@ -191,7 +199,7 @@ void handle_udp_cmd(char* line)
 void handle_adc_cmd(char* line)
 {
     char copy[MAX_UART_LINE_LENGTH];
-    char option[4];
+    char option[16];
 
     strncpy(copy, line, sizeof(copy) - 1);
     copy[sizeof(copy) - 1] = '\0';
@@ -215,9 +223,31 @@ void handle_adc_cmd(char* line)
 
         xil_printf("ad9695 PLL %s\r\n", (pll_stat & AD9695_JESD_PLL_LOCK_STAT) ? "LOCKED" : "UNLOCKED");
         jesdphy_check_pll_status(&pll_stat);
-    }
-    else {ERR("Invalid option \"%s\" (use -c)", option);}
+    } else if (strcmp(token, "?") == 0 || strcmp(token, "status") == 0){
+        uint8_t r701, r73b;
 
+        ad9695_read_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL, &r701);
+        ad9695_read_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL2, &r73b);
+
+        if ((r701 & AD9695_DC_OFFSET_CAL_EN) && ((r73b & AD9695_DC_OFFSET_CAL_EN) == 0))
+        {
+            xil_printf("DC offset calibration: ON\r\n");
+        }
+        else
+        {
+            xil_printf("DC offset calibration: OFF\r\n");
+        }
+
+        xil_printf("0x0701 = 0x%02X\r\n", r701);
+        xil_printf("0x073B = 0x%02X\r\n", r73b);
+    } else if (strcmp(option, "-gain") == 0) {
+        
+        handle_adc_gain_cmd();
+
+    } else if (strcmp(option, "-offset") == 0)
+    {
+        handle_adc_offset_cmd();
+    } else {ERR("Invalid option \"%s\" (use -c or -offset)", option);}
 }
 
 typedef void (*cmd_fn)(char *line);
@@ -245,4 +275,225 @@ void handle_cmd(char *line) {
         if (!strcmp(cmd, cmd_table[i].name)) { cmd_table[i].fn(line); return; }
     }
     xil_printf("Invalid command type: %s\r\n", cmd);
+}
+
+void handle_adc_gain_cmd(void)
+{
+    char line[MAX_UART_LINE_LENGTH];
+    char copy[MAX_UART_LINE_LENGTH];
+    char *token;
+
+    xil_printf("\r\nEntering ADC Gain setting menu\r\n");
+    xil_printf("Available commands:\r\n");
+    xil_printf("  IFC   Input full-scale mode\r\n");
+    xil_printf("  DDC   Digital downconverter gain mode, not for full-bandwidth capture\r\n");
+    xil_printf("  help  Print this menu\r\n");
+    xil_printf("  back  Quit gain setting menu\r\n");
+
+    while (1)
+    {
+        xil_printf("gain-cmd$: ");
+        uart_get_line(line);
+
+        strncpy(copy, line, sizeof(copy) - 1);
+        copy[sizeof(copy) - 1] = '\0';
+
+        token = strtok(copy, " ");
+
+        if (!token)
+            continue;
+
+        if (strcmp(token, "back") == 0 || strcmp(token, "quit") == 0 || strcmp(token, "exit") == 0)
+        {
+            xil_printf("Leaving ADC Gain setting menu.\r\n");
+            return;
+        }
+
+        else if (strcmp(token, "help") == 0 || strcmp(token, "?") == 0)
+        {
+            xil_printf("\r\nADC Gain setting menu\r\n");
+            xil_printf("Available commands:\r\n");
+            xil_printf("  IFC   Input full-scale mode\r\n");
+            xil_printf("  DDC   Digital downconverter gain mode, not used for current full-bandwidth capture\r\n");
+            xil_printf("  back  Quit gain setting menu\r\n");
+        }
+
+        else if (strcmp(token, "IFC") == 0 || strcmp(token, "ifc") == 0)
+        {
+            xil_printf("\r\nGain setting IFC mode\r\n");
+            xil_printf("Input full-scale control changes ADC sensitivity using register 0x1910.\r\n");
+            xil_printf("Smaller full-scale voltage gives larger digital sample amplitude.\r\n");
+            xil_printf("\r\nAvailable commands:\r\n");
+            xil_printf("  set <num>   Set input full-scale value\r\n");
+            xil_printf("              Range: 1.36 largest amplitude  -->  2.04 smallest amplitude\r\n");
+            xil_printf("              Valid values: 1.36, 1.47, 1.59, 1.70, 1.81, 1.93, 2.04\r\n");
+            xil_printf("  status      Check current input full-scale status\r\n");
+            xil_printf("  back        Back to gain mode selection\r\n");
+            xil_printf("  quit        Quit gain setting menu\r\n");
+
+            while (1)
+            {
+                xil_printf("gain-ifc$: ");
+                uart_get_line(line);
+
+                strncpy(copy, line, sizeof(copy) - 1);
+                copy[sizeof(copy) - 1] = '\0';
+
+                token = strtok(copy, " ");
+
+                if (!token)
+                    continue;
+
+                if (strcmp(token, "back") == 0 || strcmp(token, "exit") == 0)
+                {
+                    xil_printf("Back to gain mode selection.\r\n");
+                    break;
+                }
+
+                else if (strcmp(token, "quit") == 0)
+                {
+                    xil_printf("Leaving ADC Gain setting menu.\r\n");
+                    return;
+                }
+
+                else if (strcmp(token, "help") == 0 || strcmp(token, "?") == 0)
+                {
+                    xil_printf("\r\nGain setting IFC mode\r\n");
+                    xil_printf("Available commands:\r\n");
+                    xil_printf("  set <num>   Set input full-scale value\r\n");
+                    xil_printf("              Range: 1.36 largest amplitude  -->  2.04 smallest amplitude\r\n");
+                    xil_printf("              Valid values: 1.36, 1.47, 1.59, 1.70, 1.81, 1.93, 2.04\r\n");
+                    xil_printf("  status      Check current input full-scale status\r\n");
+                    xil_printf("  back        Back to gain mode selection\r\n");
+                    xil_printf("  quit        Quit gain setting menu\r\n");
+                }
+
+                else if (strcmp(token, "status") == 0)
+                {
+                    ad9695_print_input_full_scale_status();
+                }
+
+                else if (strcmp(token, "set") == 0)
+                {
+                    token = strtok(NULL, " ");
+
+                    if (!token)
+                    {
+                        xil_printf("Missing value. Example: set 1.59\r\n");
+                    }
+                    else
+                    {
+                        ad9695_set_input_full_scale(token);
+                    }
+                }
+
+                else
+                {
+                    xil_printf("Invalid IFC command. Use set <num>, status, back, quit, or help.\r\n");
+                }
+            }
+        }
+
+        else if (strcmp(token, "DDC") == 0 || strcmp(token, "ddc") == 0)
+        {
+            xil_printf("\r\nGain setting DDC mode\r\n");
+            xil_printf("DDC gain controls digital downconverter gain.\r\n");
+            xil_printf("It is not used for the current full-bandwidth ADC capture path.\r\n");
+            xil_printf("Use IFC mode for now.\r\n");
+        }
+
+        else
+        {
+            xil_printf("Invalid gain command. Use IFC, DDC, back, or help.\r\n");
+        }
+    }
+}
+
+void handle_adc_offset_cmd(void)
+{
+    char line[MAX_UART_LINE_LENGTH];
+    char copy[MAX_UART_LINE_LENGTH];
+    char *token;
+
+    xil_printf("\r\nEntering ADC DC Offset Calibration menu\r\n");
+    xil_printf("DC offset calibration removes the average DC bias from the ADC output.\r\n");
+    xil_printf("Correction range is approximately +/-512 ADC codes.\r\n");
+    xil_printf("\r\nAvailable commands:\r\n");
+    xil_printf("  on        Enable DC offset calibration\r\n");
+    xil_printf("  off       Disable DC offset calibration\r\n");
+    xil_printf("  status    Check current calibration status\r\n");
+    xil_printf("  help      Print this menu\r\n");
+    xil_printf("  back      Return to UART command prompt\r\n");
+
+    while (1)
+    {
+        xil_printf("offset-cmd$: ");
+        uart_get_line(line);
+
+        strncpy(copy, line, sizeof(copy) - 1);
+        copy[sizeof(copy) - 1] = '\0';
+
+        token = strtok(copy, " ");
+
+        if (!token)
+            continue;
+
+        if (strcmp(token, "back") == 0 || strcmp(token, "exit") == 0)
+        {
+            xil_printf("Leaving ADC DC Offset Calibration menu.\r\n");
+            return;
+        }
+
+        else if (strcmp(token, "help") == 0 || strcmp(token, "?") == 0)
+        {
+            xil_printf("\r\nADC DC Offset Calibration menu\r\n");
+            xil_printf("Available commands:\r\n");
+            xil_printf("  on        Enable DC offset calibration\r\n");
+            xil_printf("  off       Disable DC offset calibration\r\n");
+            xil_printf("  status    Check current calibration status\r\n");
+            xil_printf("  help      Print this menu\r\n");
+            xil_printf("  back      Return to UART command prompt\r\n");
+        }
+
+        else if (strcmp(token, "on") == 0)
+        {
+            ad9695_adc_set_dc_offset_filt_en(1);
+            xil_printf("DC offset calibration enabled.\r\n");
+        }
+
+        else if (strcmp(token, "off") == 0)
+        {
+            ad9695_adc_set_dc_offset_filt_en(0);
+            xil_printf("DC offset calibration disabled.\r\n");
+        }
+
+        else if (strcmp(token, "status") == 0)
+        {
+            uint8_t r701;
+            uint8_t r73b;
+
+            ad9695_read_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL, &r701);
+            ad9695_read_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL2, &r73b);
+
+            xil_printf("\r\nDC Offset Calibration Status\r\n");
+
+            if ((r701 & AD9695_DC_OFFSET_CAL_EN) &&
+                ((r73b & AD9695_DC_OFFSET_CAL_EN) == 0))
+            {
+                xil_printf("Status           : ON\r\n");
+            }
+            else
+            {
+                xil_printf("Status           : OFF\r\n");
+            }
+
+            xil_printf("Register 0x0701  : 0x%02X\r\n", r701);
+            xil_printf("Register 0x073B  : 0x%02X\r\n", r73b);
+        }
+
+        else
+        {
+            xil_printf("Invalid offset command. Use on, off, status, help, or back.\r\n");
+        }
+    }
 }

@@ -57,6 +57,9 @@ typedef enum {
 	AD9695_ADC_SCALE_1P93_VPP	/**< 1.93 Vpp Differential*/
 } ad9695_adc_scale_range_t;
 
+#define AD9695_INPUT_FULL_SCALE_CTRL   0x1910
+#define AD9695_INPUT_FS_MASK           0x0F
+
 /** Enumerates ADC Input Buffer Currents */
 typedef enum {
 	AD9695_ADC_BUFF_CURR_400_UA = 0x4,   /**< Buffer Current set to 400 uA*/

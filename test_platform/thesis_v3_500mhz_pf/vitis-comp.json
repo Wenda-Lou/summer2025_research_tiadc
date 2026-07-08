@@ -20,6 +20,7 @@
       "psu_cortexr5_1": "psu_cortexr5",
       "psu_pmu_0": "psu_pmu"
     },
+    "supportedOS": [],
     "supportedFamily": "zynquplus",
     "stdGenHookList": [
       {
@@ -67,5 +68,6 @@
       }
     ],
     "emptyToolchainConfiguration": []
-  }
+  },
+  "useSysrootToolchain": false
 }

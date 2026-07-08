@@ -30,7 +30,7 @@ struct netif server_netif;
 struct udp_pcb *udp_pcb_block;
 
 extern uint8_t uart_send_flag; //Send flag enabled by the uart
-extern uint8_t* dma_rx_base_ptr;
+extern uint8_t* RxBufferPtr;
 
 /* -------------------------------------------------------------------------------- */
 /*  UDP receive callback: Output the receive parameters using uart                  */
@@ -119,10 +119,10 @@ int lwIP_UDP_init()
 //Loading the payload with 1024 byte from the memory and send to the client 
 void udp_send_mem()
 {   
-    for (int i = 0; i < NUM_OF_TX; i++){\
+    for (int i = 0; i < NUM_OF_TX; i++){
         //xil_printf("UDP sending Package #%d\r\n", i + 1);
          //Reallocate a new Packet buffer so that we do not accidentally change the data packet that is already inside the data frame
-        struct pbuf *temp_packetBuffer = pbuf_alloc(PBUF_TRANSPORT, 1024, PBUF_RAM); //Reallocate a pbuf of 1024 bytes 
+        struct pbuf *temp_packetBuffer = pbuf_alloc(PBUF_TRANSPORT, 512, PBUF_RAM); //Reallocate a pbuf of 512 bytes 
 
         if(!temp_packetBuffer){
             xil_printf("pbuf allocate failed\r\n");
@@ -131,8 +131,8 @@ void udp_send_mem()
 
 
         //Fill Pbuf payload with contend from the memory 
-        //memcpy(temp_packetBuffer->payload, dma_rx_base_ptr + 1024 * i, 1024);
-        memcpy(temp_packetBuffer->payload, dma_rx_base_ptr, 512);
+        memcpy(temp_packetBuffer->payload, RxBufferPtr + 512 * i, 512);
+        //memcpy(temp_packetBuffer->payload, RxBufferPtr, 512);
 
         //sending payload to the client
         if(udp_sendto(udp_pcb_block, temp_packetBuffer, &user_ip, SERVER_PORT) == ERR_OK){

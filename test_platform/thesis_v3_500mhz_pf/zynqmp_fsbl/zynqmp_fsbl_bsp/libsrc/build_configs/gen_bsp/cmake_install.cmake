@@ -1,4 +1,4 @@
-# Install script for directory: D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp
+# Install script for directory: C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -34,37 +34,37 @@ endif()
 
 # Set default install directory permissions.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "D:/Xilinx/Vitis/2024.2/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/cmake_install.cmake")
+  include("C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/cmake_install.cmake")
+  include("C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/standalone/src/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/cmake_install.cmake")
+  include("C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xiltimer/src/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xilffs/src/cmake_install.cmake")
+  include("C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xilffs/src/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xilsecure/src/cmake_install.cmake")
+  include("C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xilsecure/src/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xilpm/src/cmake_install.cmake")
+  include("C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/xilpm/src/cmake_install.cmake")
 endif()
 
 if(CMAKE_INSTALL_COMPONENT)
@@ -75,5 +75,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "D:/vitis/us+/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "C:/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_pf/zynqmp_fsbl/zynqmp_fsbl_bsp/libsrc/build_configs/gen_bsp/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

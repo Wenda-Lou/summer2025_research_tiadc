@@ -32,9 +32,9 @@
 #define USR_IP_ADDR2    1
 #define USR_IP_ADDR3    100
 
-#define NUM_OF_TX 32 //32 k byte
+#define NUM_OF_TX 8 //32 k byte
 
-#define SERVER_PORT 5002 //For netAssist -> 5001 For python script -> 5002
+#define SERVER_PORT 6666 //For netAssist -> 5001 For python script -> 5002
 
 extern struct netif server_netif; //Make it can be seen by other .c files
 

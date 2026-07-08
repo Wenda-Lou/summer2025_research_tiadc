@@ -1,63 +1,71 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "type": "tcf-debug",
-      "request": "launch",
-      "name": "thesis_v3_500mhz_appl_app_hw_1",
-      "debugType": "baremetal-zu",
-      "attachToRunningTargetOptions": {
-        "targetSetupMode": "standalone",
-        "executeScript": true,
-        "scriptPath": ""
-      },
-      "autoAttachProcessChildren": false,
-      "target": {
-        "targetConnectionId": "Local",
-        "peersIniPath": "../../_ide/.peers.ini",
-        "context": "ZUPlus"
-      },
-      "pathMap": [],
-      "targetSetup": {
-        "resetSystem": true,
-        "programDevice": true,
-        "enableRPUSplitMode": false,
-        "resetAPU": false,
-        "resetRPU": false,
-        "bitstreamFile": "${workspaceFolder}\\thesis_v3_500mhz_appl\\_ide\\bitstream\\thesis_v3_500mhz_pf.bit",
-        "zuInitialization": {
-          "isFsbl": true,
-          "usingFSBL": {
-            "initWithFSBL": true,
-            "fsblFile": "${workspaceFolder}\\thesis_v3_500mhz_pf\\export\\thesis_v3_500mhz_pf\\sw\\boot\\fsbl.elf",
-            "fsblExitSymbol": "XFsbl_Exit"
-          },
-          "usingPsuInit": {
-            "runPsuInit": true,
-            "plPowerup": false,
-            "psuInitTclFile": "${workspaceFolder}\\thesis_v3_500mhz_appl\\_ide\\psinit\\psu_init.tcl"
-          }
-        },
-        "zuTraceOptions": {
-          "isSelected": false,
-          "scratchAddress": "0x60000",
-          "scratchSize": "0x60000",
-          "traceOutputPath": ""
-        },
-        "downloadElf": [
-          {
-            "core": "psu_cortexa53_0",
-            "resetProcessor": true,
-            "elfFile": "${workspaceFolder}\\thesis_v3_500mhz_appl\\build\\thesis_v3_500mhz_appl.elf",
-            "stopAtEntry": false
-          }
-        ],
-        "crossTriggerBreakpoints": {
-          "isSelected": false,
-          "breakpoints": []
-        }
-      },
-      "internalConsoleOptions": "openOnSessionStart"
-    }
-  ]
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "tcf-debug",
+			"request": "launch",
+			"name": "thesis_v3_500mhz_appl_app_hw_1",
+			"debugType": "baremetal-zu",
+			"attachToRunningTargetOptions": {
+				"targetSetupMode": "standalone",
+				"executeScript": true,
+				"scriptPath": ""
+			},
+			"autoAttachProcessChildren": false,
+			"target": {
+				"targetConnectionId": "Local",
+				"peersIniPath": "../../_ide/.peers.ini",
+				"context": "ZUPlus"
+			},
+			"pathMap": [],
+			"targetSetup": {
+				"resetSystem": true,
+				"programDevice": true,
+				"partialBitstream": false,
+				"skipRevisionCheck": false,
+				"device": {
+					"plDevice": "Auto Detect",
+					"psDevice": "Auto Detect"
+				},
+				"enableRPUSplitMode": false,
+				"resetAPU": false,
+				"resetRPU": false,
+				"bitstreamFile": "C:\\TIDIAC\\summer2025_research_tiadc\\test_platform\\final_ver_1\\export\\final_ver_1\\hw\\sdt\\final_ver_1.0.bit",
+				"zuInitialization": {
+					"isFsbl": true,
+					"usingFSBL": {
+						"initWithFSBL": true,
+						"fsblFile": "C:\\TIDIAC\\summer2025_research_tiadc\\test_platform\\final_ver_1\\zynqmp_fsbl\\build\\fsbl.elf",
+						"fsblExitSymbol": "XFsbl_Exit"
+					},
+					"usingPsuInit": {
+						"runPsuInit": true,
+						"plPowerup": true,
+						"psuInitTclFile": "${workspaceFolder}\\thesis_v3_500mhz_appl\\_ide\\psinit\\psu_init.tcl"
+					}
+				},
+				"zuTraceOptions": {
+					"isSelected": false,
+					"scratchAddress": "0x60000",
+					"scratchSize": "0x60000",
+					"traceOutputPath": ""
+				},
+				"downloadElf": [
+					{
+						"core": "psu_cortexa53_0",
+						"resetProcessor": true,
+						"elfFile": "${workspaceFolder}\\thesis_v3_500mhz_appl\\build\\thesis_v3_500mhz_appl.elf",
+						"stopAtEntry": false,
+						"isSelfRelocatingApp": false,
+						"relativeAddress": ""
+					}
+				],
+				"crossTriggerBreakpoints": {
+					"isSelected": false,
+					"breakpoints": []
+				}
+			},
+			"internalConsoleOptions": "openOnSessionStart"
+		}
+	]
 }

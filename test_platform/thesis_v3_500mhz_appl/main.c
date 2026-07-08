@@ -86,7 +86,7 @@ int main()
 
     // init parameters for AD9695
     struct ad9695_state ad9695_0_param = {
-        .sample_clk_freq_khz = 500000,
+        .sample_clk_freq_khz = 1300000,
         .powerdown_pin_en = 0,
         .powerdown_mode = AD9695_POWERDOWN,
         .fc_ch = ad9695_FULL_BANDWIDTH_MODE,

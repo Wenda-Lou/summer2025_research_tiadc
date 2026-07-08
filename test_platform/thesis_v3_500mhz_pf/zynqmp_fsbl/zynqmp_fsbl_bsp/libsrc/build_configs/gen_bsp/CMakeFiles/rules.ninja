@@ -25,7 +25,7 @@ rule CUSTOM_COMMAND
 rule C_COMPILER__avbuf_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -33,7 +33,7 @@ rule C_COMPILER__avbuf_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__avbuf_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -44,7 +44,7 @@ rule C_STATIC_LIBRARY_LINKER__avbuf_
 rule C_COMPILER__axidma_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -52,7 +52,7 @@ rule C_COMPILER__axidma_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__axidma_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -63,7 +63,7 @@ rule C_STATIC_LIBRARY_LINKER__axidma_
 rule C_COMPILER__axipmon_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -71,7 +71,7 @@ rule C_COMPILER__axipmon_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__axipmon_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -82,7 +82,7 @@ rule C_STATIC_LIBRARY_LINKER__axipmon_
 rule C_COMPILER__canps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -90,7 +90,7 @@ rule C_COMPILER__canps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__canps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -101,7 +101,7 @@ rule C_STATIC_LIBRARY_LINKER__canps_
 rule C_COMPILER__clockps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -109,7 +109,7 @@ rule C_COMPILER__clockps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__clockps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -120,7 +120,7 @@ rule C_STATIC_LIBRARY_LINKER__clockps_
 rule C_COMPILER__coresightps_dcc_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -128,7 +128,7 @@ rule C_COMPILER__coresightps_dcc_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__coresightps_dcc_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -139,7 +139,7 @@ rule C_STATIC_LIBRARY_LINKER__coresightps_dcc_
 rule C_COMPILER__csudma_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -147,7 +147,7 @@ rule C_COMPILER__csudma_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__csudma_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -158,7 +158,7 @@ rule C_STATIC_LIBRARY_LINKER__csudma_
 rule C_COMPILER__ddrcpsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -166,7 +166,7 @@ rule C_COMPILER__ddrcpsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__ddrcpsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -177,7 +177,7 @@ rule C_STATIC_LIBRARY_LINKER__ddrcpsu_
 rule C_COMPILER__dpdma_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -185,7 +185,7 @@ rule C_COMPILER__dpdma_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__dpdma_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -196,7 +196,7 @@ rule C_STATIC_LIBRARY_LINKER__dpdma_
 rule C_COMPILER__dppsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -204,7 +204,7 @@ rule C_COMPILER__dppsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__dppsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -215,7 +215,7 @@ rule C_STATIC_LIBRARY_LINKER__dppsu_
 rule C_COMPILER__emacps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -223,7 +223,7 @@ rule C_COMPILER__emacps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__emacps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -234,7 +234,7 @@ rule C_STATIC_LIBRARY_LINKER__emacps_
 rule C_COMPILER__gpiops_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -242,7 +242,7 @@ rule C_COMPILER__gpiops_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__gpiops_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -253,7 +253,7 @@ rule C_STATIC_LIBRARY_LINKER__gpiops_
 rule C_COMPILER__iicps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -261,7 +261,7 @@ rule C_COMPILER__iicps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__iicps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -272,7 +272,7 @@ rule C_STATIC_LIBRARY_LINKER__iicps_
 rule C_COMPILER__ipipsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -280,7 +280,7 @@ rule C_COMPILER__ipipsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__ipipsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -291,7 +291,7 @@ rule C_STATIC_LIBRARY_LINKER__ipipsu_
 rule C_COMPILER__pciepsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -299,7 +299,7 @@ rule C_COMPILER__pciepsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__pciepsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -310,7 +310,7 @@ rule C_STATIC_LIBRARY_LINKER__pciepsu_
 rule C_COMPILER__qspipsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -318,7 +318,7 @@ rule C_COMPILER__qspipsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__qspipsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -329,7 +329,7 @@ rule C_STATIC_LIBRARY_LINKER__qspipsu_
 rule C_COMPILER__resetps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -337,7 +337,7 @@ rule C_COMPILER__resetps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__resetps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -348,7 +348,7 @@ rule C_STATIC_LIBRARY_LINKER__resetps_
 rule C_COMPILER__rtcpsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -356,7 +356,7 @@ rule C_COMPILER__rtcpsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__rtcpsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -367,7 +367,7 @@ rule C_STATIC_LIBRARY_LINKER__rtcpsu_
 rule C_COMPILER__scugic_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -375,7 +375,7 @@ rule C_COMPILER__scugic_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__scugic_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -386,7 +386,7 @@ rule C_STATIC_LIBRARY_LINKER__scugic_
 rule C_COMPILER__sdps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -394,7 +394,7 @@ rule C_COMPILER__sdps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__sdps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -405,7 +405,7 @@ rule C_STATIC_LIBRARY_LINKER__sdps_
 rule C_COMPILER__spips_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -413,7 +413,7 @@ rule C_COMPILER__spips_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__spips_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -424,7 +424,7 @@ rule C_STATIC_LIBRARY_LINKER__spips_
 rule C_COMPILER__sysmonpsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -432,7 +432,7 @@ rule C_COMPILER__sysmonpsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__sysmonpsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -443,7 +443,7 @@ rule C_STATIC_LIBRARY_LINKER__sysmonpsu_
 rule C_COMPILER__ttcps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -451,7 +451,7 @@ rule C_COMPILER__ttcps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__ttcps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -462,7 +462,7 @@ rule C_STATIC_LIBRARY_LINKER__ttcps_
 rule C_COMPILER__uartps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -470,7 +470,7 @@ rule C_COMPILER__uartps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__uartps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -481,7 +481,7 @@ rule C_STATIC_LIBRARY_LINKER__uartps_
 rule C_COMPILER__usbpsu_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -489,7 +489,7 @@ rule C_COMPILER__usbpsu_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__usbpsu_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -500,7 +500,7 @@ rule C_STATIC_LIBRARY_LINKER__usbpsu_
 rule C_COMPILER__video_common_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -508,7 +508,7 @@ rule C_COMPILER__video_common_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__video_common_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -519,7 +519,7 @@ rule C_STATIC_LIBRARY_LINKER__video_common_
 rule C_COMPILER__wdtps_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -527,7 +527,7 @@ rule C_COMPILER__wdtps_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__wdtps_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -538,7 +538,7 @@ rule C_STATIC_LIBRARY_LINKER__wdtps_
 rule C_COMPILER__zdma_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -546,7 +546,7 @@ rule C_COMPILER__zdma_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__zdma_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -557,7 +557,7 @@ rule C_STATIC_LIBRARY_LINKER__zdma_
 rule ASM_COMPILER__xilstandalone_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building ASM object $out
 
 
@@ -567,7 +567,7 @@ rule ASM_COMPILER__xilstandalone_
 rule C_COMPILER__xilstandalone_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -575,7 +575,7 @@ rule C_COMPILER__xilstandalone_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__xilstandalone_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -586,7 +586,7 @@ rule C_STATIC_LIBRARY_LINKER__xilstandalone_
 rule C_COMPILER__xiltimer_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -594,7 +594,7 @@ rule C_COMPILER__xiltimer_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__xiltimer_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -605,7 +605,7 @@ rule C_STATIC_LIBRARY_LINKER__xiltimer_
 rule C_COMPILER__xilffs_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -613,7 +613,7 @@ rule C_COMPILER__xilffs_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__xilffs_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -624,7 +624,7 @@ rule C_STATIC_LIBRARY_LINKER__xilffs_
 rule C_COMPILER__xilsecure_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -632,7 +632,7 @@ rule C_COMPILER__xilsecure_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__xilsecure_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -643,7 +643,7 @@ rule C_STATIC_LIBRARY_LINKER__xilsecure_
 rule C_COMPILER__xilpm_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -651,7 +651,7 @@ rule C_COMPILER__xilpm_
 # Rule for linking C static library.
 
 rule C_STATIC_LIBRARY_LINKER__xilpm_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -E rm -f $TARGET_FILE && aarch64-none-elf-ar qc $TARGET_FILE $LINK_FLAGS $in && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-ranlib.exe $TARGET_FILE && $POST_BUILD"
   description = Linking C static library $TARGET_FILE
   restat = $RESTAT
 
@@ -660,7 +660,7 @@ rule C_STATIC_LIBRARY_LINKER__xilpm_
 # Rule for re-running cmake.
 
 rule RERUN_CMAKE
-  command = D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe --regenerate-during-build -SD:\vitis\us+\thesis_v3_500mhz_pf\zynqmp_fsbl\zynqmp_fsbl_bsp -BD:\vitis\us+\thesis_v3_500mhz_pf\zynqmp_fsbl\zynqmp_fsbl_bsp\libsrc\build_configs\gen_bsp
+  command = C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe --regenerate-during-build -SC:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_pf\zynqmp_fsbl\zynqmp_fsbl_bsp -BC:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_pf\zynqmp_fsbl\zynqmp_fsbl_bsp\libsrc\build_configs\gen_bsp
   description = Re-running CMake...
   generator = 1
 
@@ -669,7 +669,7 @@ rule RERUN_CMAKE
 # Rule for cleaning additional files.
 
 rule CLEAN_ADDITIONAL
-  command = D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe -DCONFIG=$CONFIG -P CMakeFiles\clean_additional.cmake
+  command = C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe -DCONFIG=$CONFIG -P CMakeFiles\clean_additional.cmake
   description = Cleaning additional files...
 
 
@@ -677,7 +677,7 @@ rule CLEAN_ADDITIONAL
 # Rule for cleaning all built files.
 
 rule CLEAN
-  command = D:\Xilinx\Vitis\2024.2\tps\win64\lopper-1.1.0-packages\min_sdk\usr\bin\ninja.exe $FILE_ARG -t clean $TARGETS
+  command = C:\AMD\2025.1\Vitis\bin\ninja.exe $FILE_ARG -t clean $TARGETS
   description = Cleaning all built files...
 
 
@@ -685,6 +685,6 @@ rule CLEAN
 # Rule for printing all primary targets available.
 
 rule HELP
-  command = D:\Xilinx\Vitis\2024.2\tps\win64\lopper-1.1.0-packages\min_sdk\usr\bin\ninja.exe -t targets
+  command = C:\AMD\2025.1\Vitis\bin\ninja.exe -t targets
   description = All primary targets available:
 

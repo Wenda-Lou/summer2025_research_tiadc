@@ -1,0 +1,27 @@
+# ninja log v5
+3	342	8048136080000765	CMakeFiles/fsbl.elf.dir/xfsbl_exit.S.obj	9c5383c3f08ea86
+16	397	8048136080077489	CMakeFiles/fsbl.elf.dir/xfsbl_translation_table_a53_64.S.obj	a4ea51962d48f458
+63	635	8048136083628640	CMakeFiles/fsbl.elf.dir/xfsbl_csu_dma.c.obj	6150744434cb4580
+44	720	8048136084360097	CMakeFiles/fsbl.elf.dir/xfsbl_board.c.obj	6a6eab3f854d337c
+52	786	8048136085849233	CMakeFiles/fsbl.elf.dir/xfsbl_bs.c.obj	5321f836184dcd57
+36	792	8048136085950392	CMakeFiles/fsbl.elf.dir/xfsbl_authentication.c.obj	732a8628f9d3e321
+87	808	8048136085214853	CMakeFiles/fsbl.elf.dir/xfsbl_dfu_util.c.obj	f09da0852522edae
+149	924	8048136087362595	CMakeFiles/fsbl.elf.dir/xfsbl_image_header.c.obj	6be2b2e95ecbdfb4
+117	1034	8048136087709912	CMakeFiles/fsbl.elf.dir/xfsbl_handoff.c.obj	4a56ecc5d30d597e
+176	1082	8048136088289904	CMakeFiles/fsbl.elf.dir/xfsbl_main.c.obj	d767664e98c97b40
+130	1121	8048136088150416	CMakeFiles/fsbl.elf.dir/xfsbl_hooks.c.obj	9b01da674d8d2d1a
+188	1185	8048136089826781	CMakeFiles/fsbl.elf.dir/xfsbl_misc.c.obj	2966a38b0085f683
+344	1216	8048136090356870	CMakeFiles/fsbl.elf.dir/xfsbl_tpm.c.obj	e2786e314ee5f9bb
+222	1222	8048136090377139	CMakeFiles/fsbl.elf.dir/xfsbl_nand.c.obj	d3b68af31f1221b5
+398	1242	8048136090452996	CMakeFiles/fsbl.elf.dir/xfsbl_tpm_util.c.obj	1207139cdb5ae3b9
+286	1254	8048136090879557	CMakeFiles/fsbl.elf.dir/xfsbl_rsa_sha.c.obj	bee28d22ebe870db
+162	1263	8048136090763693	CMakeFiles/fsbl.elf.dir/xfsbl_initialization.c.obj	eee67689da81bf59
+318	1271	8048136091094052	CMakeFiles/fsbl.elf.dir/xfsbl_sd.c.obj	780c0d78beff49dd
+203	1275	8048136091134466	CMakeFiles/fsbl.elf.dir/xfsbl_misc_drivers.c.obj	bd9c3644ad80579f
+637	1277	8048136091215292	CMakeFiles/fsbl.elf.dir/xfsbl_usb.c.obj	f6a4b79645b9fc18
+257	1395	8048136092548240	CMakeFiles/fsbl.elf.dir/xfsbl_plpartition_valid.c.obj	8d0996692f25fd5a
+238	1425	8048136092846577	CMakeFiles/fsbl.elf.dir/xfsbl_partition_load.c.obj	c94de7da9d722dc8
+272	1531	8048136093940081	CMakeFiles/fsbl.elf.dir/xfsbl_qspi.c.obj	446b1462e69cf839
+26	1700	8048136095657337	CMakeFiles/fsbl.elf.dir/psu_init.c.obj	ec552b437f9bb6a5
+74	2228	8048136100945247	CMakeFiles/fsbl.elf.dir/xfsbl_ddr_init.c.obj	d563b94db40e273f
+2229	6883	8048136144982107	fsbl.elf	f963314120615fd

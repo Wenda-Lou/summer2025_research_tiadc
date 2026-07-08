@@ -27,7 +27,25 @@
  *          -w    <off32> <data32>               Write DMA S2MM register       
  *                                                                              
  *  mem     -r    <addr32>                        Read arbitrary address        
- *          -w    <addr32> <data32>              Write arbitrary address       
+ *          -w    <addr32> <data32>              Write arbitrary address   
+ * 
+ *  adc     -c      <ch0|ch1|ch2|ch3>           Select ADC channel for configuration
+ *
+ *          -offset                           Enter DC offset calibration menu
+ *              on                            Enable DC offset calibration
+ *              off                           Disable DC offset calibration
+ *              status                        Display current calibration status
+ *              back                          Return to UART command prompt
+ *
+ *          -gain                             Enter ADC gain setting menu
+ *              IFC                           Input full-scale control mode
+ *                  set <1.36~2.04>           Set input full-scale (Vpp differential)
+ *                  status                    Display current input full-scale
+ *                  back                      Return to gain menu
+ *                  quit                      Exit gain setting menu
+ *
+ *              DDC                           Digital downconverter gain mode (Reserved - not used in current design)
+ *              back                          Exit gain setting menu
  * --------------------------------------------------------------------------  
  *  © 2025 Your Project Name — MIT License                                      
  * ==========================================================================*/
@@ -47,5 +65,7 @@ void handle_link_cmd(char *line);
 void handle_dma_cmd (char *line);
 void handle_dma_dbg_cmd(char *line);
 void handle_mem_cmd (char *line);
+void handle_adc_gain_cmd(void);
+void handle_adc_offset_cmd(void);
 
 #endif /* CONSOLE_CMDS_H */

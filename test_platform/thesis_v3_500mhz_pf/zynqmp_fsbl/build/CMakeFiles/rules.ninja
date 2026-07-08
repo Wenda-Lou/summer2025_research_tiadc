@@ -17,7 +17,7 @@
 rule ASM_COMPILER__fsbl.2eelf_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building ASM object $out
 
 
@@ -27,7 +27,7 @@ rule ASM_COMPILER__fsbl.2eelf_
 rule C_COMPILER__fsbl.2eelf_
   depfile = $DEP_FILE
   deps = gcc
-  command = D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  command = C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
   description = Building C object $out
 
 
@@ -35,7 +35,7 @@ rule C_COMPILER__fsbl.2eelf_
 # Rule for linking C executable.
 
 rule C_EXECUTABLE_LINKER__fsbl.2eelf_
-  command = cmd.exe /C "$PRE_LINK && D:\Xilinx\Vitis\2024.2\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $FLAGS       $LINK_FLAGS $in -o $TARGET_FILE $LINK_PATH $LINK_LIBRARIES && $POST_BUILD"
+  command = cmd.exe /C "$PRE_LINK && C:\AMD\2025.1\Vitis\gnu\aarch64\nt\aarch64-none\bin\aarch64-none-elf-gcc.exe $FLAGS       $LINK_FLAGS $in -o $TARGET_FILE $LINK_PATH $LINK_LIBRARIES && $POST_BUILD"
   description = Linking C executable $TARGET_FILE
   restat = $RESTAT
 
@@ -52,7 +52,7 @@ rule CUSTOM_COMMAND
 # Rule for re-running cmake.
 
 rule RERUN_CMAKE
-  command = D:\Xilinx\Vitis\2024.2\tps\win64\cmake-3.24.2\bin\cmake.exe --regenerate-during-build -SD:\vitis\us+\thesis_v3_500mhz_pf\zynqmp_fsbl -BD:\vitis\us+\thesis_v3_500mhz_pf\zynqmp_fsbl\build
+  command = C:\AMD\2025.1\tps\win64\cmake-3.24.2\bin\cmake.exe --regenerate-during-build -SC:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_pf\zynqmp_fsbl -BC:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_pf\zynqmp_fsbl\build
   description = Re-running CMake...
   generator = 1
 
@@ -61,7 +61,7 @@ rule RERUN_CMAKE
 # Rule for cleaning all built files.
 
 rule CLEAN
-  command = D:\Xilinx\Vitis\2024.2\tps\win64\lopper-1.1.0-packages\min_sdk\usr\bin\ninja.exe $FILE_ARG -t clean $TARGETS
+  command = C:\AMD\2025.1\Vitis\bin\ninja.exe $FILE_ARG -t clean $TARGETS
   description = Cleaning all built files...
 
 
@@ -69,6 +69,6 @@ rule CLEAN
 # Rule for printing all primary targets available.
 
 rule HELP
-  command = D:\Xilinx\Vitis\2024.2\tps\win64\lopper-1.1.0-packages\min_sdk\usr\bin\ninja.exe -t targets
+  command = C:\AMD\2025.1\Vitis\bin\ninja.exe -t targets
   description = All primary targets available:
 

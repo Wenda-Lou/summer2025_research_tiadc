@@ -108,7 +108,19 @@ void ad9695_adc_set_clk_phase(uint8_t ch, uint8_t phase_adj)
 
 void ad9695_adc_set_dc_offset_filt_en(uint8_t en)
 {
-    ad9695_write_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL, en << 7);
+    if (en)
+    {
+        ad9695_write_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL,
+                              AD9695_DC_OFFSET_CAL_EN);
+
+        ad9695_write_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL2,
+                              0x00);
+    }
+    else
+    {
+        ad9695_write_register(&spi_inst, AD9695_DC_OFFSET_CAL_CTRL,
+                              0x00);
+    }
 }
 
 void ad9695_adc_set_fc_ch_mode(uint8_t fc_ch)
@@ -135,6 +147,73 @@ void ad9695_adc_super_fine_delay(uint8_t super_fine_delay)
         xil_printf("ERROR: Super fine delay cannot exceed 0x80!\r\n");
     }
     ad9695_write_register(&spi_inst, AD9695_CLK_FINE_DELAY_REG, super_fine_delay);
+}
+
+static uint8_t ad9695_input_fs_to_code(const char *fs)
+{
+    if (strcmp(fs, "1.36") == 0) return 0x0A;
+    if (strcmp(fs, "1.47") == 0) return 0x0B;
+    if (strcmp(fs, "1.59") == 0) return 0x0C;
+    if (strcmp(fs, "1.70") == 0) return 0x0D;
+    if (strcmp(fs, "1.81") == 0) return 0x0E;
+    if (strcmp(fs, "1.93") == 0) return 0x0F;
+    if (strcmp(fs, "2.04") == 0) return 0x00;
+
+    return 0xFF;
+}
+
+static const char* ad9695_input_code_to_fs(uint8_t code)
+{
+    switch (code & AD9695_INPUT_FS_MASK)
+    {
+        case 0x0A: return "1.36 Vpp";
+        case 0x0B: return "1.47 Vpp";
+        case 0x0C: return "1.59 Vpp";
+        case 0x0D: return "1.70 Vpp";
+        case 0x0E: return "1.81 Vpp";
+        case 0x0F: return "1.93 Vpp";
+        case 0x00: return "2.04 Vpp";
+        default:   return "Unknown";
+    }
+}
+
+void ad9695_set_input_full_scale(const char *fs)
+{
+    uint8_t old_val;
+    uint8_t new_val;
+    uint8_t code = ad9695_input_fs_to_code(fs);
+
+    if (code == 0xFF)
+    {
+        xil_printf("Invalid full-scale value.\r\n");
+        xil_printf("Valid values: 1.36, 1.47, 1.59, 1.70, 1.81, 1.93, 2.04\r\n");
+        return;
+    }
+
+    ad9695_read_register(&spi_inst, AD9695_INPUT_FULL_SCALE_CTRL, &old_val);
+
+    new_val = (old_val & ~AD9695_INPUT_FS_MASK) | code;
+
+    ad9695_write_register(&spi_inst, AD9695_INPUT_FULL_SCALE_CTRL, new_val);
+
+    xil_printf("Input full-scale set to %s Vpp differential.\r\n", fs);
+    xil_printf("Note: smaller full-scale = larger digital amplitude.\r\n");
+}
+
+void ad9695_print_input_full_scale_status(void)
+{
+    uint8_t val;
+    uint8_t code;
+
+    ad9695_read_register(&spi_inst, AD9695_INPUT_FULL_SCALE_CTRL, &val);
+
+    code = val & AD9695_INPUT_FS_MASK;
+
+    xil_printf("Input full-scale control:\r\n");
+    xil_printf("  Register 0x1910 = 0x%02X\r\n", val);
+    xil_printf("  Current full-scale = %s differential\r\n",
+               ad9695_input_code_to_fs(code));
+    xil_printf("  Note: smaller full-scale = larger digital amplitude.\r\n");
 }
 
 /* ------------------------------------------------------------------------- */
