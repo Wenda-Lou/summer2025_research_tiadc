@@ -43,6 +43,7 @@
  *                  status                    Display current input full-scale
  *                  back                      Return to gain menu
  *                  quit                      Exit gain setting menu
+ *                  sweep                     Run sweep test across the IFC range
  *
  *              DDC                           Digital downconverter gain mode (Reserved - not used in current design)
  *              back                          Exit gain setting menu

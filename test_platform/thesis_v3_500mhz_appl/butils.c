@@ -361,6 +361,7 @@ void handle_adc_gain_cmd(void)
             xil_printf("  status      Check current input full-scale status\r\n");
             xil_printf("  back        Back to gain mode selection\r\n");
             xil_printf("  quit        Quit gain setting menu\r\n");
+            xil_printf("  sweep       Run sweep test across the IFC range\r\n");
 
             while (1)
             {
