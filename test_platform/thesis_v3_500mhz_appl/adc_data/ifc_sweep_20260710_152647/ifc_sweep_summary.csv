@@ -1,0 +1,8 @@
+index,ifc_vpp,mean,mae,min,max,peak,rms,csv_file
+1,2.04,-3.6936274509803924,163.42009803921567,-273,258,265.5,181.1814346308748,C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl\adc_data\ifc_sweep_20260710_152647\sweep_01_ifc_2p04_vpp.csv
+2,1.93,-4.323529411764706,172.81764705882352,-285,269,277.0,191.922686639852,C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl\adc_data\ifc_sweep_20260710_152647\sweep_02_ifc_1p93_vpp.csv
+3,1.81,-4.504901960784314,183.52549019607844,-300,292,296.0,203.8933424563912,C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl\adc_data\ifc_sweep_20260710_152647\sweep_03_ifc_1p81_vpp.csv
+4,1.7,-5.793137254901961,196.18529411764706,-326,309,317.5,217.4997543383783,C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl\adc_data\ifc_sweep_20260710_152647\sweep_04_ifc_1p70_vpp.csv
+5,1.59,-6.75,210.11470588235295,-343,335,339.0,233.17703028167332,C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl\adc_data\ifc_sweep_20260710_152647\sweep_05_ifc_1p59_vpp.csv
+6,1.47,-7.2784313725490195,225.83627450980393,-368,361,364.5,251.33537667552383,C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl\adc_data\ifc_sweep_20260710_152647\sweep_06_ifc_1p47_vpp.csv
+7,1.36,-7.624019607843137,245.75049019607843,-400,394,397.0,273.00071554168954,C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl\adc_data\ifc_sweep_20260710_152647\sweep_07_ifc_1p36_vpp.csv

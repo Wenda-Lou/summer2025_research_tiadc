@@ -17,6 +17,7 @@
 #include "baxidma.h"
 #include "sleep.h"
 #include "ad9695_registers.h"
+#include "ethernet.h"
 
 #include "xil_cache.h"
 #include "xuartps.h"
@@ -537,42 +538,114 @@ void handle_adc_offset_cmd(void)
 static int adc_capture_frame(void)
 {
     int res;
+    u32 timeout;
+    u32 status;
 
-    Xil_DCacheFlushRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+    /*
+     * Match the working manual sequence:
+     *   dma -d
+     *   wait
+     *   dma -w
+     */
+    xil_printf("Resetting DMA...\r\n");
 
-    res = XAxiDma_SimpleTransfer(&dma_inst,
-                                 (UINTPTR)RxBufferPtr,
-                                 DMA_CMD_BUF_SIZE,
-                                 XAXIDMA_DEVICE_TO_DMA);
+    XAxiDma_Reset(&dma_inst);
 
-    if (res != XST_SUCCESS)
-    {
-        ERR("DMA transfer failed.");
-        return XST_FAILURE;
-    }
+    timeout = 1000000;
 
-    u32 timeout = 100000;
-
-    while (XAxiDma_Busy(&dma_inst, XAXIDMA_DEVICE_TO_DMA))
+    while (!XAxiDma_ResetIsDone(&dma_inst))
     {
         if (--timeout == 0)
         {
-            ERR("DMA timeout.");
+            ERR("DMA reset timeout.");
             return XST_FAILURE;
         }
 
         usleep(1);
     }
 
-    Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+    /*
+     * The manual command has a natural delay before dma -w.
+     * Give the DMA hardware time to settle after reset.
+     */
+    usleep(100000);  /* 100 ms */
+
+    status = XAxiDma_ReadReg(
+        dma_inst.RegBase,
+        XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET
+    );
+
+    xil_printf("DMA status after reset: 0x%08X\r\n", status);
+
+    /*
+     * Prepare destination buffer.
+     */
+    Xil_DCacheFlushRange(
+        (UINTPTR)RxBufferPtr,
+        DMA_CMD_BUF_SIZE
+    );
+
+    xil_printf("Starting DMA capture of %d bytes...\r\n",
+               DMA_CMD_BUF_SIZE);
+
+    res = XAxiDma_SimpleTransfer(
+        &dma_inst,
+        (UINTPTR)RxBufferPtr,
+        DMA_CMD_BUF_SIZE,
+        XAXIDMA_DEVICE_TO_DMA
+    );
+
+    if (res != XST_SUCCESS)
+    {
+        status = XAxiDma_ReadReg(
+            dma_inst.RegBase,
+            XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET
+        );
+
+        ERR(
+            "XAxiDma_SimpleTransfer failed. Error code: %d, "
+            "S2MM status: 0x%08X",
+            res,
+            status
+        );
+
+        return XST_FAILURE;
+    }
+
+    /*
+     * Wait for the capture to finish.
+     */
+    timeout = 1000000;
+
+    while (XAxiDma_Busy(&dma_inst, XAXIDMA_DEVICE_TO_DMA))
+    {
+        if (--timeout == 0)
+        {
+            status = XAxiDma_ReadReg(
+                dma_inst.RegBase,
+                XAXIDMA_RX_OFFSET + XAXIDMA_SR_OFFSET
+            );
+
+            ERR("DMA capture timeout. S2MM status: 0x%08X", status);
+            return XST_FAILURE;
+        }
+
+        usleep(1);
+    }
+
+    Xil_DCacheInvalidateRange(
+        (UINTPTR)RxBufferPtr,
+        DMA_CMD_BUF_SIZE
+    );
+
+    xil_printf("DMA capture complete.\r\n");
 
     return XST_SUCCESS;
 }
 
 static void adc_ifc_sweep(void)
 {
-    adc_sweep_active = 1;
-    static const char *ifc[] =
+    static const char *ifc_values[] =
     {
         "2.04",
         "1.93",
@@ -583,41 +656,115 @@ static void adc_ifc_sweep(void)
         "1.36"
     };
 
-    xil_printf("\r\n===============================\r\n");
-    xil_printf("Starting  Input Full-Scale Sweep\r\n");
+    const int number_of_steps =
+        sizeof(ifc_values) / sizeof(ifc_values[0]);
+
+    int successful_captures = 0;
+    int transmitted_frames = 0;
+
+    /*
+     * Prevent manual DMA or UDP commands from interfering with
+     * the automatic sweep.
+     */
+    adc_sweep_active = 1;
+
+    xil_printf("\r\n");
+    xil_printf("===============================\r\n");
+    xil_printf("Starting Input Full-Scale Sweep\r\n");
     xil_printf("===============================\r\n");
 
-    for (int i = 0; i < 7; i++)
+    for (int i = 0; i < number_of_steps; i++)
     {
         xil_printf("----------------------------------\r\n");
-        xil_printf("Step %d of %d\r\n", i + 1, 7);
-        xil_printf("Input Full-Scale : %s Vpp\r\n", ifc[i]);
+        xil_printf(
+            "Step %d of %d\r\n",
+            i + 1,
+            number_of_steps
+        );
 
-        ad9695_set_input_full_scale(ifc[i]);
+        xil_printf(
+            "Input Full-Scale : %s Vpp\r\n",
+            ifc_values[i]
+        );
 
-        usleep(100000);
+        /*
+         * Program the AD9695 input full-scale register.
+         */
+        ad9695_set_input_full_scale(ifc_values[i]);
 
+        /*
+         * Allow the ADC analog and digital datapaths to settle.
+         */
+        usleep(200000);  /* 200 ms */
+
+        /*
+         * Reset DMA, capture one frame, wait until complete,
+         * and invalidate the data cache.
+         */
         if (adc_capture_frame() != XST_SUCCESS)
         {
-            xil_printf("Capture failed.\r\n");
+            xil_printf(
+                "Capture failed for %s Vpp.\r\n",
+                ifc_values[i]
+            );
+
             continue;
         }
 
+        successful_captures++;
+
+        /*
+         * adc_capture_frame() already invalidates the cache after
+         * DMA completion. Repeating it here is harmless and ensures
+         * udp_send_mem() reads the newest samples from DDR.
+         */
+        Xil_DCacheInvalidateRange(
+            (UINTPTR)RxBufferPtr,
+            DMA_CMD_BUF_SIZE
+        );
+
         xil_printf("Transmitting frame...\r\n");
 
-        uart_send_flag = 1;
+        /*
+         * Use the exact UDP function already proven to work.
+         *
+         * Do not set uart_send_flag and wait for it. The flag is
+         * normally processed by udp_update() in the main loop, but
+         * the sweep blocks that main loop until it returns.
+         */
+        udp_send_mem();
 
-        while (uart_send_flag)
-        {
-            usleep(1000);
-        }
+        transmitted_frames++;
 
-        xil_printf("Transmission complete.\r\n");
+        xil_printf(
+            "Transmission complete for %s Vpp.\r\n",
+            ifc_values[i]
+        );
+
+        /*
+         * Small separation between complete frames so the Python
+         * receiver can finish storing the current frame.
+         */
+        usleep(100000);  /* 100 ms */
     }
-    
-    adc_sweep_active = 0;
-    xil_printf("\r\n=================================\r\n");
-    xil_printf("IFC sweep completed successfully.\r\n");
-    xil_printf("=================================\r\n");
 
+    adc_sweep_active = 0;
+
+    xil_printf("\r\n");
+    xil_printf("=================================\r\n");
+    xil_printf("IFC sweep finished.\r\n");
+
+    xil_printf(
+        "Successful captures     : %d/%d\r\n",
+        successful_captures,
+        number_of_steps
+    );
+
+    xil_printf(
+        "Transmitted frames      : %d/%d\r\n",
+        transmitted_frames,
+        number_of_steps
+    );
+
+    xil_printf("=================================\r\n");
 }

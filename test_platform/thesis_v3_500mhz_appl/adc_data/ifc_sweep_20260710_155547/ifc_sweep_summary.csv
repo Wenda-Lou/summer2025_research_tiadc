@@ -1,0 +1,8 @@
+index,ifc_vpp,mean,mae,residual_rms,fitted_amplitude,fitted_offset,fitted_phase_rad,dominant_bin,normalized_frequency,min,max,peak,rms,csv_file
+1,2.04,,,,,,,,,,,,,PROCESSING_ERROR
+2,1.93,,,,,,,,,,,,,PROCESSING_ERROR
+3,1.81,,,,,,,,,,,,,PROCESSING_ERROR
+4,1.7,,,,,,,,,,,,,PROCESSING_ERROR
+5,1.59,,,,,,,,,,,,,PROCESSING_ERROR
+6,1.47,,,,,,,,,,,,,PROCESSING_ERROR
+7,1.36,,,,,,,,,,,,,PROCESSING_ERROR

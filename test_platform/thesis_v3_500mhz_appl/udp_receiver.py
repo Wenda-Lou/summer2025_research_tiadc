@@ -288,17 +288,53 @@ def receive_ifc_sweep(
     packet_size=512,
     timeout=15.0,
     reconstruct=True,
+    offset_threshold_codes=2.0,
 ):
-    ifc_values = ["2.04", "1.93", "1.81", "1.70", "1.59", "1.47", "1.36"]
+    """
+    Receive all seven IFC sweep captures, reconstruct ADC samples,
+    calculate DC-offset metrics, save each processed capture, and
+    create a summary CSV.
 
-    sweep_dir = SAVE_DIR / f"ifc_sweep_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    DC-offset metrics:
+        sample_sum:
+            Sum of all reconstructed ADC samples.
+
+        mean:
+            Signed average ADC code.
+
+        offset_error:
+            Absolute DC offset error = abs(mean).
+
+        offset_percent_of_peak:
+            Absolute offset as a percentage of measured peak amplitude.
+
+        needs_calibration:
+            True when offset_error exceeds offset_threshold_codes.
+    """
+
+    ifc_values = [
+        "2.04",
+        "1.93",
+        "1.81",
+        "1.70",
+        "1.59",
+        "1.47",
+        "1.36",
+    ]
+
+    sweep_dir = SAVE_DIR / (
+        f"ifc_sweep_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
     sweep_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
     saved_files = []
 
     for index, ifc in enumerate(ifc_values, start=1):
-        print(f"\nWaiting for sweep frame {index}/7, IFC = {ifc} Vpp")
+        print(
+            f"\nWaiting for sweep frame {index}/{len(ifc_values)}, "
+            f"IFC = {ifc} Vpp"
+        )
 
         csv_file = receive_adc_data(
             bind_ip=bind_ip,
@@ -311,9 +347,13 @@ def receive_ifc_sweep(
         if csv_file is None:
             results.append({
                 "index": index,
-                "ifc_vpp": ifc,
-                "mean_error": None,
+                "ifc_vpp": float(ifc),
+                "sample_count": None,
+                "sample_sum": None,
                 "mean": None,
+                "offset_error": None,
+                "offset_percent_of_peak": None,
+                "needs_calibration": None,
                 "min": None,
                 "max": None,
                 "peak": None,
@@ -322,129 +362,682 @@ def receive_ifc_sweep(
             })
             continue
 
-        raw = pd.read_csv(csv_file)["byte"].to_numpy(dtype=np.uint8)
-
-        samples = raw.view("<i2")
-        samples = (samples >> 2).astype(np.int16)
-        samples = samples[:-8]
-
-        if reconstruct:
-            words = samples.reshape(-1, 8)
-
-            pos = words[:, :4].reshape(-1)
-            neg = (-words[:, 4:]).reshape(-1)
-
-            adc = np.empty(pos.size + neg.size, dtype=np.int32)
-            adc[0::2] = pos
-            adc[1::2] = neg
-        else:
-            adc = samples.astype(np.int32)
-
-        mean_val = float(np.mean(adc))
-        mean_error = mean_val          # target mean is 0
-        min_val = int(np.min(adc))
-        max_val = int(np.max(adc))
-        peak_val = float((max_val - min_val) / 2)
-        rms_val = float(np.sqrt(np.mean(adc.astype(float) ** 2)))
-
-        out_csv = sweep_dir / f"sweep_{index:02d}_ifc_{ifc.replace('.', 'p')}_vpp.csv"
-
-        pd.DataFrame({
-            "sample_index": np.arange(len(adc)),
-            "adc_code": adc,
-            "ifc_vpp": ifc,
-            "sweep_index": index,
-        }).to_csv(out_csv, index=False)
-
-        saved_files.append(out_csv)
-
-        results.append({
-            "index": index,
-            "ifc_vpp": ifc,
-            "mean_error": mean_error,
-            "mean": mean_val,
-            "min": min_val,
-            "max": max_val,
-            "peak": peak_val,
-            "rms": rms_val,
-            "csv_file": str(out_csv),
-        })
-
-        # remove temporary raw byte csv created by receive_adc_data()
         try:
-            Path(csv_file).unlink()
-        except Exception:
-            pass
+            raw = (
+                pd.read_csv(csv_file)["byte"]
+                .to_numpy(dtype=np.uint8)
+            )
+
+            if raw.size < 2:
+                raise ValueError(
+                    f"Capture for IFC {ifc} Vpp is too short."
+                )
+
+            # Ensure an even number of bytes before converting to int16.
+            if raw.size % 2 != 0:
+                print(
+                    f"Warning: odd byte count for IFC {ifc} Vpp. "
+                    "Dropping the final byte."
+                )
+                raw = raw[:-1]
+
+            # Convert little-endian 16-bit words to signed 14-bit samples.
+            samples = raw.view("<i2")
+            samples = (samples >> 2).astype(np.int16)
+
+            # Remove the known invalid values at the end of the DMA frame.
+            if samples.size <= 8:
+                raise ValueError(
+                    f"Capture for IFC {ifc} Vpp contains too few samples."
+                )
+
+            samples = samples[:-8]
+
+            if reconstruct:
+                remainder = samples.size % 8
+
+                if remainder != 0:
+                    usable_length = samples.size - remainder
+
+                    print(
+                        f"Warning: IFC {ifc} Vpp contains "
+                        f"{samples.size} words, not divisible by 8. "
+                        f"Using the first {usable_length} words."
+                    )
+
+                    samples = samples[:usable_length]
+
+                if samples.size == 0:
+                    raise ValueError(
+                        f"No reconstructable samples for IFC {ifc} Vpp."
+                    )
+
+                words = samples.reshape(-1, 8)
+
+                pos = (
+                    words[:, :4]
+                    .reshape(-1)
+                    .astype(np.int32)
+                )
+
+                neg = (
+                    -words[:, 4:]
+                    .reshape(-1)
+                    .astype(np.int32)
+                )
+
+                adc = np.empty(
+                    pos.size + neg.size,
+                    dtype=np.int32,
+                )
+
+                adc[0::2] = pos
+                adc[1::2] = neg
+
+            else:
+                adc = samples.astype(np.int32)
+
+            if adc.size == 0:
+                raise ValueError(
+                    f"No ADC samples available for IFC {ifc} Vpp."
+                )
+
+            adc_float = adc.astype(np.float64)
+
+            # ------------------------------------------------------
+            # DC-offset statistics
+            # ------------------------------------------------------
+            sample_count = int(adc.size)
+            sample_sum = float(np.sum(adc_float))
+            mean_val = float(np.mean(adc_float))
+
+            # Absolute error relative to ideal mean = 0.
+            offset_error = float(abs(mean_val))
+
+            min_val = int(np.min(adc))
+            max_val = int(np.max(adc))
+
+            peak_val = float(
+                (max_val - min_val) / 2.0
+            )
+
+            rms_val = float(
+                np.sqrt(
+                    np.mean(adc_float ** 2)
+                )
+            )
+
+            offset_percent_of_peak = (
+                float(100.0 * offset_error / peak_val)
+                if peak_val > 0
+                else np.nan
+            )
+
+            needs_calibration = bool(
+                offset_error > offset_threshold_codes
+            )
+
+            # ------------------------------------------------------
+            # Save processed ADC capture
+            # ------------------------------------------------------
+            out_csv = sweep_dir / (
+                f"sweep_{index:02d}_"
+                f"ifc_{ifc.replace('.', 'p')}_vpp.csv"
+            )
+
+            pd.DataFrame({
+                "sample_index": np.arange(
+                    adc.size,
+                    dtype=np.int32,
+                ),
+                "adc_code": adc,
+                "ifc_vpp": float(ifc),
+                "sweep_index": index,
+            }).to_csv(out_csv, index=False)
+
+            saved_files.append(out_csv)
+
+            results.append({
+                "index": index,
+                "ifc_vpp": float(ifc),
+                "sample_count": sample_count,
+                "sample_sum": sample_sum,
+                "mean": mean_val,
+                "offset_error": offset_error,
+                "offset_percent_of_peak": offset_percent_of_peak,
+                "needs_calibration": needs_calibration,
+                "min": min_val,
+                "max": max_val,
+                "peak": peak_val,
+                "rms": rms_val,
+                "csv_file": str(out_csv),
+            })
+
+            calibration_text = (
+                "CALIBRATION NEEDED"
+                if needs_calibration
+                else "PASS"
+            )
+
+            print(
+                f"IFC {ifc} Vpp processed: "
+                f"sum={sample_sum:.3f}, "
+                f"mean={mean_val:.6f}, "
+                f"offset error={offset_error:.6f}, "
+                f"offset={offset_percent_of_peak:.3f}% of peak, "
+                f"status={calibration_text}"
+            )
+
+        except Exception as exc:
+            print(
+                f"Processing failed for IFC {ifc} Vpp: {exc}"
+            )
+
+            results.append({
+                "index": index,
+                "ifc_vpp": float(ifc),
+                "sample_count": None,
+                "sample_sum": None,
+                "mean": None,
+                "offset_error": None,
+                "offset_percent_of_peak": None,
+                "needs_calibration": None,
+                "min": None,
+                "max": None,
+                "peak": None,
+                "rms": None,
+                "csv_file": "PROCESSING_ERROR",
+            })
+
+        finally:
+            # Remove temporary raw-byte CSV created by receive_adc_data().
+            try:
+                Path(csv_file).unlink()
+            except OSError:
+                pass
 
     summary_df = pd.DataFrame(results)
+
     summary_file = sweep_dir / "ifc_sweep_summary.csv"
     summary_df.to_csv(summary_file, index=False)
 
     print("\nIFC Sweep Summary")
+    print("=" * 150)
     print(summary_df.to_string(index=False))
 
-    print(f"\nSweep folder: {sweep_dir}")
-    print(f"Summary file: {summary_file}")
+    print(f"\nSweep folder:\n{sweep_dir}")
+    print(f"\nSummary file:\n{summary_file}")
 
-    return sweep_dir, summary_file, summary_df, saved_files
+    return (
+        sweep_dir,
+        summary_file,
+        summary_df,
+        saved_files,
+    )
 
 def gui_receive_ifc_sweep():
     try:
-        sweep_dir, summary_file, summary_df, saved_files = receive_ifc_sweep(
+        (
+            sweep_dir,
+            summary_file,
+            summary_df,
+            saved_files,
+        ) = receive_ifc_sweep(
             expected_packets=8,
             packet_size=512,
             timeout=15.0,
+            reconstruct=True,
         )
 
+        # ----------------------------------------------------------
+        # Create summary window
+        # ----------------------------------------------------------
         top = tk.Toplevel(root)
         top.title("IFC Sweep Summary")
-        top.geometry("900x360")
+        top.geometry("1250x560")
 
-        text = tk.Text(top, wrap="none", font=("Consolas", 10))
-        text.pack(fill="both", expand=True)
+        text_frame = tk.Frame(top)
+        text_frame.pack(
+            fill="both",
+            expand=True,
+            padx=8,
+            pady=8,
+        )
 
-        text.insert("end", "IFC Sweep Summary\n")
-        text.insert("end", "=" * 80 + "\n")
-        text.insert("end", summary_df.to_string(index=False))
-        text.insert("end", "\n\n")
-        text.insert("end", f"Sweep folder:\n{sweep_dir}\n\n")
-        text.insert("end", f"Summary file:\n{summary_file}\n")
+        summary_text = tk.Text(
+            text_frame,
+            wrap="none",
+            font=("Consolas", 10),
+        )
 
-        def ask_plot():
-            answer = messagebox.askyesno(
-                "Plot Sweep Result",
-                "Do you want to plot one of the sweep CSV files?"
+        vertical_scrollbar = tk.Scrollbar(
+            text_frame,
+            orient="vertical",
+            command=summary_text.yview,
+        )
+
+        horizontal_scrollbar = tk.Scrollbar(
+            text_frame,
+            orient="horizontal",
+            command=summary_text.xview,
+        )
+
+        summary_text.configure(
+            yscrollcommand=vertical_scrollbar.set,
+            xscrollcommand=horizontal_scrollbar.set,
+        )
+
+        summary_text.grid(
+            row=0,
+            column=0,
+            sticky="nsew",
+        )
+
+        vertical_scrollbar.grid(
+            row=0,
+            column=1,
+            sticky="ns",
+        )
+
+        horizontal_scrollbar.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+        )
+
+        text_frame.rowconfigure(0, weight=1)
+        text_frame.columnconfigure(0, weight=1)
+
+        summary_text.insert(
+            "end",
+            "IFC Sweep Summary\n",
+        )
+
+        summary_text.insert(
+            "end",
+            "=" * 130 + "\n",
+        )
+
+        summary_text.insert(
+            "end",
+            summary_df.to_string(index=False),
+        )
+
+        summary_text.insert(
+            "end",
+            f"\n\nSweep folder:\n{sweep_dir}\n",
+        )
+
+        summary_text.insert(
+            "end",
+            f"\nSummary file:\n{summary_file}\n",
+        )
+
+        summary_text.configure(state="disabled")
+
+        # ----------------------------------------------------------
+        # Keep only valid sweep results
+        # ----------------------------------------------------------
+        required_metric_columns = [
+            "mean",
+            "mae",
+            "residual_rms",
+            "fitted_amplitude",
+            "peak",
+            "rms",
+        ]
+
+        missing_columns = [
+            column
+            for column in required_metric_columns
+            if column not in summary_df.columns
+        ]
+
+        if missing_columns:
+            raise ValueError(
+                "Summary DataFrame is missing columns: "
+                + ", ".join(missing_columns)
             )
 
-            if not answer:
+        valid_results = summary_df.dropna(
+            subset=required_metric_columns
+        ).copy()
+
+        valid_results = valid_results[
+            valid_results["csv_file"].apply(
+                lambda value: (
+                    isinstance(value, str)
+                    and value not in {
+                        "TIMEOUT",
+                        "PROCESSING_ERROR",
+                    }
+                    and Path(value).exists()
+                )
+            )
+        ]
+
+        if valid_results.empty:
+            messagebox.showwarning(
+                "IFC Sweep",
+                (
+                    "The IFC sweep finished, but no valid captures "
+                    "are available for plotting."
+                ),
+                parent=top,
+            )
+            return
+
+        # ----------------------------------------------------------
+        # Select best capture
+        #
+        # Best is defined as the smallest residual MAE relative to
+        # the fitted sine wave.
+        # ----------------------------------------------------------
+        best_index = valid_results["mae"].idxmin()
+        best_row = valid_results.loc[best_index]
+
+        best_csv = Path(best_row["csv_file"])
+
+        best_ifc = float(best_row["ifc_vpp"])
+        best_mean = float(best_row["mean"])
+        best_mae = float(best_row["mae"])
+        best_residual_rms = float(best_row["residual_rms"])
+        best_amplitude = float(best_row["fitted_amplitude"])
+        best_offset = float(best_row["fitted_offset"])
+        best_peak = float(best_row["peak"])
+        best_rms = float(best_row["rms"])
+
+        # ----------------------------------------------------------
+        # Best result information
+        # ----------------------------------------------------------
+        best_result_frame = tk.LabelFrame(
+            top,
+            text="Best IFC Result",
+            padx=10,
+            pady=8,
+        )
+
+        best_result_frame.pack(
+            fill="x",
+            padx=10,
+            pady=(0, 8),
+        )
+
+        best_result_text = (
+            f"IFC: {best_ifc:.2f} Vpp    "
+            f"Mean: {best_mean:.6f}    "
+            f"Residual MAE: {best_mae:.6f}    "
+            f"Residual RMS: {best_residual_rms:.6f}\n"
+            f"Fitted amplitude: {best_amplitude:.6f}    "
+            f"Fitted offset: {best_offset:.6f}    "
+            f"Peak: {best_peak:.6f}    "
+            f"Waveform RMS: {best_rms:.6f}"
+        )
+
+        best_result_label = tk.Label(
+            best_result_frame,
+            text=best_result_text,
+            font=("Arial", 10, "bold"),
+            justify="left",
+            anchor="w",
+        )
+
+        best_result_label.pack(
+            fill="x",
+        )
+
+        # ----------------------------------------------------------
+        # Button handlers
+        # ----------------------------------------------------------
+        def plot_best_capture():
+            try:
+                plot_ifc_sweep_capture(
+                    best_csv,
+                    summary_row=best_row,
+                )
+
+            except Exception as exc:
+                messagebox.showerror(
+                    "Plot Error",
+                    str(exc),
+                    parent=top,
+                )
+
+        def select_and_plot_capture():
+            csv_file = filedialog.askopenfilename(
+                parent=top,
+                initialdir=sweep_dir,
+                title="Select an IFC sweep CSV file",
+                filetypes=[
+                    ("CSV files", "*.csv"),
+                    ("All files", "*.*"),
+                ],
+            )
+
+            if not csv_file:
                 return
 
-            csv_file = filedialog.askopenfilename(
-                initialdir=sweep_dir,
-                title="Select one sweep CSV file to plot",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
-            )
+            try:
+                selected_path = str(Path(csv_file))
 
-            if csv_file:
-                df = pd.read_csv(csv_file)
+                matched_rows = summary_df[
+                    summary_df["csv_file"] == selected_path
+                ]
 
-                fig, ax = plt.subplots(figsize=(12, 5))
-                ax.plot(df["sample_index"], df["adc_code"], lw=0.8)
-                ax.grid(True)
-                ax.set_xlabel("Sample")
-                ax.set_ylabel("ADC Code")
-                ax.set_title(Path(csv_file).name)
-                plt.show()
+                selected_summary_row = (
+                    matched_rows.iloc[0]
+                    if not matched_rows.empty
+                    else None
+                )
 
-        btn_plot_one = tk.Button(
-            top,
-            text="Plot One Sweep CSV",
-            command=ask_plot,
+                plot_ifc_sweep_capture(
+                    csv_file,
+                    summary_row=selected_summary_row,
+                )
+
+            except Exception as exc:
+                messagebox.showerror(
+                    "Plot Error",
+                    str(exc),
+                    parent=top,
+                )
+
+        def open_sweep_folder():
+            try:
+                import os
+
+                os.startfile(sweep_dir)
+
+            except Exception as exc:
+                messagebox.showerror(
+                    "Open Folder Error",
+                    str(exc),
+                    parent=top,
+                )
+
+        # ----------------------------------------------------------
+        # Buttons
+        # ----------------------------------------------------------
+        button_frame = tk.Frame(top)
+
+        button_frame.pack(
+            pady=(0, 10),
         )
-        btn_plot_one.pack(pady=8)
 
-    except Exception as e:
-        messagebox.showerror("Error", str(e))
+        tk.Button(
+            button_frame,
+            text="Plot Best Capture",
+            width=22,
+            command=plot_best_capture,
+        ).pack(
+            side="left",
+            padx=5,
+        )
+
+        tk.Button(
+            button_frame,
+            text="Select Another Capture",
+            width=22,
+            command=select_and_plot_capture,
+        ).pack(
+            side="left",
+            padx=5,
+        )
+
+        tk.Button(
+            button_frame,
+            text="Open Sweep Folder",
+            width=22,
+            command=open_sweep_folder,
+        ).pack(
+            side="left",
+            padx=5,
+        )
+
+        # Make sure the summary window appears before the dialog.
+        top.update_idletasks()
+
+        # ----------------------------------------------------------
+        # Ask whether to plot the best result immediately
+        # ----------------------------------------------------------
+        answer = messagebox.askyesno(
+            "Plot Best IFC Capture",
+            (
+                "The IFC sweep has finished.\n\n"
+                "The smallest fitted-sine residual MAE is:\n\n"
+                f"IFC: {best_ifc:.2f} Vpp\n"
+                f"Mean: {best_mean:.6f}\n"
+                f"Residual MAE: {best_mae:.6f}\n"
+                f"Residual RMS: {best_residual_rms:.6f}\n"
+                f"Fitted amplitude: {best_amplitude:.6f}\n"
+                f"Fitted offset: {best_offset:.6f}\n"
+                f"Peak: {best_peak:.6f}\n"
+                f"Waveform RMS: {best_rms:.6f}\n\n"
+                "Plot the measured waveform, fitted sine, "
+                "and residual error now?"
+            ),
+            parent=top,
+        )
+
+        if answer:
+            plot_best_capture()
+
+    except Exception as exc:
+        messagebox.showerror(
+            "IFC Sweep Error",
+            str(exc),
+        )
+
+def plot_ifc_sweep_capture(csv_file, summary_row=None):
+    csv_file = Path(csv_file)
+
+    if not csv_file.exists():
+        raise FileNotFoundError(f"CSV file not found:\n{csv_file}")
+
+    df = pd.read_csv(csv_file)
+
+    required_columns = {
+        "sample_index",
+        "adc_code",
+        "fitted_sine",
+        "residual_error",
+    }
+
+    missing = required_columns.difference(df.columns)
+
+    if missing:
+        raise ValueError(
+            "CSV is missing columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    sample_index = df["sample_index"].to_numpy()
+    adc_code = df["adc_code"].to_numpy()
+    fitted_sine = df["fitted_sine"].to_numpy()
+    residual = df["residual_error"].to_numpy()
+
+    # Waveform plot
+    fig1, ax1 = plt.subplots(figsize=(13, 6))
+
+    ax1.plot(
+        sample_index,
+        adc_code,
+        linewidth=0.8,
+        label="Measured ADC",
+    )
+
+    ax1.plot(
+        sample_index,
+        fitted_sine,
+        linewidth=1.2,
+        label="Fitted sine",
+    )
+
+    ax1.set_xlabel("Sample index")
+    ax1.set_ylabel("ADC code")
+    ax1.grid(True)
+    ax1.legend()
+
+    if summary_row is not None:
+        ifc_vpp = float(summary_row["ifc_vpp"])
+        mean_val = float(summary_row["mean"])
+        mae_val = float(summary_row["mae"])
+        residual_rms = float(summary_row["residual_rms"])
+        fitted_amplitude = float(summary_row["fitted_amplitude"])
+
+        ax1.set_title(
+            f"IFC Sweep Capture — {ifc_vpp:.2f} Vpp"
+        )
+
+        info = (
+            f"IFC: {ifc_vpp:.2f} Vpp\n"
+            f"Mean: {mean_val:.6f}\n"
+            f"Residual MAE: {mae_val:.6f}\n"
+            f"Residual RMS: {residual_rms:.6f}\n"
+            f"Fitted amplitude: {fitted_amplitude:.6f}"
+        )
+
+        ax1.text(
+            0.02,
+            0.97,
+            info,
+            transform=ax1.transAxes,
+            va="top",
+            family="monospace",
+            bbox={
+                "boxstyle": "round,pad=0.5",
+                "facecolor": "white",
+                "edgecolor": "gray",
+                "alpha": 0.9,
+            },
+        )
+    else:
+        ax1.set_title(csv_file.name)
+
+    fig1.tight_layout()
+
+    # Residual-error plot
+    fig2, ax2 = plt.subplots(figsize=(13, 4))
+
+    ax2.plot(
+        sample_index,
+        residual,
+        linewidth=0.8,
+    )
+
+    ax2.axhline(
+        0,
+        linewidth=0.8,
+        linestyle="--",
+    )
+
+    ax2.set_xlabel("Sample index")
+    ax2.set_ylabel("Residual error")
+    ax2.set_title("ADC Error Relative to Fitted Sine")
+    ax2.grid(True)
+
+    fig2.tight_layout()
+    plt.show()
 
 PROJECT_DIR = Path(r"C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl")
 SAVE_DIR = PROJECT_DIR / "adc_data"
