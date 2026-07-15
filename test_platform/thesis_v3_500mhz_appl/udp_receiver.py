@@ -528,6 +528,8 @@ def receive_ifc_sweep(
                 adc[0::2] = pos
                 adc[1::2] = neg
 
+                comparison = compare_to_reference(adc)
+
             else:
                 adc = samples.astype(np.int32)
 
@@ -588,6 +590,11 @@ def receive_ifc_sweep(
                 "peak": peak_val,
                 "rms": rms_val,
                 "csv_file": str(out_csv),
+                "rmse": None if comparison is None else comparison["rmse"],
+                "max_error": None if comparison is None else comparison["max_error"],
+                "mean_error": None if comparison is None else comparison["mean_error"],
+                "correlation": None if comparison is None else comparison["correlation"],
+                "lag": None if comparison is None else comparison["lag"],
             })
 
             status_text = (
@@ -635,6 +642,13 @@ def receive_ifc_sweep(
     )
 
 def gui_receive_ifc_sweep():
+
+    if messagebox.askyesno(
+        "Reference",
+        "Import a DPG reference TXT for waveform comparison?"
+    ):
+        load_reference_txt()
+
     try:
         (
             sweep_dir,
@@ -1248,6 +1262,12 @@ def gui_open_ifc_sweep_folder():
     sweep_dir = Path(selected_folder)
     summary_file = sweep_dir / "ifc_sweep_summary.csv"
 
+    if messagebox.askyesno(
+        "Reference",
+        "Import a DPG reference TXT for waveform comparison?"
+    ):
+        load_reference_txt()
+
     if not summary_file.exists():
         messagebox.showerror(
             "Summary Not Found",
@@ -1261,6 +1281,21 @@ def gui_open_ifc_sweep_folder():
     try:
         summary_df = pd.read_csv(summary_file)
 
+        if REFERENCE_SIGNAL is not None:
+            for idx, row in summary_df.iterrows():
+                csv_path = Path(str(row["csv_file"]))
+                if not csv_path.exists():
+                    csv_path = sweep_dir / csv_path.name
+                if not csv_path.exists():
+                    continue
+                df = pd.read_csv(csv_path)
+                comp = compare_to_reference(df["adc_code"].to_numpy(np.int32))
+                if comp is None:
+                    continue
+                for k,v in comp.items():
+                    summary_df.loc[idx,k]=v
+            summary_df.to_csv(summary_file,index=False)
+
         show_ifc_summary_window(
             sweep_dir=sweep_dir,
             summary_df=summary_df,
@@ -1272,6 +1307,84 @@ def gui_open_ifc_sweep_folder():
             "Open Sweep Error",
             str(exc),
         )
+
+REFERENCE_SIGNAL = None
+
+def load_reference_txt():
+    global REFERENCE_SIGNAL
+
+    filename = filedialog.askopenfilename(
+        title="Select DPG TXT file",
+        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+    )
+
+    if not filename:
+        return False
+
+    try:
+        ref = np.loadtxt(filename, comments='#', ndmin=1)
+
+        if ref.ndim == 2:
+            ref = ref[:, -1]          # last column
+
+        REFERENCE_SIGNAL = ref.astype(np.float64)
+
+        print(f"Loaded reference waveform ({REFERENCE_SIGNAL.size} samples)")
+        return True
+
+    except Exception as e:
+        messagebox.showerror("Reference Load Error", str(e))
+        return False
+
+def compare_to_reference(adc):
+
+    if REFERENCE_SIGNAL is None:
+        return None
+
+    ref = REFERENCE_SIGNAL.astype(np.float64).copy()
+    adc = adc.astype(np.float64)
+
+    adc -= np.mean(adc)
+    ref -= np.mean(ref)
+
+    adc_max = np.max(np.abs(adc))
+    ref_max = np.max(np.abs(ref))
+    if adc_max == 0 or ref_max == 0:
+        return None
+
+    adc /= adc_max
+    ref /= ref_max
+
+    corr = np.correlate(adc, ref, mode="full")
+    lag = np.argmax(corr) - (len(ref) - 1)
+
+    if lag > 0:
+        adc = adc[lag:]
+        ref = ref[:len(adc)]
+    elif lag < 0:
+        ref = ref[-lag:]
+        adc = adc[:len(ref)]
+
+    n = min(len(adc), len(ref))
+    if n < 10:
+        return None
+
+    adc = adc[:n]
+    ref = ref[:n]
+    error = adc - ref
+
+    correlation = np.corrcoef(adc, ref)[0,1]
+    if np.isnan(correlation):
+        correlation = 0.0
+
+    return {
+        "rmse": float(np.sqrt(np.mean(error**2))),
+        "max_error": float(np.max(np.abs(error))),
+        "mean_error": float(np.mean(error)),
+        "correlation": float(correlation),
+        "lag": int(lag),
+    }
+
 
 PROJECT_DIR = Path(r"C:\TIDIAC\summer2025_research_tiadc\test_platform\thesis_v3_500mhz_appl")
 SAVE_DIR = PROJECT_DIR / "adc_data"
