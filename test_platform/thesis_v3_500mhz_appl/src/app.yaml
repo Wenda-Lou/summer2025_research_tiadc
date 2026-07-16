@@ -1,4 +1,4 @@
-domain_path: C:\TIDIAC\summer2025_research_tiadc\test_platform\final_ver_1\export\final_ver_1\sw\standalone_psu_cortexa53_0
+domain_path: D:\TIADC\summer2025_research_tiadc\test_platform\final_ver_1\export\final_ver_1\sw\standalone_psu_cortexa53_0
 app_src_dir: D:\Xilinx\Vitis\2024.2\data\embeddedsw\lib\sw_apps\empty_application
 template: empty_application
 lang: c
