@@ -12,8 +12,8 @@ static uint8_t reference_ready = 0U;
 
 /*
  * A byte-per-sample written map is simple and reliable for the current
- * 2047-sample capture size. It prevents finalize() from accepting a reference
- * with missing or duplicated packet regions.
+ * 2032-sample reconstructed capture size. It prevents finalize() from
+ * accepting a reference with missing or duplicated packet regions.
  */
 static uint8_t written_map[REFERENCE_MAX_SAMPLES];
 

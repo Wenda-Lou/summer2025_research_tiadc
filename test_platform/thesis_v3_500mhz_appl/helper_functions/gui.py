@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox
 from .plot import plot_adc_csv, plot_ifc_sweep_capture
 from .receive_data import SAVE_DIR, receive_adc_data, receive_timing_captures
 from .sweep_test import receive_ifc_sweep
+from .reference_upload import send_reference
 
 root = None
 
@@ -519,7 +520,7 @@ def gui_open_ifc_sweep_folder():
 def gui_receive_timing_captures():
     dialog = tk.Toplevel(root)
     dialog.title("Timing Capture Test")
-    dialog.geometry("560x300")
+    dialog.geometry("690x390")
     dialog.transient(root)
     dialog.grab_set()
 
@@ -564,12 +565,27 @@ def gui_receive_timing_captures():
         if filename:
             reference_var.set(filename)
 
-    tk.Label(form, text="DAC reference TXT:").grid(row=2, column=0, padx=5, pady=5)
+    tk.Label(form, text="DAC reference TXT:").grid(row=4, column=0, padx=5, pady=5)
     tk.Entry(form, width=34, textvariable=reference_var).grid(
-        row=2, column=1, padx=5, pady=5
+        row=4, column=1, padx=5, pady=5
     )
     tk.Button(form, text="Browse", command=choose_reference).grid(
-        row=2, column=2, padx=5, pady=5
+        row=4, column=2, padx=5, pady=5
+    )
+
+    upload_after_timing_var = tk.BooleanVar(value=True)
+
+    tk.Checkbutton(
+        form,
+        text="Upload best aligned reference to FPGA after timing test",
+        variable=upload_after_timing_var,
+    ).grid(
+        row=5,
+        column=0,
+        columnspan=3,
+        padx=5,
+        pady=8,
+        sticky="w",
     )
 
     def start_receive():
@@ -581,14 +597,30 @@ def gui_receive_timing_captures():
                 raise ValueError("Select the exact DAC TXT reference file.")
 
             dialog.destroy()
-            timing_dir, summary_file, summary_df = receive_timing_captures(
+            (
+                timing_dir,
+                summary_file,
+                summary_df,
+                best_reference,
+            ) = receive_timing_captures(
                 frame_count=frame_count,
                 reference_txt=reference_txt,
                 timeout=timeout,
             )
+
+            upload_message = "Reference was not uploaded."
+
+            if upload_after_timing_var.get():
+                sent_count = send_reference(best_reference)
+                upload_message = (
+                    f"Uploaded {sent_count} aligned reference samples "
+                    "to the FPGA."
+                )
+
             messagebox.showinfo(
                 "Timing Test Complete",
                 f"Processed {len(summary_df)} complete frames.\n\n"
+                f"{upload_message}\n\n"
                 f"Results folder:\n{timing_dir}\n\n"
                 f"Summary:\n{summary_file}",
             )
@@ -602,7 +634,7 @@ def create_root():
     global root
     root = tk.Tk()
     root.title('ADC UDP Receiver')
-    root.geometry('400x470')
+    root.geometry('430x500')
 
     title = tk.Label(root, text='ADC UDP Receiver Tool', font=('Arial', 14, 'bold'))
     title.pack(pady=15)

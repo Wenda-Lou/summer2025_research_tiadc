@@ -16,7 +16,7 @@ extern "C" {
  * directly to one ADC capture frame.
  */
 #ifndef REFERENCE_MAX_SAMPLES
-#define REFERENCE_MAX_SAMPLES 2047U
+#define REFERENCE_MAX_SAMPLES 2032U
 #endif
 
 typedef enum {

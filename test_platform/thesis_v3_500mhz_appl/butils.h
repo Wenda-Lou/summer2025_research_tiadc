@@ -78,6 +78,7 @@ void handle_dma_dbg_cmd(char *line);
 void handle_mem_cmd (char *line);
 void handle_adc_gain_cmd(void);
 void handle_adc_offset_cmd(void);
+void handle_adc_calibration_cmd(void);
 
 /* Reusable ADC acquisition helpers. */
 int  adc_capture_frame(void);

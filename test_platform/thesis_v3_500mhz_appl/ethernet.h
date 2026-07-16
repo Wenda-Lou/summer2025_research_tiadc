@@ -38,9 +38,9 @@
 
 extern struct netif server_netif; //Make it can be seen by other .c files
 
-int lwIP_UDP_init();
-void udp_send_mem();
-void udp_update();
+int  lwIP_UDP_init(void);
+void udp_send_mem(void);
+void udp_update(void);
 
 
 

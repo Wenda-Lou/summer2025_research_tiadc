@@ -10,3 +10,29 @@ status = platform.build()
 comp = client.get_component(name="thesis_v3_500mhz_appl")
 comp.build()
 
+comp.build()
+
+comp.build()
+
+comp.build()
+
+status = comp.clean()
+
+comp.build()
+
+status = comp.clean()
+
+comp.build()
+
+comp.build()
+
+status = comp.clean()
+
+status = comp.clean()
+
+status = comp.clean()
+
+comp.build()
+
+vitis.dispose()
+

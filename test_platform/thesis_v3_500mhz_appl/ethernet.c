@@ -13,6 +13,8 @@
 #include <sys/types.h>
 #include <xemacps.h>
 #include "bjesdlink.h"
+#include "reference_buffer.h"
+#include <string.h>
 
 static unsigned char mac_address[6] = {0x00,0x0A,0x35,0x00,0x01,0x02};  /* Xilinx OUI + unique ID :contentReference[oaicite:1]{index=1} */
 
@@ -32,39 +34,108 @@ struct udp_pcb *udp_pcb_block;
 extern uint8_t uart_send_flag; //Send flag enabled by the uart
 extern uint8_t* RxBufferPtr;
 
+#define REFERENCE_PACKET_HEADER_BYTES 8U
+#define REFERENCE_PACKET_MAX_SAMPLES \
+    ((512U - REFERENCE_PACKET_HEADER_BYTES) / sizeof(int16_t))
+
+static uint16_t read_u16_le(const uint8_t *data);
+
+static void handle_reference_packet(
+    const uint8_t *data,
+    uint16_t length
+);
+
 /* -------------------------------------------------------------------------------- */
 /*  UDP receive callback: Output the receive parameters using uart                  */
 /* -------------------------------------------------------------------------------- */
-void recv_callback(void *arg,
-                          struct udp_pcb *pcb,
-                          struct pbuf *p,
-                          const ip_addr_t *addr,
-                          u16_t port)
+void recv_callback(
+    void *arg,
+    struct udp_pcb *pcb,
+    struct pbuf *p,
+    const ip_addr_t *addr,
+    u16_t port
+)
 {
-    uint8_t receive_buf[64] = {0x0}; //clock mode, fine delay, super fine delay
-    xil_printf("\r\nUDP Packet received. Enter Callback function\r\n");
-    /* Always free the incoming packet as soon as possible */
-    if (p != NULL) {
-        memcpy(receive_buf, p -> payload, sizeof(receive_buf));
-        xil_printf("Clk Mode: %0x\r\nFine delay steps: %0d\r\nSuper Fine delay steps: %0d\r\n", receive_buf[0], receive_buf[1],receive_buf[2]); 
-        uint8_t channel_idx = receive_buf[3] & 0xff;
-        xil_printf("channel idx: %0x\r\n", channel_idx);
-        ad9695_adc_delay_mode(receive_buf[0] & 0xff);
-        ad9695_adc_set_channel_select(channel_idx - 1);
-        ad9695_adc_fine_delay(receive_buf[1] & 0xff);
-        ad9695_adc_set_channel_select(channel_idx - 1);
-        ad9695_adc_super_fine_delay(receive_buf[2] & 0xff);
-        ad9695_adc_set_channel_select(2);
-        jesdlink_reset();
-        pbuf_free(p);                          /* release RX pbuf */
+    uint8_t receive_buf[512];
+    uint16_t copied_length;
+
+    if (p == NULL)
+    {
+        return;
     }
-    xil_printf("uart-cmd$: ");
+
+    copied_length = (p->tot_len < sizeof(receive_buf))
+        ? p->tot_len
+        : sizeof(receive_buf);
+
+    pbuf_copy_partial(
+        p,
+        receive_buf,
+        copied_length,
+        0U
+    );
+
+    if ((copied_length >= 4U) &&
+        ((memcmp(receive_buf, "REFB", 4U) == 0) ||
+         (memcmp(receive_buf, "REFD", 4U) == 0) ||
+         (memcmp(receive_buf, "REFE", 4U) == 0) ||
+         (memcmp(receive_buf, "REFC", 4U) == 0)))
+    {
+        handle_reference_packet(
+            receive_buf,
+            copied_length
+        );
+    }
+    else
+    {
+        /*
+         * Preserve the existing timing-delay command.
+         */
+        if (copied_length >= 4U)
+        {
+            uint8_t channel_idx = receive_buf[3];
+
+            xil_printf(
+                "Clk Mode: %x\r\n"
+                "Fine delay steps: %u\r\n"
+                "Super Fine delay steps: %u\r\n",
+                receive_buf[0],
+                receive_buf[1],
+                receive_buf[2]
+            );
+
+            if (channel_idx >= 1U)
+            {
+                ad9695_adc_delay_mode(receive_buf[0]);
+
+                ad9695_adc_set_channel_select(
+                    channel_idx - 1U
+                );
+
+                ad9695_adc_fine_delay(receive_buf[1]);
+
+                ad9695_adc_set_channel_select(
+                    channel_idx - 1U
+                );
+
+                ad9695_adc_super_fine_delay(
+                    receive_buf[2]
+                );
+
+                ad9695_adc_set_channel_select(2U);
+
+                jesdlink_reset();
+            }
+        }
+    }
+
+    pbuf_free(p);
 }
 
 ip_addr_t ipaddr, netmask, gw;
 ip_addr_t user_ip;
 
-int lwIP_UDP_init()
+int lwIP_UDP_init(void)
 {
 
     Xil_ICacheEnable();
@@ -117,7 +188,7 @@ int lwIP_UDP_init()
 }
 
 //Loading the payload with 1024 byte from the memory and send to the client 
-void udp_send_mem()
+void udp_send_mem(void)
 {   
     for (int i = 0; i < NUM_OF_TX; i++){
         //xil_printf("UDP sending Package #%d\r\n", i + 1);
@@ -158,7 +229,7 @@ void udp_send_mem()
 //This function must be put into a while loop because the xemacif_input function must be
 //repeatedly called so that new ethernet data frames can be accepted by the lwip platform
 //Otherwise the data frames will block the RX channel of the platform and the RX queue of the EMAc RX intr
-void udp_update()
+void udp_update(void)
 {
     xemacif_input(&server_netif);
     if(uart_send_flag){
@@ -168,7 +239,165 @@ void udp_update()
     }
 }
 
+static uint16_t read_u16_le(const uint8_t *data)
+{
+    return (uint16_t)data[0] |
+           ((uint16_t)data[1] << 8);
+}
 
+static void handle_reference_packet(
+    const uint8_t *data,
+    uint16_t length
+)
+{
+    reference_buffer_status_t status;
+
+    if ((data == NULL) || (length < 4U))
+    {
+        return;
+    }
+
+    if (memcmp(data, "REFB", 4U) == 0)
+    {
+        uint16_t total_samples;
+
+        if (length < 6U)
+        {
+            xil_printf("Invalid REFB packet.\r\n");
+            return;
+        }
+
+        total_samples = read_u16_le(&data[4]);
+
+        status = reference_buffer_begin(total_samples);
+
+        xil_printf(
+            "Reference begin: %u samples, status %d\r\n",
+            total_samples,
+            (int)status
+        );
+
+        return;
+    }
+
+    if (memcmp(data, "REFD", 4U) == 0)
+    {
+        uint16_t offset;
+        uint16_t sample_count;
+        uint32_t required_bytes;
+
+        if (length < 8U)
+        {
+            xil_printf("Invalid REFD packet.\r\n");
+            return;
+        }
+
+        offset = read_u16_le(&data[4]);
+        sample_count = read_u16_le(&data[6]);
+
+        required_bytes =
+            8U + ((uint32_t)sample_count * sizeof(int16_t));
+
+        if (length < required_bytes)
+        {
+            xil_printf(
+                "Short REFD packet: got %u, expected %lu\r\n",
+                length,
+                (unsigned long)required_bytes
+            );
+            return;
+        }
+
+        if (sample_count > REFERENCE_PACKET_MAX_SAMPLES)
+        {
+            xil_printf(
+                "REFD packet contains too many samples: %u (max %u).\r\n",
+                sample_count,
+                (unsigned int)REFERENCE_PACKET_MAX_SAMPLES
+            );
+            return;
+        }
+
+        /*
+         * Do not cast the byte payload directly to int16_t*. The UDP byte
+         * buffer is not guaranteed to have int16_t alignment on every target.
+         */
+        int16_t chunk_samples[REFERENCE_PACKET_MAX_SAMPLES];
+
+        memcpy(
+            chunk_samples,
+            &data[REFERENCE_PACKET_HEADER_BYTES],
+            (size_t)sample_count * sizeof(chunk_samples[0])
+        );
+
+        status = reference_buffer_write_chunk(
+            offset,
+            chunk_samples,
+            sample_count
+        );
+
+        if (status != REFERENCE_BUFFER_OK)
+        {
+            xil_printf(
+                "Reference chunk failed: offset %u, "
+                "count %u, status %d\r\n",
+                offset,
+                sample_count,
+                (int)status
+            );
+        }
+
+        return;
+    }
+
+    if (memcmp(data, "REFE", 4U) == 0)
+    {
+        status = reference_buffer_finalize();
+
+        if ((status == REFERENCE_BUFFER_OK) &&
+            reference_buffer_is_ready())
+        {
+            const size_t sample_count = reference_buffer_length();
+            const int16_t *samples = reference_buffer_data();
+
+            xil_printf("\r\nReference uploaded successfully.\r\n");
+            xil_printf(
+                "Samples : %lu\r\n",
+                (unsigned long)sample_count
+            );
+
+            if ((samples != NULL) && (sample_count > 0U))
+            {
+                xil_printf(
+                    "First   : %d\r\n"
+                    "Last    : %d\r\n",
+                    (int)samples[0],
+                    (int)samples[sample_count - 1U]
+                );
+            }
+
+            xil_printf("Ready for calibration.\r\n");
+        }
+        else
+        {
+            xil_printf(
+                "Reference finalize failed: status %d, "
+                "ready %d, samples %lu\r\n",
+                (int)status,
+                reference_buffer_is_ready(),
+                (unsigned long)reference_buffer_length()
+            );
+        }
+
+        return;
+    }
+
+    if (memcmp(data, "REFC", 4U) == 0)
+    {
+        reference_buffer_clear();
+        xil_printf("Reference cleared.\r\n");
+    }
+}
 
 // int main(void)
 // {

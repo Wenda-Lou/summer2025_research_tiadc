@@ -18,6 +18,8 @@
 #include "sleep.h"
 #include "ad9695_registers.h"
 #include "ethernet.h"
+#include "calibration.h"
+#include "reference_buffer.h"
 
 #include "xil_cache.h"
 #include "xuartps.h"
@@ -301,8 +303,10 @@ void handle_adc_cmd(char* line)
     } else if (strcmp(option, "-offset") == 0)
     {
         handle_adc_offset_cmd();
+    } else if (strcmp(option, "-cal") == 0) {
+        handle_adc_calibration_cmd();
     } else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, or -offset)", option);
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, or -cal)", option);
     }
 }
 
@@ -883,4 +887,49 @@ static void adc_ifc_sweep(void)
     );
 
     xil_printf("=================================\r\n");
+}
+
+void handle_adc_calibration_cmd(void)
+{
+    calibration_config_t config;
+    calibration_state_t state;
+    calibration_status_t status;
+
+    xil_printf("\r\nADC Calibration\r\n");
+
+    if (!reference_buffer_is_ready())
+    {
+        xil_printf(
+            "Calibration cannot start: no DAC reference is loaded.\r\n"
+        );
+        return;
+    }
+
+    calibration_default_config(&config);
+
+    status = calibration_init(&state, &config);
+
+    if (status != CALIBRATION_OK)
+    {
+        xil_printf(
+            "Calibration initialization failed: %d\r\n",
+            (int)status
+        );
+        return;
+    }
+
+    xil_printf("Calibration initialized successfully.\r\n");
+    xil_printf(
+        "Reference samples: %lu\r\n",
+        (unsigned long)reference_buffer_length()
+    );
+    xil_printf(
+        "Current stage: %s\r\n",
+        calibration_stage_name(state.stage)
+    );
+
+    /*
+     * DMA capture, ADC reconstruction, and iterative coefficient updates
+     * will be connected after the reference upload path is available.
+     */
 }

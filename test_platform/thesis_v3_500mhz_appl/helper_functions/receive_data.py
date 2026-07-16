@@ -148,10 +148,12 @@ def receive_timing_captures(
 
     summary = []
     fitted_frames = []
+    timing_results = []
 
     for index, adc in enumerate(captures, start=1):
         result = align_adc_to_periodic_reference(adc, reference_period)
         fitted_frames.append(result["fitted_adc"])
+        timing_results.append(result)
 
         aligned_file = timing_dir / f"frame_{index:03d}_aligned.csv"
         pd.DataFrame({
@@ -223,4 +225,44 @@ def receive_timing_captures(
         "fitted_offset_codes",
     ]].to_string(index=False))
 
-    return timing_dir, summary_file, summary_df
+    # Select the timing frame with the highest correlation.
+    best_result_index = int(
+        np.argmax([
+            result["correlation"]
+            for result in timing_results
+        ])
+    )
+
+    best_result = timing_results[best_result_index]
+    best_reference = np.clip(
+        np.rint(best_result["fitted_adc"]),
+        -32768,
+        32767,
+    ).astype(np.int16)
+
+    if best_reference.size != captures[best_result_index].size:
+        raise RuntimeError(
+            "Best reference length does not match its ADC capture length."
+        )
+
+    best_reference_file = timing_dir / "best_fitted_reference.csv"
+    pd.DataFrame({
+        "sample_index": np.arange(
+            best_reference.size,
+            dtype=np.int32,
+        ),
+        "reference_adc_code": best_reference,
+    }).to_csv(best_reference_file, index=False)
+
+    print(
+        f"Best timing frame: {best_result_index + 1}, "
+        f"correlation={best_result['correlation']:.6f}"
+    )
+    print(f"Saved FPGA reference: {best_reference_file}")
+
+    return (
+        timing_dir,
+        summary_file,
+        summary_df,
+        best_reference,
+    )
