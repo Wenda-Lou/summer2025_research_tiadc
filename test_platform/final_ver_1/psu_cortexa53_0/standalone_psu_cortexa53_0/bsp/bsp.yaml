@@ -1,6 +1,6 @@
 sdt: hw_artifacts\psu_cortexa53_0_baremetal.dts
 family: ZynqMP
-path: C:\TIDIAC\summer2025_research_tiadc\test_platform\final_ver_1\psu_cortexa53_0\standalone_psu_cortexa53_0\bsp
+path: D:/TIADC/summer2025_research_tiadc/test_platform/final_ver_1/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp
 config: None
 os: standalone
 os_info:

@@ -1,9 +1,9 @@
-# 2026-07-15T14:33:57.237685200
+# 2026-07-17T03:55:48.515114200
 import vitis
 
 client = vitis.create_client()
 client.set_workspace(path="test_platform")
 
-comp = client.get_component(name="thesis_v3_500mhz_appl")
-comp.build()
+platform = client.get_component(name="final_ver_1")
+status = platform.build()
 

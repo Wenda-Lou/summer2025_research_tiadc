@@ -1,4 +1,4 @@
-# Install script for directory: C:/TIDIAC/summer2025_research_tiadc/test_platform/final_ver_1/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/libsrc/lwip220/src/lwip-2.2.0/contrib/ports/xilinx
+# Install script for directory: D:/TIADC/summer2025_research_tiadc/test_platform/final_ver_1/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/libsrc/lwip220/src/lwip-2.2.0/contrib/ports/xilinx
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -34,12 +34,12 @@ endif()
 
 # Set default install directory permissions.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "H:/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for each subdirectory.
-  include("C:/TIDIAC/summer2025_research_tiadc/test_platform/final_ver_1/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/libsrc/build_configs/gen_bsp/libsrc/lwip220/src/lwip-2.2.0/contrib/ports/xilinx/netif/cmake_install.cmake")
+  include("D:/TIADC/summer2025_research_tiadc/test_platform/final_ver_1/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/libsrc/build_configs/gen_bsp/libsrc/lwip220/src/lwip-2.2.0/contrib/ports/xilinx/netif/cmake_install.cmake")
 
 endif()
 

@@ -1,4 +1,4 @@
-# Install script for directory: C:/TIDIAC/summer2025_research_tiadc/test_platform/final_ver_1/zynqmp_fsbl
+# Install script for directory: D:/TIADC/summer2025_research_tiadc/test_platform/final_ver_1/zynqmp_fsbl
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -34,7 +34,7 @@ endif()
 
 # Set default install directory permissions.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "H:/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
 endif()
 
 if(CMAKE_INSTALL_COMPONENT)
@@ -45,5 +45,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "C:/TIDIAC/summer2025_research_tiadc/test_platform/final_ver_1/zynqmp_fsbl/build/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "D:/TIADC/summer2025_research_tiadc/test_platform/final_ver_1/zynqmp_fsbl/build/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

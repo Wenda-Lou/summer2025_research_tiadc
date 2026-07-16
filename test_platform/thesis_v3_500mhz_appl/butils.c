@@ -32,8 +32,9 @@ volatile uint8_t adc_sweep_active = 0;
 
 #define ERR(fmt, ...) xil_printf("Command Error: " fmt "\r\n", ##__VA_ARGS__)
 
-static int adc_capture_frame(void);
+int adc_capture_frame(void);
 static void adc_ifc_sweep(void);
+void adc_timing_capture(uint32_t frame_count);
 
 static int next_tok(char **ctx, char *out, size_t len) {
     char *t = strtok(NULL, " ");
@@ -271,6 +272,28 @@ void handle_adc_cmd(char* line)
 
         xil_printf("0x0701 = 0x%02X\r\n", r701);
         xil_printf("0x073B = 0x%02X\r\n", r73b);
+    } else if (strcmp(option, "-timing") == 0) {
+        uint32_t frame_count = ADC_TIMING_DEFAULT_FRAMES;
+
+        token = strtok(NULL, " ");
+        if (token != NULL)
+        {
+            char *endptr = NULL;
+            unsigned long parsed = strtoul(token, &endptr, 0);
+
+            if ((endptr == token) || (*endptr != '\0') ||
+                (parsed == 0) || (parsed > ADC_TIMING_MAX_FRAMES))
+            {
+                ERR("Invalid timing frame count. Use 1 to %u.",
+                    ADC_TIMING_MAX_FRAMES);
+                return;
+            }
+
+            frame_count = (uint32_t)parsed;
+        }
+
+        adc_timing_capture(frame_count);
+
     } else if (strcmp(option, "-gain") == 0) {
         
         handle_adc_gain_cmd();
@@ -278,7 +301,9 @@ void handle_adc_cmd(char* line)
     } else if (strcmp(option, "-offset") == 0)
     {
         handle_adc_offset_cmd();
-    } else {ERR("Invalid option \"%s\" (use -c or -offset)", option);}
+    } else {
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, or -offset)", option);
+    }
 }
 
 typedef void (*cmd_fn)(char *line);
@@ -536,7 +561,7 @@ void handle_adc_offset_cmd(void)
     }
 }
 
-static int adc_capture_frame(void)
+int adc_capture_frame(void)
 {
     int res;
     u32 timeout;
@@ -642,6 +667,96 @@ static int adc_capture_frame(void)
     xil_printf("DMA capture complete.\r\n");
 
     return XST_SUCCESS;
+}
+
+void adc_timing_capture(uint32_t frame_count)
+{
+    uint32_t successful_captures = 0;
+    uint32_t transmitted_frames = 0;
+
+    if ((frame_count == 0U) || (frame_count > ADC_TIMING_MAX_FRAMES))
+    {
+        ERR("Timing frame count must be between 1 and %u.",
+            ADC_TIMING_MAX_FRAMES);
+        return;
+    }
+
+    if (adc_sweep_active)
+    {
+        ERR("Another automatic ADC capture is already in progress.");
+        return;
+    }
+
+    /*
+     * Reuse the existing activity lock so manual DMA/UDP commands
+     * cannot modify the shared DMA buffer during this test.
+     */
+    adc_sweep_active = 1;
+
+    xil_printf("\r\n");
+    xil_printf("===================================\r\n");
+    xil_printf("Starting ADC Timing Capture Test\r\n");
+    xil_printf("Requested frames : %lu\r\n",
+               (unsigned long)frame_count);
+    xil_printf("Frame size       : %d bytes\r\n",
+               DMA_CMD_BUF_SIZE);
+    xil_printf("===================================\r\n");
+
+    for (uint32_t frame = 0; frame < frame_count; frame++)
+    {
+        xil_printf("\r\n[TIMING_FRAME_BEGIN %lu/%lu]\r\n",
+                   (unsigned long)(frame + 1U),
+                   (unsigned long)frame_count);
+
+        /*
+         * Every frame uses the exact same sequence:
+         * reset DMA -> wait for reset -> settle -> arm S2MM ->
+         * wait for completion -> invalidate cache.
+         */
+        if (adc_capture_frame() != XST_SUCCESS)
+        {
+            xil_printf("[TIMING_FRAME_FAILED %lu]\r\n",
+                       (unsigned long)(frame + 1U));
+            continue;
+        }
+
+        successful_captures++;
+
+        /*
+         * Send the completed frame immediately. The PC receiver must
+         * already be listening before this UART command is issued.
+         */
+        xil_printf("Transmitting timing frame %lu...\r\n",
+                   (unsigned long)(frame + 1U));
+
+        udp_send_mem();
+        transmitted_frames++;
+
+        xil_printf("[TIMING_FRAME_END %lu]\r\n",
+                   (unsigned long)(frame + 1U));
+
+        /*
+         * Separate frames so the host can finish assembling and saving
+         * the current eight-packet UDP transfer before the next one.
+         */
+        if ((frame + 1U) < frame_count)
+        {
+            usleep(ADC_TIMING_INTERFRAME_DELAY_US);
+        }
+    }
+
+    adc_sweep_active = 0;
+
+    xil_printf("\r\n");
+    xil_printf("===================================\r\n");
+    xil_printf("ADC timing capture finished.\r\n");
+    xil_printf("Successful captures : %lu/%lu\r\n",
+               (unsigned long)successful_captures,
+               (unsigned long)frame_count);
+    xil_printf("Transmitted frames  : %lu/%lu\r\n",
+               (unsigned long)transmitted_frames,
+               (unsigned long)frame_count);
+    xil_printf("===================================\r\n");
 }
 
 static void adc_ifc_sweep(void)

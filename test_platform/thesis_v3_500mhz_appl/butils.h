@@ -37,6 +37,10 @@
  *              status                        Display current calibration status
  *              back                          Return to UART command prompt
  *
+ *          -timing [frames]                  Capture and transmit repeated frames
+ *                                               for software timing alignment
+ *                                               (default: 20 frames)
+ *
  *          -gain                             Enter ADC gain setting menu
  *              IFC                           Input full-scale control mode
  *                  set <1.36~2.04>           Set input full-scale (Vpp differential)
@@ -55,6 +59,11 @@
 #define CONSOLE_CMDS_H
 
 #include <stdint.h>
+
+#define ADC_TIMING_DEFAULT_FRAMES       20U
+#define ADC_TIMING_MAX_FRAMES           1000U
+#define ADC_TIMING_INTERFRAME_DELAY_US  100000U
+
 extern volatile uint8_t adc_sweep_active;
 
 /* Top‑level dispatcher */
@@ -69,6 +78,10 @@ void handle_dma_dbg_cmd(char *line);
 void handle_mem_cmd (char *line);
 void handle_adc_gain_cmd(void);
 void handle_adc_offset_cmd(void);
+
+/* Reusable ADC acquisition helpers. */
+int  adc_capture_frame(void);
+void adc_timing_capture(uint32_t frame_count);
 
 
 #endif /* CONSOLE_CMDS_H */

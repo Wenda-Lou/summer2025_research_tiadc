@@ -1,4 +1,4 @@
-# Install script for directory: C:/TIDIAC/summer2025_research_tiadc/test_platform/final_ver_1/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/libsrc/standalone/src/arm/common/gcc
+# Install script for directory: D:/TIADC/summer2025_research_tiadc/test_platform/final_ver_1/psu_cortexa53_0/standalone_psu_cortexa53_0/bsp/libsrc/standalone/src/arm/common/gcc
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -34,6 +34,6 @@ endif()
 
 # Set default install directory permissions.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "C:/AMD/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "H:/2025.1/Vitis/gnu/aarch64/nt/aarch64-none/bin/aarch64-none-elf-objdump.exe")
 endif()
 
