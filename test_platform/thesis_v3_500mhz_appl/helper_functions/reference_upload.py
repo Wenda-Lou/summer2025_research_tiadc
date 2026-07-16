@@ -103,3 +103,11 @@ def clear_reference(
         sock.sendto(b"REFC", (fpga_ip, fpga_port))
 
     print(f"Sent reference-clear command to {fpga_ip}:{fpga_port}")
+
+
+if __name__ == "__main__":
+    import numpy as np
+
+    test_reference = np.arange(2032, dtype=np.int16)
+
+    send_reference(test_reference)
