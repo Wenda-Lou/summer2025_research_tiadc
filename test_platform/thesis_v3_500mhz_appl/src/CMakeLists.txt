@@ -10,32 +10,10 @@ project(${APP_NAME})
 find_package(common)
 enable_language(C ASM CXX)
 collect(PROJECT_LIB_DEPS xilstandalone;xiltimer;lwip220)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 collect(PROJECT_LIB_DEPS xil)
 collect(PROJECT_LIB_DEPS gcc)
 collect(PROJECT_LIB_DEPS c)
+collect(PROJECT_LIB_DEPS m)
 
 # Use CMAKE_LIBRARY_PATH in link_directories
 link_directories(${CMAKE_LIBRARY_PATH})

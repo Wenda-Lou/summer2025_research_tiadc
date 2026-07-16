@@ -37,6 +37,8 @@ set(USER_COMPILE_SOURCES
 "../ethernet.c"
 "../main.c"
 "../peripherals.c"
+"../calibration.c"
+"../reference_buffer.c"
 )
 
 # -----------------------------------------

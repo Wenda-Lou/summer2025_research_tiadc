@@ -1,19 +1,18 @@
-# 2026-07-17T04:54:59.690829700
+# 2026-07-17T03:55:48.515114200
 import vitis
 
 client = vitis.create_client()
 client.set_workspace(path="test_platform")
 
+platform = client.get_component(name="final_ver_1")
+status = platform.build()
+
 comp = client.get_component(name="thesis_v3_500mhz_appl")
-status = comp.clean()
-
 comp.build()
 
 comp.build()
 
 comp.build()
-
-status = comp.clean()
 
 comp.build()
 
@@ -25,11 +24,15 @@ status = comp.clean()
 
 comp.build()
 
+comp.build()
+
+status = comp.clean()
+
+status = comp.clean()
+
 status = comp.clean()
 
 comp.build()
 
-comp.build()
-
-comp.build()
+vitis.dispose()
 
