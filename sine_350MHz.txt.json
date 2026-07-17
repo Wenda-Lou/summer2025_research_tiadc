@@ -1,0 +1,22 @@
+{
+  "output_file": "sine_350MHz.txt",
+  "dac_sample_rate_hz": 2457600000.0,
+  "num_samples": 65536,
+  "requested_tone_hz": 350000000.0,
+  "actual_tone_hz": 349987500.0,
+  "tone_bin": 9333,
+  "bin_spacing_hz": 37500.0,
+  "sine_peak_dbfs": -1.5,
+  "sine_phase_deg": 0.0,
+  "dither_enabled": false,
+  "dither_rms_dbfs": null,
+  "dither_low_hz": null,
+  "dither_high_hz": null,
+  "dither_seed": null,
+  "anti_clipping_scale": 1.0,
+  "minimum_code": -27570,
+  "maximum_code": 27570,
+  "mean_code": 0.0,
+  "rms_code": 19494.93080914672,
+  "periodic_by_construction": true
+}
