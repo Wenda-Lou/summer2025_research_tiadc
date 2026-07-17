@@ -516,74 +516,55 @@ def gui_open_ifc_sweep_folder():
         )
 
 
+
 def gui_receive_timing_captures():
+    """Run the frame-to-frame timing repeatability receiver."""
     dialog = tk.Toplevel(root)
-    dialog.title("DAC Reference Timing Test")
-    dialog.geometry("560x300")
+    dialog.title("ADC Timing Repeatability Test")
+    dialog.geometry("520x260")
     dialog.transient(root)
     dialog.grab_set()
 
     tk.Label(
         dialog,
-        text=("Start this receiver first, then run on UART:\n"
-              "adc -timing <frame count>\n\n"
-              "Fixed rates: DAC 2.4576 GSa/s, ADC 1.3 GSa/s"),
+        text=(
+            "Start this receiver first, then run on UART:\n"
+            "adc -timing <frame count>\n\n"
+            "This test aligns every capture to frame 1.\n"
+            "A DAC TXT file is not required."
+        ),
         justify="center",
     ).pack(pady=12)
 
     form = tk.Frame(dialog)
     form.pack(pady=5)
-    tk.Label(form, text="Frame count:").grid(row=0, column=0, padx=5, pady=5)
-    frame_entry = tk.Entry(form, width=10)
+
+    tk.Label(form, text="Frame count:").grid(
+        row=0, column=0, padx=5, pady=5, sticky="e"
+    )
+    frame_entry = tk.Entry(form, width=12)
     frame_entry.insert(0, "20")
     frame_entry.grid(row=0, column=1, padx=5, pady=5)
 
-    tk.Label(form, text="Timeout per packet (s):").grid(row=1, column=0, padx=5, pady=5)
-    timeout_entry = tk.Entry(form, width=16)
+    tk.Label(form, text="Timeout per packet (s):").grid(
+        row=1, column=0, padx=5, pady=5, sticky="e"
+    )
+    timeout_entry = tk.Entry(form, width=12)
     timeout_entry.insert(0, "20")
     timeout_entry.grid(row=1, column=1, padx=5, pady=5)
-
-    tk.Label(form, text="DAC sample rate (Hz):").grid(row=2, column=0, padx=5, pady=5)
-    dac_rate_entry = tk.Entry(form, width=16)
-    dac_rate_entry.insert(0, "2457600000")
-    dac_rate_entry.grid(row=2, column=1, padx=5, pady=5)
-
-    tk.Label(form, text="ADC sample rate (Hz):").grid(row=3, column=0, padx=5, pady=5)
-    adc_rate_entry = tk.Entry(form, width=16)
-    adc_rate_entry.insert(0, "1300000000")
-    adc_rate_entry.grid(row=3, column=1, padx=5, pady=5)
-
-    reference_var = tk.StringVar()
-
-    def choose_reference():
-        filename = filedialog.askopenfilename(
-            parent=dialog,
-            title="Select the exact TXT loaded into DPG Downloader",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-        )
-        if filename:
-            reference_var.set(filename)
-
-    tk.Label(form, text="DAC reference TXT:").grid(row=2, column=0, padx=5, pady=5)
-    tk.Entry(form, width=34, textvariable=reference_var).grid(
-        row=2, column=1, padx=5, pady=5
-    )
-    tk.Button(form, text="Browse", command=choose_reference).grid(
-        row=2, column=2, padx=5, pady=5
-    )
 
     def start_receive():
         try:
             frame_count = int(frame_entry.get())
             timeout = float(timeout_entry.get())
-            reference_txt = reference_var.get().strip()
-            if not reference_txt:
-                raise ValueError("Select the exact DAC TXT reference file.")
+            if frame_count <= 0:
+                raise ValueError("Frame count must be positive.")
+            if timeout <= 0:
+                raise ValueError("Timeout must be positive.")
 
             dialog.destroy()
             timing_dir, summary_file, summary_df = receive_timing_captures(
                 frame_count=frame_count,
-                reference_txt=reference_txt,
                 timeout=timeout,
             )
             messagebox.showinfo(
@@ -595,8 +576,12 @@ def gui_receive_timing_captures():
         except Exception as exc:
             messagebox.showerror("Timing Test Error", str(exc))
 
-    tk.Button(dialog, text="Start Receiver", width=18, command=start_receive).pack(pady=12)
-
+    tk.Button(
+        dialog,
+        text="Start Receiver",
+        width=18,
+        command=start_receive,
+    ).pack(pady=12)
 
 def create_root():
     global root

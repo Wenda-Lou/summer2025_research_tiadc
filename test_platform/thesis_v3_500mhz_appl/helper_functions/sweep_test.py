@@ -116,7 +116,6 @@ def receive_ifc_sweep(
                     f"Capture for IFC {ifc} Vpp is too short."
                 )
 
-            comparison = None
             pos_mean = np.nan
             neg_mean = np.nan
             branch_mean_difference = np.nan
@@ -202,11 +201,6 @@ def receive_ifc_sweep(
                 "peak": peak_val,
                 "rms": rms_val,
                 "csv_file": str(out_csv),
-                "rmse": None if comparison is None else comparison["rmse"],
-                "max_error": None if comparison is None else comparison["max_error"],
-                "mean_error": None if comparison is None else comparison["mean_error"],
-                "correlation": None if comparison is None else comparison["correlation"],
-                "lag": None if comparison is None else comparison["lag"],
             })
 
             status_text = (
@@ -253,49 +247,3 @@ def receive_ifc_sweep(
         saved_files,
     )
 
-
-REFERENCE_SIGNAL = None
-
-def load_reference_txt():
-    global REFERENCE_SIGNAL
-
-    filename = filedialog.askopenfilename(
-        title="Select DPG TXT file",
-        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
-    )
-
-    if not filename:
-        return False
-
-    try:
-        ref = np.loadtxt(filename, comments='#', ndmin=1)
-
-        if ref.ndim == 2:
-            ref = ref[:, -1]          # last column
-
-        REFERENCE_SIGNAL = ref.astype(np.float64)
-
-        print(f"Loaded reference waveform ({REFERENCE_SIGNAL.size} samples)")
-        return True
-
-    except Exception as e:
-        messagebox.showerror("Reference Load Error", str(e))
-        return False
-
-def compare_to_reference(adc):
-    """
-    DAC TXT-to-ADC comparison is intentionally disabled for now.
-
-    The TXT samples are in the DAC sample-rate domain, while `adc` is in the
-    ADC sample-rate domain. Direct correlation would produce misleading lag
-    and RMSE values unless the reference is first converted to the ADC time
-    grid using the actual DAC rate, interpolation settings, and ADC rate.
-    """
-    if REFERENCE_SIGNAL is None:
-        return None
-
-    print(
-        "Reference comparison skipped: DAC-to-ADC sample-rate conversion "
-        "has not been configured yet."
-    )
-    return None

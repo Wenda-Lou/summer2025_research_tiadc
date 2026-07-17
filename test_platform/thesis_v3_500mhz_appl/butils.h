@@ -29,7 +29,9 @@
  *  mem     -r    <addr32>                        Read arbitrary address        
  *          -w    <addr32> <data32>              Write arbitrary address   
  * 
- *  adc     -c      <ch0|ch1|ch2|ch3>           Select ADC channel for configuration
+ *  adc     status                            Display ADC status
+ *
+ *          -c      <ch0|ch1|ch2|ch3>          Select ADC channel for configuration
  *
  *          -offset                           Enter DC offset calibration menu
  *              on                            Enable DC offset calibration
@@ -37,20 +39,28 @@
  *              status                        Display current calibration status
  *              back                          Return to UART command prompt
  *
- *          -timing [frames]                  Capture and transmit repeated frames
- *                                               for software timing alignment
- *                                               (default: 20 frames)
+ *          -timing [frames]                  Capture and transmit repeated ADC
+ *                                            frames for software timing alignment
+ *                                            (default: 20 frames)
  *
  *          -gain                             Enter ADC gain setting menu
  *              IFC                           Input full-scale control mode
- *                  set <1.36~2.04>           Set input full-scale (Vpp differential)
+ *                  set <1.36~2.04>           Set input full-scale
+ *                                            (Vpp differential)
  *                  status                    Display current input full-scale
+ *                  sweep                     Sweep the supported IFC range
  *                  back                      Return to gain menu
  *                  quit                      Exit gain setting menu
- *                  sweep                     Run sweep test across the IFC range
  *
- *              DDC                           Digital downconverter gain mode (Reserved - not used in current design)
- *              back                          Exit gain setting menu
+ *              DDC                           Digital downconverter gain mode
+ *                                            (reserved for future use)
+ *              back                          Return to UART command prompt
+ *
+ *          -cal                             Initialize ADC calibration
+ *                                           (requires an uploaded reference)
+ *
+ *          -ref                             Display uploaded reference status
+ *                                           and buffer information
  * --------------------------------------------------------------------------  
  *  © 2025 Your Project Name — MIT License                                      
  * ==========================================================================*/
@@ -79,6 +89,7 @@ void handle_mem_cmd (char *line);
 void handle_adc_gain_cmd(void);
 void handle_adc_offset_cmd(void);
 void handle_adc_calibration_cmd(void);
+void handle_adc_reference_status_cmd(void);
 
 /* Reusable ADC acquisition helpers. */
 int  adc_capture_frame(void);

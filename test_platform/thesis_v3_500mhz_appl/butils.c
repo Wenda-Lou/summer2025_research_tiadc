@@ -305,8 +305,10 @@ void handle_adc_cmd(char* line)
         handle_adc_offset_cmd();
     } else if (strcmp(option, "-cal") == 0) {
         handle_adc_calibration_cmd();
-    } else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, or -cal)", option);
+    } else if (strcmp(option, "-ref") == 0) {
+        handle_adc_reference_status_cmd();
+    }else {
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal, or -ref)", option);
     }
 }
 
@@ -932,4 +934,62 @@ void handle_adc_calibration_cmd(void)
      * DMA capture, ADC reconstruction, and iterative coefficient updates
      * will be connected after the reference upload path is available.
      */
+}
+
+void handle_adc_reference_status_cmd(void)
+{
+    const int16_t *reference;
+    size_t length;
+    size_t expected_length;
+
+    xil_printf("\r\n========== Reference Buffer ==========\r\n");
+
+    xil_printf(
+        "Reference ready   : %s\r\n",
+        reference_buffer_is_ready() ? "YES" : "NO"
+    );
+
+    length = reference_buffer_length();
+    expected_length = reference_buffer_expected_length();
+
+    xil_printf(
+        "Reference length  : %lu\r\n",
+        (unsigned long)length
+    );
+
+    xil_printf(
+        "Expected length   : %lu\r\n",
+        (unsigned long)expected_length
+    );
+
+    if (!reference_buffer_is_ready() || length == 0U)
+    {
+        xil_printf("No reference currently loaded.\r\n");
+        return;
+    }
+
+    reference = reference_buffer_data();
+
+    xil_printf(
+        "First sample      : %d\r\n",
+        (int)reference[0]
+    );
+
+    if (length > 1U)
+    {
+        xil_printf(
+            "Second sample     : %d\r\n",
+            (int)reference[1]
+        );
+    }
+
+    xil_printf(
+        "Middle sample     : %d\r\n",
+        (int)reference[length / 2U]
+    );
+
+    xil_printf(
+        "Last sample       : %d\r\n",
+        (int)reference[length - 1U]
+    );
 }

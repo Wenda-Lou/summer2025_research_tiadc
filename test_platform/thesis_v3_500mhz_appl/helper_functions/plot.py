@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from .frame import reconstruct_adc_bytes
+
 
 def plot_adc_csv(csv_file, reconstruct=True):
     """
@@ -22,24 +24,11 @@ def plot_adc_csv(csv_file, reconstruct=True):
 
     raw = pd.read_csv(csv_file)["byte"].to_numpy(dtype=np.uint8)
 
-    # Convert bytes -> signed 14-bit ADC samples
-    samples = raw.view("<i2")
-    samples = (samples >> 2).astype(np.int16)
-
-    # Remove trailing garbage
-    samples = samples[:-8]
-
     if reconstruct:
-        words = samples.reshape(-1, 8)
-
-        pos = words[:, :4].reshape(-1)
-        neg = (-words[:, 4:]).reshape(-1)
-
-        adc = np.empty(pos.size + neg.size, dtype=np.int32)
-        adc[0::2] = pos
-        adc[1::2] = neg
+        adc = reconstruct_adc_bytes(raw.tobytes())
     else:
-        adc = samples
+        raw_even = raw[:-1] if raw.size % 2 else raw
+        adc = (raw_even.view("<i2") >> 2).astype(np.int32)
 
     # ------------------------------------------------------------------
     # Statistics

@@ -6,19 +6,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from .frame import (
-    align_frame_to_reference,
-    reconstruct_adc_bytes,
-)
+from .frame import estimate_circular_lag, reconstruct_adc_bytes
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SAVE_DIR = PROJECT_DIR / 'adc_data'
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-DAC_SAMPLE_RATE_HZ = 2_457_600_000.0
-ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
-EXPECTED_DAC_TXT_SAMPLES = 65_536
 
 
 def receive_adc_data(
@@ -74,14 +66,40 @@ def receive_adc_data(
 
 
 
+def receive_adc_frame(
+    bind_ip="0.0.0.0",
+    port=6666,
+    expected_packets=8,
+    packet_size=512,
+    timeout=15.0,
+):
+    """Receive one complete DMA frame and return reconstructed ADC samples."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((bind_ip, port))
+    sock.settimeout(timeout)
+    packets = []
 
+    try:
+        for packet_index in range(expected_packets):
+            data, addr = sock.recvfrom(max(2048, packet_size))
+            if len(data) != packet_size:
+                print(
+                    f"Warning: packet {packet_index + 1}: expected "
+                    f"{packet_size} bytes, got {len(data)} bytes from {addr}"
+                )
+            packets.append(data)
+    except socket.timeout as exc:
+        raise TimeoutError(
+            f"Timed out after receiving {len(packets)}/{expected_packets} packets."
+        ) from exc
+    finally:
+        sock.close()
 
-SELECTED_RECONSTRUCTION_MODE = "grouped_halves_interleave"
+    return reconstruct_adc_bytes(b"".join(packets))
 
 
 def receive_timing_captures(
     frame_count=20,
-    reference_txt=None,
     bind_ip="0.0.0.0",
     port=6666,
     packets_per_frame=8,
@@ -89,17 +107,18 @@ def receive_timing_captures(
     timeout=20.0,
 ):
     """
-    Receive repeated ADC captures and align every frame to frame 1.
+    Receive repeated frames produced by `adc -timing <frame_count>`.
 
-    The DAC TXT is not used for this timing-repeatability test. Frame 1 becomes
-    the master ADC reference, and later frames are circularly shifted to match
-    its phase.
+    Each frame is assumed to contain packets_per_frame UDP packets. Captures
+    are aligned to the first received ADC frame using integer circular
+    cross-correlation. This verifies collection repeatability without requiring
+    DAC/ADC sample-rate conversion yet.
     """
     if frame_count <= 0:
         raise ValueError("frame_count must be positive.")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    timing_dir = SAVE_DIR / f"timing_test_frame1_{timestamp}"
+    timing_dir = SAVE_DIR / f"timing_test_{timestamp}"
     timing_dir.mkdir(parents=True, exist_ok=True)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -107,182 +126,127 @@ def receive_timing_captures(
     sock.settimeout(timeout)
 
     print(f"Listening on {bind_ip}:{port}")
-    print(f"Reconstruction mode: {SELECTED_RECONSTRUCTION_MODE}")
     print(f"Waiting for {frame_count} timing frames")
-    print(f"Run on UART: adc -timing {frame_count}")
+    print(f"Packets per frame: {packets_per_frame}")
+    print("Now run the FPGA command: adc -timing " + str(frame_count))
 
     captures = []
+    summary = []
 
     try:
         for frame_index in range(1, frame_count + 1):
             packets = []
-            print(f"Receiving frame {frame_index}/{frame_count}")
+            print(f"\nReceiving timing frame {frame_index}/{frame_count}")
 
             for packet_index in range(1, packets_per_frame + 1):
-                data, _addr = sock.recvfrom(max(2048, packet_size))
-
+                data, addr = sock.recvfrom(max(2048, packet_size))
                 if len(data) != packet_size:
                     print(
-                        f"Warning: frame {frame_index}, "
-                        f"packet {packet_index}: expected "
-                        f"{packet_size} bytes, got {len(data)}"
+                        f"Warning: frame {frame_index}, packet {packet_index}: "
+                        f"expected {packet_size} bytes, got {len(data)}"
                     )
-
                 packets.append(data)
+                print(
+                    f"  packet {packet_index}/{packets_per_frame}: "
+                    f"{len(data)} bytes from {addr}"
+                )
 
             raw_bytes = b"".join(packets)
-            adc = reconstruct_adc_bytes(
-                raw_bytes,
-                mode=SELECTED_RECONSTRUCTION_MODE,
-            )
+            adc = reconstruct_adc_bytes(raw_bytes)
             captures.append(adc)
 
-            pd.DataFrame({
-                "byte": np.frombuffer(raw_bytes, dtype=np.uint8)
-            }).to_csv(
-                timing_dir / f"frame_{frame_index:03d}_raw.csv",
-                index=False,
+            pd.DataFrame({"byte": np.frombuffer(raw_bytes, dtype=np.uint8)}).to_csv(
+                timing_dir / f"frame_{frame_index:03d}_raw.csv", index=False
             )
-
             pd.DataFrame({
                 "sample_index": np.arange(adc.size, dtype=np.int32),
                 "adc_code": adc,
-            }).to_csv(
-                timing_dir / f"frame_{frame_index:03d}_adc.csv",
-                index=False,
-            )
+            }).to_csv(timing_dir / f"frame_{frame_index:03d}_adc.csv", index=False)
 
-    except socket.timeout:
-        print(
-            f"Timeout after receiving "
-            f"{len(captures)}/{frame_count} complete frames."
-        )
-
-        if not captures:
-            raise TimeoutError("No complete timing frames were received.")
-
-        print("Processing the complete frames already received.")
-
+    except socket.timeout as exc:
+        raise TimeoutError(
+            f"Timed out after receiving {len(captures)}/{frame_count} complete frames. "
+            "Start this receiver before issuing the FPGA timing command."
+        ) from exc
     finally:
         sock.close()
 
-    frame1 = captures[0]
-    results = []
-    summary_rows = []
+    reference = captures[0]
+    aligned_frames = []
 
-    for frame_index, adc in enumerate(captures, start=1):
-        result = align_frame_to_reference(frame1, adc)
-        results.append(result)
+    for index, adc in enumerate(captures, start=1):
+        lag, correlation = estimate_circular_lag(reference, adc)
+        aligned = np.roll(adc, -lag)
+        aligned_frames.append(aligned)
 
-        aligned_file = timing_dir / f"frame_{frame_index:03d}_aligned.csv"
+        n = min(reference.size, aligned.size)
+        ref_float = reference[:n].astype(np.float64)
+        aligned_float = aligned[:n].astype(np.float64)
 
+        # Fit scale and offset so RMSE reflects timing/shape repeatability rather
+        # than small gain or DC changes between frames.
+        design = np.column_stack((aligned_float, np.ones(n)))
+        scale, offset = np.linalg.lstsq(design, ref_float, rcond=None)[0]
+        fitted = scale * aligned_float + offset
+        rmse = float(np.sqrt(np.mean((fitted - ref_float) ** 2)))
+
+        aligned_file = timing_dir / f"frame_{index:03d}_aligned.csv"
         pd.DataFrame({
-            "sample_index": np.arange(
-                result["aligned_adc"].size,
-                dtype=np.int32,
-            ),
-            "frame1_adc_code": frame1[:result["aligned_adc"].size],
-            "raw_adc_code": adc[:result["aligned_adc"].size],
-            "aligned_adc_code": result["aligned_adc"],
-            "frame1_zscore": result["reference_zscore"],
-            "aligned_zscore": result["aligned_zscore"],
-            "residual_error_codes": result["residual_error"],
+            "sample_index": np.arange(n, dtype=np.int32),
+            "adc_code": adc[:n],
+            "aligned_adc_code": aligned[:n],
+            "reference_frame_code": reference[:n],
         }).to_csv(aligned_file, index=False)
 
-        summary_rows.append({
-            "frame": frame_index,
-            "reconstruction_mode": SELECTED_RECONSTRUCTION_MODE,
-            "sample_count": int(result["aligned_adc"].size),
-            "lag_samples_relative_to_frame1": result["lag_samples"],
-            "correlation_to_frame1": result["correlation"],
-            "fitted_gain_to_frame1": result["fitted_gain_to_frame1"],
-            "fitted_offset_to_frame1": result["fitted_offset_to_frame1"],
-            "aligned_rmse_codes": result["rmse_codes"],
-            "mean_code": float(np.mean(adc)),
-            "std_code": float(np.std(adc)),
-            "min_code": int(np.min(adc)),
-            "max_code": int(np.max(adc)),
+        summary.append({
+            "frame": index,
+            "sample_count": int(n),
+            "lag_samples": int(lag),
+            "correlation": correlation,
+            "fitted_scale_to_frame1": float(scale),
+            "fitted_offset_to_frame1": float(offset),
+            "aligned_rmse_codes": rmse,
+            "mean_code": float(np.mean(adc[:n])),
+            "rms_code": float(np.sqrt(np.mean(adc[:n].astype(np.float64) ** 2))),
+            "min_code": int(np.min(adc[:n])),
+            "max_code": int(np.max(adc[:n])),
             "aligned_csv": str(aligned_file),
         })
 
-    summary_df = pd.DataFrame(summary_rows)
+    summary_df = pd.DataFrame(summary)
     summary_file = timing_dir / "timing_summary.csv"
     summary_df.to_csv(summary_file, index=False)
 
-    max_plot_samples = min(frame1.size, 1000)
-
+    # Save overlay figures without opening pop-up plots.
+    max_plot_samples = min(reference.size, 1000)
     plt.figure(figsize=(14, 6))
-    for result in results:
-        plt.plot(
-            result["aligned_zscore"][:max_plot_samples],
-            linewidth=0.7,
-            alpha=0.45,
-        )
+    for aligned in aligned_frames:
+        plt.plot(aligned[:max_plot_samples], linewidth=0.7, alpha=0.5)
     plt.xlabel("Sample index")
-    plt.ylabel("Normalized amplitude")
-    plt.title("ADC captures aligned to frame 1")
+    plt.ylabel("ADC code")
+    plt.title("Timing-aligned ADC captures")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(
-        timing_dir / "aligned_to_frame1_overlay.png",
-        dpi=150,
-    )
+    plt.savefig(timing_dir / "aligned_overlay.png", dpi=150)
     plt.close()
 
     plt.figure(figsize=(10, 5))
-    plt.plot(
-        summary_df["frame"],
-        summary_df["lag_samples_relative_to_frame1"],
-        marker="o",
-    )
+    plt.plot(summary_df["frame"], summary_df["lag_samples"], marker="o")
     plt.xlabel("Frame")
-    plt.ylabel("Lag relative to frame 1 (samples)")
-    plt.title("Detected ADC capture lag")
+    plt.ylabel("Detected lag (samples)")
+    plt.title("Raw capture timing offset relative to frame 1")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(timing_dir / "lag_relative_to_frame1.png", dpi=150)
+    plt.savefig(timing_dir / "detected_lag.png", dpi=150)
     plt.close()
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(
-        summary_df["frame"],
-        summary_df["correlation_to_frame1"],
-        marker="o",
-    )
-    plt.xlabel("Frame")
-    plt.ylabel("Normalized correlation")
-    plt.title("Frame-to-frame timing correlation")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(timing_dir / "correlation_to_frame1.png", dpi=150)
-    plt.close()
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(
-        summary_df["frame"],
-        summary_df["aligned_rmse_codes"],
-        marker="o",
-    )
-    plt.xlabel("Frame")
-    plt.ylabel("RMSE (ADC codes)")
-    plt.title("Aligned residual relative to frame 1")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(timing_dir / "rmse_to_frame1.png", dpi=150)
-    plt.close()
-
-    print("\nFrame-1 timing alignment complete")
+    print("\nTiming capture complete")
     print(f"Folder: {timing_dir}")
     print(f"Summary: {summary_file}")
-    print(
-        summary_df[[
-            "frame",
-            "lag_samples_relative_to_frame1",
-            "correlation_to_frame1",
-            "fitted_gain_to_frame1",
-            "fitted_offset_to_frame1",
-            "aligned_rmse_codes",
-        ]].to_string(index=False)
-    )
+    print(summary_df[[
+        "frame", "lag_samples", "correlation", "aligned_rmse_codes",
+        "fitted_scale_to_frame1", "fitted_offset_to_frame1"
+    ]].to_string(index=False))
 
     return timing_dir, summary_file, summary_df
+
