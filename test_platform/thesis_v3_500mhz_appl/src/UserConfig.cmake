@@ -39,6 +39,8 @@ set(USER_COMPILE_SOURCES
 "../peripherals.c"
 "../calibration.c"
 "../reference_buffer.c"
+"../adc_frame.c"
+"../timing_alignment.c"
 )
 
 # -----------------------------------------

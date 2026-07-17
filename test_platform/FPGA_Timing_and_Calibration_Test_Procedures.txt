@@ -1,0 +1,88 @@
+FPGA Timing and Calibration Test Procedures
+
+Verified Hardware Functions
+
+-   DMA capture
+-   Ethernet initialization
+-   UDP ADC transmission
+-   ADC IFC gain control and sweep
+-   ADC offset control
+-   ADC gain control
+
+Reference Upload
+
+1.  Run send_known_test_sequence().
+2.  Verify UART reports:
+    -   Reference begin: 2032 samples
+    -   Upload successful
+    -   Samples: 2032
+    -   First: 0
+    -   Last: 2031
+    -   Ready for calibration
+
+Calibration Initialization
+
+Run: adc -cal
+
+Expected: - Calibration initialized successfully - Reference samples:
+2032 - Current stage: offset
+
+Reference Clear
+
+1.  Run clear_reference()
+2.  Run adc -cal
+3.  Verify calibration refuses to start.
+
+Upload Robustness
+
+-   Upload twice.
+-   Test incomplete upload.
+-   Test invalid sizes (0 and >2032 samples).
+
+Timing Tests
+
+Single Frame
+
+Run: adc -timing 1
+
+Verify: - One DMA capture - One UDP transmission - One complete frame on
+PC
+
+Multi Frame
+
+Run: adc -timing 20
+
+Verify: - 20 captures - 20 transmitted frames - 20 complete received
+frames
+
+Timing Alignment
+
+For each frame: - Compute circular cross-correlation. - Measure lag. -
+Circularly shift the capture.
+
+Verify: - Different lags are detected. - Alignment removes the circular
+shift.
+
+Alignment Quality
+
+Calculate: - RMSE before alignment - RMSE after alignment - Correlation
+
+Expected: - Lower RMSE - Higher correlation
+
+Sample Count
+
+Verify: - 4096 raw bytes - 2048 int16 values - 2032 usable ADC samples
+
+Long Run
+
+Run: adc -timing 100
+
+Verify: - 100 successful captures - No DMA failures - No UDP packet
+loss - Stable lag and RMSE
+
+Next Integration Step
+
+After all tests pass, extend adc -cal to: 1. Capture DMA. 2. Reconstruct
+2032 ADC samples. 3. Align to uploaded reference. 4. Compute gain,
+offset, RMSE and correlation. 5. Print metrics only (no coefficient
+updates yet).
