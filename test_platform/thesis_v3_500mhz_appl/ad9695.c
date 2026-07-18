@@ -42,11 +42,12 @@ void ad9695_initialize(struct ad9695_state* state_ptr)
 	uint8_t pll_stat;
 	int32_t timeout;
 
+    // Reset
+    ad9695_hardware_reset();
+
     // Try Scratch Pad Function
 	ad9695_init();
 
-    // Reset
-    ad9695_hardware_reset();
 	ad9695_software_reset();
 
     // Use all channels
