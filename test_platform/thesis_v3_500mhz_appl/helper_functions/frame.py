@@ -9,10 +9,16 @@ import numpy as np
 
 SELECTED_RECONSTRUCTION_MODE = "grouped_halves_interleave"
 
+# Keep these values synchronized with adc_frame.h.
+ADC_RAW_FRAME_BYTES = 4096
+ADC_RAW_WORD_COUNT = 2048
+ADC_TRAILING_WORDS = 8
+ADC_VALID_SAMPLE_COUNT = 2032
+
 
 def reconstruct_adc_bytes(
     raw_bytes: bytes,
-    remove_trailing_words: int = 8,
+    remove_trailing_words: int = ADC_TRAILING_WORDS,
     mode: str = SELECTED_RECONSTRUCTION_MODE,
 ) -> np.ndarray:
     """Convert one DMA frame into the reconstructed ADC sample sequence."""
@@ -25,15 +31,15 @@ def reconstruct_adc_bytes(
     samples = raw.view("<i2")
     samples = (samples >> 2).astype(np.int16)
 
-    if remove_trailing_words:
-        if samples.size <= remove_trailing_words:
-            raise ValueError("DMA frame is too short after removing trailing words.")
-        samples = samples[:-remove_trailing_words]
+    # Match adc_frame.c exactly: only the first 2032 decoded words
+    # are used. A 4095-byte DMA frame still contains these words.
+    if samples.size < ADC_VALID_SAMPLE_COUNT:
+        raise ValueError(
+            f"DMA frame is too short: found {samples.size} words, "
+            f"need at least {ADC_VALID_SAMPLE_COUNT}."
+        )
 
-    usable = samples.size - (samples.size % 8)
-    if usable <= 0:
-        raise ValueError("DMA frame does not contain a complete 8-word group.")
-    samples = samples[:usable]
+    samples = samples[:ADC_VALID_SAMPLE_COUNT]
 
     if mode == "grouped_halves_interleave":
         words = samples.reshape(-1, 8)
