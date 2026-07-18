@@ -705,8 +705,16 @@ int adc_capture_frame(void)
 
 void adc_timing_capture(uint32_t frame_count)
 {
-    uint32_t successful_captures = 0;
-    uint32_t transmitted_frames = 0;
+    static int16_t timing_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t reconstructed_samples[ADC_VALID_SAMPLE_COUNT];
+    static int16_t aligned_samples[ADC_VALID_SAMPLE_COUNT];
+
+    uint32_t successful_captures = 0U;
+    size_t reference_count = 0U;
+    size_t reconstructed_count = 0U;
+    timing_analysis_result_t result;
+    int reconstruction_status;
+    int timing_status;
 
     if ((frame_count == 0U) || (frame_count > ADC_TIMING_MAX_FRAMES))
     {
@@ -721,59 +729,189 @@ void adc_timing_capture(uint32_t frame_count)
         return;
     }
 
-    /*
-     * Reuse the existing activity lock so manual DMA/UDP commands
-     * cannot modify the shared DMA buffer during this test.
-     */
     adc_sweep_active = 1;
 
     xil_printf("\r\n");
     xil_printf("===================================\r\n");
-    xil_printf("Starting ADC Timing Capture Test\r\n");
+    xil_printf("Starting On-Board ADC Timing Test\r\n");
     xil_printf("Requested frames : %lu\r\n",
                (unsigned long)frame_count);
-    xil_printf("Frame size       : %d bytes\r\n",
-               DMA_CMD_BUF_SIZE);
+    xil_printf("Sample count     : %u\r\n",
+               ADC_VALID_SAMPLE_COUNT);
+    xil_printf("Analysis         : circular lag + fitted RMSE\r\n");
     xil_printf("===================================\r\n");
 
-    for (uint32_t frame = 0; frame < frame_count; frame++)
+    /*
+     * Frame 1 becomes the fixed reference, exactly as in receive_data.py.
+     */
+    if (adc_capture_frame() != XST_SUCCESS)
+    {
+        xil_printf("Timing reference capture failed.\r\n");
+        adc_sweep_active = 0;
+        return;
+    }
+
+    reconstruction_status = adc_reconstruct_frame(
+        RxBufferPtr,
+        DMA_CMD_BUF_SIZE,
+        timing_reference,
+        ADC_VALID_SAMPLE_COUNT,
+        &reference_count
+    );
+
+    if (reconstruction_status != 0)
+    {
+        xil_printf(
+            "Timing reference reconstruction failed: %d\r\n",
+            reconstruction_status
+        );
+        adc_sweep_active = 0;
+        return;
+    }
+
+    successful_captures = 1U;
+
+    /*
+     * Analyze frame 1 against itself so the output matches the Python
+     * timing summary.
+     */
+    timing_status = timing_analyze_frame(
+        timing_reference,
+        timing_reference,
+        reference_count,
+        aligned_samples,
+        &result
+    );
+
+    if (timing_status != 0)
+    {
+        xil_printf(
+            "Timing reference analysis failed: %d\r\n",
+            timing_status
+        );
+        adc_sweep_active = 0;
+        return;
+    }
+
+    xil_printf("\r\n[TIMING_RESULT 1/%lu]\r\n",
+               (unsigned long)frame_count);
+    xil_printf("Sample count           : %lu\r\n",
+               (unsigned long)result.sample_count);
+    xil_printf("Lag samples            : %ld\r\n",
+               (long)result.lag_samples);
+    print_float_value("Correlation", result.correlation, "");
+    print_float_value("Fitted scale", result.fitted_scale, "");
+    print_float_value("Fitted offset",
+                      result.fitted_offset, " codes");
+    print_float_value("Aligned fitted RMSE",
+                      result.aligned_rmse_codes, " codes");
+    print_float_value("Raw mean", result.signal_mean, " codes");
+    print_float_value("Raw RMS", result.signal_rms, " codes");
+    xil_printf("Raw minimum            : %d codes\r\n",
+               (int)result.signal_min);
+    xil_printf("Raw maximum            : %d codes\r\n",
+               (int)result.signal_max);
+    xil_printf("Timing status          : PASS\r\n");
+
+    for (uint32_t frame = 2U; frame <= frame_count; frame++)
     {
         xil_printf("\r\n[TIMING_FRAME_BEGIN %lu/%lu]\r\n",
-                   (unsigned long)(frame + 1U),
+                   (unsigned long)frame,
                    (unsigned long)frame_count);
 
-        /*
-         * Every frame uses the exact same sequence:
-         * reset DMA -> wait for reset -> settle -> arm S2MM ->
-         * wait for completion -> invalidate cache.
-         */
         if (adc_capture_frame() != XST_SUCCESS)
         {
             xil_printf("[TIMING_FRAME_FAILED %lu]\r\n",
-                       (unsigned long)(frame + 1U));
+                       (unsigned long)frame);
+            continue;
+        }
+
+        reconstruction_status = adc_reconstruct_frame(
+            RxBufferPtr,
+            DMA_CMD_BUF_SIZE,
+            reconstructed_samples,
+            ADC_VALID_SAMPLE_COUNT,
+            &reconstructed_count
+        );
+
+        if (reconstruction_status != 0)
+        {
+            xil_printf(
+                "Frame %lu reconstruction failed: %d\r\n",
+                (unsigned long)frame,
+                reconstruction_status
+            );
+            continue;
+        }
+
+        if (reconstructed_count != reference_count)
+        {
+            xil_printf(
+                "Frame %lu rejected: sample count mismatch "
+                "(%lu versus %lu).\r\n",
+                (unsigned long)frame,
+                (unsigned long)reconstructed_count,
+                (unsigned long)reference_count
+            );
+            continue;
+        }
+
+        timing_status = timing_analyze_frame(
+            timing_reference,
+            reconstructed_samples,
+            reconstructed_count,
+            aligned_samples,
+            &result
+        );
+
+        if (timing_status != 0)
+        {
+            xil_printf(
+                "Frame %lu timing analysis failed: %d\r\n",
+                (unsigned long)frame,
+                timing_status
+            );
             continue;
         }
 
         successful_captures++;
 
-        /*
-         * Send the completed frame immediately. The PC receiver must
-         * already be listening before this UART command is issued.
-         */
-        xil_printf("Transmitting timing frame %lu...\r\n",
-                   (unsigned long)(frame + 1U));
+        xil_printf("[TIMING_RESULT %lu/%lu]\r\n",
+                   (unsigned long)frame,
+                   (unsigned long)frame_count);
+        xil_printf("Sample count           : %lu\r\n",
+                   (unsigned long)result.sample_count);
+        xil_printf("Lag samples            : %ld\r\n",
+                   (long)result.lag_samples);
+        print_float_value("Correlation", result.correlation, "");
+        print_float_value("Fitted scale", result.fitted_scale, "");
+        print_float_value("Fitted offset",
+                          result.fitted_offset, " codes");
+        print_float_value("Aligned fitted RMSE",
+                          result.aligned_rmse_codes, " codes");
+        print_float_value("Raw mean", result.signal_mean, " codes");
+        print_float_value("Raw RMS", result.signal_rms, " codes");
+        xil_printf("Raw minimum            : %d codes\r\n",
+                   (int)result.signal_min);
+        xil_printf("Raw maximum            : %d codes\r\n",
+                   (int)result.signal_max);
 
-        udp_send_mem();
-        transmitted_frames++;
+        if (result.correlation < ADC_TIMING_MIN_CORRELATION)
+        {
+            xil_printf(
+                "Timing status          : REJECTED "
+                "(correlation below threshold)\r\n"
+            );
+        }
+        else
+        {
+            xil_printf("Timing status          : PASS\r\n");
+        }
 
         xil_printf("[TIMING_FRAME_END %lu]\r\n",
-                   (unsigned long)(frame + 1U));
+                   (unsigned long)frame);
 
-        /*
-         * Separate frames so the host can finish assembling and saving
-         * the current eight-packet UDP transfer before the next one.
-         */
-        if ((frame + 1U) < frame_count)
+        if (frame < frame_count)
         {
             usleep(ADC_TIMING_INTERFRAME_DELAY_US);
         }
@@ -783,13 +921,11 @@ void adc_timing_capture(uint32_t frame_count)
 
     xil_printf("\r\n");
     xil_printf("===================================\r\n");
-    xil_printf("ADC timing capture finished.\r\n");
-    xil_printf("Successful captures : %lu/%lu\r\n",
+    xil_printf("On-board timing test finished.\r\n");
+    xil_printf("Analyzed captures : %lu/%lu\r\n",
                (unsigned long)successful_captures,
                (unsigned long)frame_count);
-    xil_printf("Transmitted frames  : %lu/%lu\r\n",
-               (unsigned long)transmitted_frames,
-               (unsigned long)frame_count);
+    xil_printf("No UDP receiver was required.\r\n");
     xil_printf("===================================\r\n");
 }
 

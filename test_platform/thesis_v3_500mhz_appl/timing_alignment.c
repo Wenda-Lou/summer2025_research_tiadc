@@ -51,10 +51,9 @@ int timing_find_circular_lag(
     signal_mean /= (double)sample_count;
 
     for (size_t i = 0U; i < sample_count; ++i) {
-        double ref_centered =
+        const double ref_centered =
             (double)reference[i] - reference_mean;
-
-        double signal_centered =
+        const double signal_centered =
             (double)signal[i] - signal_mean;
 
         reference_power += ref_centered * ref_centered;
@@ -68,13 +67,11 @@ int timing_find_circular_lag(
     }
 
     /*
-     * score(lag) =
-     *     sum(reference[i] * signal[(i + lag) mod N])
+     * This is mathematically equivalent to:
      *
-     * After finding lag:
-     *     aligned[i] = signal[(i + lag) mod N]
+     * corr = ifft(fft(signal) * conj(fft(reference))).real
      *
-     * This corresponds to np.roll(signal, -lag).
+     * and therefore matches frame.py.
      */
     for (size_t lag = 0U; lag < sample_count; ++lag) {
         double score = 0.0;
@@ -91,18 +88,16 @@ int timing_find_circular_lag(
                 ((double)signal[signal_index] - signal_mean);
         }
 
+        /*
+         * np.argmax keeps the first maximum, so replace only when the
+         * score is strictly greater.
+         */
         if (score > best_score) {
             best_score = score;
             best_lag = lag;
         }
     }
 
-    /*
-     * Convert an unsigned circular index into a signed lag:
-     *
-     * 0 ... N/2       -> positive lag
-     * N/2+1 ... N-1   -> negative lag
-     */
     if (best_lag <= sample_count / 2U) {
         result->lag_samples = (int32_t)best_lag;
     } else {
@@ -132,13 +127,140 @@ int timing_apply_circular_lag(
     }
 
     for (size_t i = 0U; i < sample_count; ++i) {
-        size_t source_index = wrap_index(
+        const size_t source_index = wrap_index(
             (int64_t)i + (int64_t)lag_samples,
             sample_count
         );
 
         aligned_output[i] = signal[source_index];
     }
+
+    return 0;
+}
+
+int timing_analyze_frame(
+    const int16_t *reference,
+    const int16_t *signal,
+    size_t sample_count,
+    int16_t *aligned_output,
+    timing_analysis_result_t *result
+)
+{
+    timing_alignment_result_t alignment;
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+    double sum_xx = 0.0;
+    double sum_xy = 0.0;
+    double fit_denominator;
+    double scale;
+    double offset;
+    double squared_error_sum = 0.0;
+    double signal_sum = 0.0;
+    double signal_square_sum = 0.0;
+    int16_t signal_min;
+    int16_t signal_max;
+    int status;
+
+    if ((reference == NULL) ||
+        (signal == NULL) ||
+        (aligned_output == NULL) ||
+        (result == NULL)) {
+        return -1;
+    }
+
+    if (sample_count < TIMING_MIN_SAMPLES) {
+        return -2;
+    }
+
+    status = timing_find_circular_lag(
+        reference,
+        signal,
+        sample_count,
+        &alignment
+    );
+
+    if (status != 0) {
+        return -10 + status;
+    }
+
+    status = timing_apply_circular_lag(
+        signal,
+        sample_count,
+        alignment.lag_samples,
+        aligned_output
+    );
+
+    if (status != 0) {
+        return -20 + status;
+    }
+
+    /*
+     * Match receive_data.py exactly:
+     *
+     * design = np.column_stack((aligned, np.ones(n)))
+     * scale, offset = np.linalg.lstsq(design, reference)[0]
+     */
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double x = (double)aligned_output[i];
+        const double y = (double)reference[i];
+
+        sum_x += x;
+        sum_y += y;
+        sum_xx += x * x;
+        sum_xy += x * y;
+    }
+
+    fit_denominator =
+        ((double)sample_count * sum_xx) - (sum_x * sum_x);
+
+    if (fabs(fit_denominator) <= TIMING_EPSILON) {
+        return -3;
+    }
+
+    scale =
+        (((double)sample_count * sum_xy) - (sum_x * sum_y)) /
+        fit_denominator;
+
+    offset =
+        (sum_y - (scale * sum_x)) / (double)sample_count;
+
+    signal_min = signal[0];
+    signal_max = signal[0];
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double fitted =
+            scale * (double)aligned_output[i] + offset;
+        const double error =
+            fitted - (double)reference[i];
+        const double raw_signal =
+            (double)signal[i];
+
+        squared_error_sum += error * error;
+        signal_sum += raw_signal;
+        signal_square_sum += raw_signal * raw_signal;
+
+        if (signal[i] < signal_min) {
+            signal_min = signal[i];
+        }
+
+        if (signal[i] > signal_max) {
+            signal_max = signal[i];
+        }
+    }
+
+    result->lag_samples = alignment.lag_samples;
+    result->correlation = alignment.correlation;
+    result->fitted_scale = (float)scale;
+    result->fitted_offset = (float)offset;
+    result->aligned_rmse_codes =
+        (float)sqrt(squared_error_sum / (double)sample_count);
+    result->signal_mean =
+        (float)(signal_sum / (double)sample_count);
+    result->signal_rms =
+        (float)sqrt(signal_square_sum / (double)sample_count);
+    result->signal_min = signal_min;
+    result->signal_max = signal_max;
+    result->sample_count = sample_count;
 
     return 0;
 }
