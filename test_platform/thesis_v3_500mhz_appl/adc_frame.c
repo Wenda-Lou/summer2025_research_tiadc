@@ -24,10 +24,9 @@ int adc_reconstruct_frame(
     size_t *output_count
 )
 {
-    int16_t words[ADC_RAW_WORD_COUNT];
-    size_t usable_word_count;
-    size_t group_count;
+    int16_t words[ADC_VALID_SAMPLE_COUNT];
     size_t output_index = 0U;
+    size_t group_count;
     size_t group;
 
     if ((raw_bytes == NULL) ||
@@ -38,7 +37,14 @@ int adc_reconstruct_frame(
 
     *output_count = 0U;
 
-    if (raw_byte_count != ADC_RAW_FRAME_BYTES) {
+    /*
+     * Only the first 2032 raw words are used.
+     * 2032 words × 2 bytes = 4064 required bytes.
+     *
+     * A 4095-byte DMA transfer is therefore sufficient.
+     */
+    if (raw_byte_count <
+        (ADC_VALID_SAMPLE_COUNT * sizeof(uint16_t))) {
         return -2;
     }
 
@@ -47,41 +53,33 @@ int adc_reconstruct_frame(
     }
 
     /*
-     * Read little-endian signed 16-bit words safely, without assuming
-     * raw_bytes is aligned to an int16_t boundary.
+     * Decode only the raw words that are actually used.
      */
-    for (size_t i = 0U; i < ADC_RAW_WORD_COUNT; ++i) {
+    for (size_t i = 0U; i < ADC_VALID_SAMPLE_COUNT; ++i) {
         uint16_t raw_word =
             ((uint16_t)raw_bytes[(2U * i) + 0U]) |
             ((uint16_t)raw_bytes[(2U * i) + 1U] << 8U);
 
         /*
-         * The FPGA data contains the 14-bit ADC value shifted left by
-         * two bits. Casting first preserves the signed representation.
-         *
-         * GCC for the Zynq target performs an arithmetic right shift.
+         * Convert the signed left-aligned 14-bit ADC value.
          */
         words[i] = ((int16_t)raw_word) >> 2;
     }
 
-    usable_word_count = ADC_RAW_WORD_COUNT - ADC_TRAILING_WORDS;
-
-    /*
-     * Match Python:
-     *     usable = samples.size - samples.size % 8
-     *
-     * 2048 - 8 = 2040
-     * 2040 rounded down to a multiple of eight = 2032.
-     */
-    usable_word_count -= usable_word_count % 8U;
-    group_count = usable_word_count / 8U;
+    group_count = ADC_VALID_SAMPLE_COUNT / 8U;
 
     for (group = 0U; group < group_count; ++group) {
         size_t base = group * 8U;
 
-        for (size_t branch_index = 0U; branch_index < 4U; ++branch_index) {
-            int32_t positive = words[base + branch_index];
-            int32_t negative = -(int32_t)words[base + 4U + branch_index];
+        for (size_t branch_index = 0U;
+             branch_index < 4U;
+             ++branch_index) {
+
+            int32_t positive =
+                words[base + branch_index];
+
+            int32_t negative =
+                -(int32_t)words[base + 4U + branch_index];
 
             output_samples[output_index++] =
                 saturate_int16(positive);
