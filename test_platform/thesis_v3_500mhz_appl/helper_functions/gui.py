@@ -7,6 +7,14 @@ from tkinter import filedialog, messagebox
 from .plot import plot_adc_csv, plot_ifc_sweep_capture
 from .receive_data import SAVE_DIR, receive_adc_data, receive_timing_captures
 from .sweep_test import receive_ifc_sweep
+from .reference_upload import (
+    FPGA_IP,
+    FPGA_PORT,
+    REFERENCE_SAMPLE_COUNT,
+    clear_reference,
+    load_reference_txt,
+    send_reference,
+)
 
 root = None
 
@@ -583,11 +591,345 @@ def gui_receive_timing_captures():
         command=start_receive,
     ).pack(pady=12)
 
+
+def gui_upload_reference_txt():
+    """
+    Select a DAC/reference TXT file, extract exactly 2032 samples,
+    convert them to signed int16, and upload them to the FPGA.
+    """
+    txt_file = filedialog.askopenfilename(
+        parent=root,
+        initialdir=SAVE_DIR,
+        title="Select DAC Reference TXT File",
+        filetypes=[
+            ("Text files", "*.txt"),
+            ("Data files", "*.dat"),
+            ("All files", "*.*"),
+        ],
+    )
+
+    if not txt_file:
+        return
+
+    try:
+        all_samples = load_reference_txt(txt_file)
+
+        if all_samples.size < REFERENCE_SAMPLE_COUNT:
+            raise ValueError(
+                f"The selected file contains only {all_samples.size} samples.\n\n"
+                f"At least {REFERENCE_SAMPLE_COUNT} samples are required."
+            )
+
+    except Exception as exc:
+        messagebox.showerror(
+            "Reference File Error",
+            str(exc),
+            parent=root,
+        )
+        return
+
+    dialog = tk.Toplevel(root)
+    dialog.title("Upload FPGA Reference")
+    dialog.geometry("620x500")
+    dialog.transient(root)
+    dialog.grab_set()
+
+    max_start = all_samples.size - REFERENCE_SAMPLE_COUNT
+    selected_path = Path(txt_file)
+
+    tk.Label(
+        dialog,
+        text="FPGA Reference Upload",
+        font=("Arial", 13, "bold"),
+    ).pack(pady=(14, 8))
+
+    file_frame = tk.LabelFrame(
+        dialog,
+        text="Selected File",
+        padx=10,
+        pady=8,
+    )
+    file_frame.pack(fill="x", padx=12, pady=6)
+
+    tk.Label(
+        file_frame,
+        text=(
+            f"File: {selected_path.name}\n"
+            f"Total numeric samples: {all_samples.size}\n"
+            f"Samples sent to FPGA: {REFERENCE_SAMPLE_COUNT}"
+        ),
+        justify="left",
+        anchor="w",
+    ).pack(fill="x")
+
+    selection_frame = tk.LabelFrame(
+        dialog,
+        text="Sample Selection",
+        padx=10,
+        pady=8,
+    )
+    selection_frame.pack(fill="x", padx=12, pady=6)
+
+    tk.Label(
+        selection_frame,
+        text="Start sample index:",
+    ).grid(
+        row=0,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="e",
+    )
+
+    start_entry = tk.Entry(selection_frame, width=16)
+    start_entry.insert(0, "0")
+    start_entry.grid(
+        row=0,
+        column=1,
+        padx=5,
+        pady=5,
+        sticky="w",
+    )
+
+    tk.Label(
+        selection_frame,
+        text=f"Allowed range: 0 to {max_start}",
+    ).grid(
+        row=1,
+        column=0,
+        columnspan=3,
+        padx=5,
+        pady=2,
+    )
+
+    preview_var = tk.StringVar()
+
+    def get_selected_samples():
+        try:
+            start_index = int(start_entry.get().strip())
+        except ValueError as exc:
+            raise ValueError("Start sample index must be an integer.") from exc
+
+        if not 0 <= start_index <= max_start:
+            raise ValueError(
+                f"Start sample index must be between 0 and {max_start}."
+            )
+
+        end_index = start_index + REFERENCE_SAMPLE_COUNT
+        selected = all_samples[start_index:end_index].copy()
+
+        if selected.size != REFERENCE_SAMPLE_COUNT:
+            raise ValueError(
+                f"Expected {REFERENCE_SAMPLE_COUNT} selected samples, "
+                f"received {selected.size}."
+            )
+
+        return start_index, selected
+
+    def update_preview():
+        try:
+            start_index, selected = get_selected_samples()
+            end_index = start_index + REFERENCE_SAMPLE_COUNT - 1
+
+            preview_var.set(
+                f"Selected range: {start_index} to {end_index}\n"
+                f"Minimum: {int(selected.min())}\n"
+                f"Maximum: {int(selected.max())}\n"
+                f"First sample: {int(selected[0])}\n"
+                f"Last sample: {int(selected[-1])}"
+            )
+        except Exception as exc:
+            preview_var.set(str(exc))
+
+    tk.Button(
+        selection_frame,
+        text="Update Preview",
+        command=update_preview,
+    ).grid(
+        row=0,
+        column=2,
+        padx=8,
+        pady=5,
+    )
+
+    tk.Label(
+        selection_frame,
+        textvariable=preview_var,
+        justify="left",
+        anchor="w",
+    ).grid(
+        row=2,
+        column=0,
+        columnspan=3,
+        sticky="w",
+        padx=5,
+        pady=8,
+    )
+
+    connection_frame = tk.LabelFrame(
+        dialog,
+        text="FPGA Connection",
+        padx=10,
+        pady=8,
+    )
+    connection_frame.pack(fill="x", padx=12, pady=6)
+
+    tk.Label(connection_frame, text="FPGA IP:").grid(
+        row=0,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="e",
+    )
+    ip_entry = tk.Entry(connection_frame, width=20)
+    ip_entry.insert(0, FPGA_IP)
+    ip_entry.grid(row=0, column=1, padx=5, pady=5)
+
+    tk.Label(connection_frame, text="UDP port:").grid(
+        row=1,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="e",
+    )
+    port_entry = tk.Entry(connection_frame, width=20)
+    port_entry.insert(0, str(FPGA_PORT))
+    port_entry.grid(row=1, column=1, padx=5, pady=5)
+
+    tk.Label(connection_frame, text="Packet delay (s):").grid(
+        row=2,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="e",
+    )
+    delay_entry = tk.Entry(connection_frame, width=20)
+    delay_entry.insert(0, "0.01")
+    delay_entry.grid(row=2, column=1, padx=5, pady=5)
+
+    status_var = tk.StringVar(
+        value="Ready. Confirm the result using the FPGA UART output."
+    )
+
+    tk.Label(
+        dialog,
+        textvariable=status_var,
+        justify="left",
+        anchor="w",
+        wraplength=580,
+    ).pack(fill="x", padx=16, pady=10)
+
+    button_frame = tk.Frame(dialog)
+    button_frame.pack(pady=8)
+
+    def upload_reference():
+        try:
+            start_index, selected = get_selected_samples()
+            fpga_ip = ip_entry.get().strip()
+            fpga_port = int(port_entry.get().strip())
+            packet_delay = float(delay_entry.get().strip())
+
+            if not fpga_ip:
+                raise ValueError("FPGA IP address cannot be empty.")
+            if not 1 <= fpga_port <= 65535:
+                raise ValueError("UDP port must be between 1 and 65535.")
+            if packet_delay < 0:
+                raise ValueError("Packet delay cannot be negative.")
+
+            upload_button.configure(state="disabled")
+            status_var.set("Sending reference packets...")
+            dialog.update_idletasks()
+
+            sent_count = send_reference(
+                selected,
+                fpga_ip=fpga_ip,
+                fpga_port=fpga_port,
+                packet_delay_s=packet_delay,
+                require_full_buffer=True,
+            )
+
+            end_index = start_index + REFERENCE_SAMPLE_COUNT - 1
+
+            status_var.set(
+                f"Sent {sent_count} samples. "
+                "Check UART for 'Reference uploaded successfully'."
+            )
+
+            messagebox.showinfo(
+                "Reference Sent",
+                (
+                    f"Sent {sent_count} samples to "
+                    f"{fpga_ip}:{fpga_port}.\n\n"
+                    f"Source range: {start_index} to {end_index}\n"
+                    f"First sample: {int(selected[0])}\n"
+                    f"Last sample: {int(selected[-1])}\n\n"
+                    "Confirm the upload result on the FPGA UART."
+                ),
+                parent=dialog,
+            )
+
+        except Exception as exc:
+            status_var.set("Reference upload failed.")
+            messagebox.showerror(
+                "Reference Upload Error",
+                str(exc),
+                parent=dialog,
+            )
+
+        finally:
+            upload_button.configure(state="normal")
+
+    def clear_board_reference():
+        try:
+            fpga_ip = ip_entry.get().strip()
+            fpga_port = int(port_entry.get().strip())
+
+            clear_reference(
+                fpga_ip=fpga_ip,
+                fpga_port=fpga_port,
+            )
+
+            status_var.set(
+                "Reference-clear command sent. Confirm it on the FPGA UART."
+            )
+
+        except Exception as exc:
+            messagebox.showerror(
+                "Reference Clear Error",
+                str(exc),
+                parent=dialog,
+            )
+
+    upload_button = tk.Button(
+        button_frame,
+        text="Send Reference",
+        width=18,
+        command=upload_reference,
+    )
+    upload_button.pack(side="left", padx=5)
+
+    tk.Button(
+        button_frame,
+        text="Clear Reference",
+        width=18,
+        command=clear_board_reference,
+    ).pack(side="left", padx=5)
+
+    tk.Button(
+        button_frame,
+        text="Close",
+        width=12,
+        command=dialog.destroy,
+    ).pack(side="left", padx=5)
+
+    update_preview()
+
+
 def create_root():
     global root
     root = tk.Tk()
     root.title('ADC UDP Receiver')
-    root.geometry('400x470')
+    root.geometry('420x540')
 
     title = tk.Label(root, text='ADC UDP Receiver Tool', font=('Arial', 14, 'bold'))
     title.pack(pady=15)
@@ -614,6 +956,14 @@ def create_root():
         command=gui_receive_timing_captures,
     )
     btn_timing.pack(pady=8)
+
+    btn_reference = tk.Button(
+        root,
+        text='Upload Reference TXT',
+        width=28,
+        command=gui_upload_reference_txt,
+    )
+    btn_reference.pack(pady=8)
 
     btn_exit = tk.Button(root, text='Exit', width=25, command=root.destroy)
     btn_exit.pack(pady=8)

@@ -15,6 +15,7 @@ from __future__ import annotations
 import socket
 import struct
 import time
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
@@ -25,6 +26,66 @@ REFERENCE_SAMPLE_COUNT = 2032
 # Firmware accepts at most (512 - 8) / 2 = 252 samples per REFD packet.
 # Keep 240 to match the previously used conservative packet size.
 REFERENCE_CHUNK_SAMPLES = 240
+
+
+
+def load_reference_txt(txt_file: str | Path) -> np.ndarray:
+    """
+    Load numeric reference samples from a TXT/DAT file.
+
+    Supported input:
+    - one value per line
+    - whitespace- or comma-separated values
+    - blank lines
+    - comments beginning with #, //, or ;
+
+    Values are rounded, clipped to signed int16, and returned as a
+    little-endian NumPy array. Sample-count selection is handled by the GUI.
+    """
+    path = Path(txt_file)
+
+    if not path.is_file():
+        raise FileNotFoundError(f"Reference TXT file not found:\n{path}")
+
+    values: list[float] = []
+
+    with path.open("r", encoding="utf-8-sig") as handle:
+        for line_number, original_line in enumerate(handle, start=1):
+            line = original_line.strip()
+
+            if not line:
+                continue
+
+            for marker in ("//", "#", ";"):
+                marker_index = line.find(marker)
+                if marker_index >= 0:
+                    line = line[:marker_index].strip()
+
+            if not line:
+                continue
+
+            for token in line.replace(",", " ").split():
+                try:
+                    values.append(float(token))
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid numeric value '{token}' on line "
+                        f"{line_number} of:\n{path}"
+                    ) from exc
+
+    if not values:
+        raise ValueError(f"No numeric reference samples found in:\n{path}")
+
+    reference = np.asarray(values, dtype=np.float64).reshape(-1)
+
+    if not np.all(np.isfinite(reference)):
+        raise ValueError("Reference contains NaN or infinite values.")
+
+    return np.clip(
+        np.rint(reference),
+        -32768,
+        32767,
+    ).astype("<i2")
 
 
 def prepare_reference_samples(
