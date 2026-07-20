@@ -13,6 +13,7 @@ from .reference_upload import (
     REFERENCE_SAMPLE_COUNT,
     clear_reference,
     load_reference_txt,
+    reconstruct_adc_reference,
     send_reference,
 )
 
@@ -594,8 +595,8 @@ def gui_receive_timing_captures():
 
 def gui_upload_reference_txt():
     """
-    Select a DAC/reference TXT file, extract exactly 2032 samples,
-    convert them to signed int16, and upload them to the FPGA.
+    Select a periodic AD9164 TXT waveform, reconstruct 2032 samples on the
+    configured ADC time grid, and upload signed 14-bit codes to the FPGA.
     """
     txt_file = filedialog.askopenfilename(
         parent=root,
@@ -614,10 +615,10 @@ def gui_upload_reference_txt():
     try:
         all_samples = load_reference_txt(txt_file)
 
-        if all_samples.size < REFERENCE_SAMPLE_COUNT:
+        if all_samples.size < 2:
             raise ValueError(
                 f"The selected file contains only {all_samples.size} samples.\n\n"
-                f"At least {REFERENCE_SAMPLE_COUNT} samples are required."
+                "At least two samples are required for periodic reconstruction."
             )
 
     except Exception as exc:
@@ -634,7 +635,7 @@ def gui_upload_reference_txt():
     dialog.transient(root)
     dialog.grab_set()
 
-    max_start = all_samples.size - REFERENCE_SAMPLE_COUNT
+    max_start = all_samples.size - 1
     selected_path = Path(txt_file)
 
     tk.Label(
@@ -656,7 +657,8 @@ def gui_upload_reference_txt():
         text=(
             f"File: {selected_path.name}\n"
             f"Total numeric samples: {all_samples.size}\n"
-            f"Samples sent to FPGA: {REFERENCE_SAMPLE_COUNT}"
+            f"Reconstructed ADC samples: {REFERENCE_SAMPLE_COUNT}\n"
+            "DAC rate: 2.4576 GSPS; ADC rate: 1.3 GSPS; ADC: signed 14-bit"
         ),
         justify="left",
         anchor="w",
@@ -672,7 +674,7 @@ def gui_upload_reference_txt():
 
     tk.Label(
         selection_frame,
-        text="Start sample index:",
+        text="Starting DAC index:",
     ).grid(
         row=0,
         column=0,
@@ -708,15 +710,17 @@ def gui_upload_reference_txt():
         try:
             start_index = int(start_entry.get().strip())
         except ValueError as exc:
-            raise ValueError("Start sample index must be an integer.") from exc
+            raise ValueError("Starting DAC index must be an integer.") from exc
 
         if not 0 <= start_index <= max_start:
             raise ValueError(
-                f"Start sample index must be between 0 and {max_start}."
+                f"Starting DAC index must be between 0 and {max_start}."
             )
 
-        end_index = start_index + REFERENCE_SAMPLE_COUNT
-        selected = all_samples[start_index:end_index].copy()
+        selected = reconstruct_adc_reference(
+            all_samples,
+            start_dac_index=float(start_index),
+        )
 
         if selected.size != REFERENCE_SAMPLE_COUNT:
             raise ValueError(
@@ -729,10 +733,8 @@ def gui_upload_reference_txt():
     def update_preview():
         try:
             start_index, selected = get_selected_samples()
-            end_index = start_index + REFERENCE_SAMPLE_COUNT - 1
-
             preview_var.set(
-                f"Selected range: {start_index} to {end_index}\n"
+                f"Starting DAC index: {start_index} (periodic resampling)\n"
                 f"Minimum: {int(selected.min())}\n"
                 f"Maximum: {int(selected.max())}\n"
                 f"First sample: {int(selected[0])}\n"
@@ -848,8 +850,6 @@ def gui_upload_reference_txt():
                 require_full_buffer=True,
             )
 
-            end_index = start_index + REFERENCE_SAMPLE_COUNT - 1
-
             status_var.set(
                 f"Sent {sent_count} samples. "
                 "Check UART for 'Reference uploaded successfully'."
@@ -860,7 +860,7 @@ def gui_upload_reference_txt():
                 (
                     f"Sent {sent_count} samples to "
                     f"{fpga_ip}:{fpga_port}.\n\n"
-                    f"Source range: {start_index} to {end_index}\n"
+                    f"Starting DAC index: {start_index}\n"
                     f"First sample: {int(selected[0])}\n"
                     f"Last sample: {int(selected[-1])}\n\n"
                     "Confirm the upload result on the FPGA UART."

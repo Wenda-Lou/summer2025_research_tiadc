@@ -23,6 +23,10 @@ import numpy as np
 FPGA_IP = "192.168.1.10"
 FPGA_PORT = 6666
 REFERENCE_SAMPLE_COUNT = 2032
+DAC_SAMPLE_RATE_HZ = 2_457_600_000.0
+ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
+DAC_BITS = 16
+ADC_BITS = 14
 # Firmware accepts at most (512 - 8) / 2 = 252 samples per REFD packet.
 # Keep 240 to match the previously used conservative packet size.
 REFERENCE_CHUNK_SAMPLES = 240
@@ -85,6 +89,63 @@ def load_reference_txt(txt_file: str | Path) -> np.ndarray:
         np.rint(reference),
         -32768,
         32767,
+    ).astype("<i2")
+
+
+def reconstruct_adc_reference(
+    dac_samples: Iterable[float],
+    *,
+    start_dac_index: float = 0.0,
+    output_sample_count: int = REFERENCE_SAMPLE_COUNT,
+    dac_sample_rate_hz: float = DAC_SAMPLE_RATE_HZ,
+    adc_sample_rate_hz: float = ADC_SAMPLE_RATE_HZ,
+) -> np.ndarray:
+    """Reconstruct ideal signed 14-bit ADC samples from a periodic DAC file.
+
+    The AD9164 TXT entries lie on the DAC time grid.  ADC sample positions are
+    therefore spaced by ``dac_sample_rate_hz / adc_sample_rate_hz`` entries,
+    not by one adjacent TXT entry.  Linear interpolation is periodic because
+    the waveform file is replayed cyclically.
+
+    This models sample rate and digital full-scale conversion only.  Unknown
+    converter clock phase, analog-path gain/offset, delay, and bandwidth must
+    still be handled by alignment/calibration against a real capture.
+    """
+    waveform = np.asarray(dac_samples, dtype=np.float64).reshape(-1)
+
+    if waveform.size < 2:
+        raise ValueError("At least two DAC samples are required.")
+    if not np.all(np.isfinite(waveform)):
+        raise ValueError("DAC waveform contains NaN or infinite values.")
+    if output_sample_count <= 0:
+        raise ValueError("output_sample_count must be positive.")
+    if dac_sample_rate_hz <= 0.0 or adc_sample_rate_hz <= 0.0:
+        raise ValueError("DAC and ADC sample rates must be positive.")
+    if not 0.0 <= start_dac_index < waveform.size:
+        raise ValueError(
+            f"start_dac_index must be in [0, {waveform.size})."
+        )
+
+    dac_positions = (
+        start_dac_index
+        + np.arange(output_sample_count, dtype=np.float64)
+        * (dac_sample_rate_hz / adc_sample_rate_hz)
+    ) % waveform.size
+    lower = np.floor(dac_positions).astype(np.int64)
+    fraction = dac_positions - lower
+    upper = (lower + 1) % waveform.size
+    interpolated = (
+        waveform[lower] * (1.0 - fraction)
+        + waveform[upper] * fraction
+    )
+
+    adc_scale = float(1 << (DAC_BITS - ADC_BITS))
+    adc_min = -(1 << (ADC_BITS - 1))
+    adc_max = (1 << (ADC_BITS - 1)) - 1
+    return np.clip(
+        np.rint(interpolated / adc_scale),
+        adc_min,
+        adc_max,
     ).astype("<i2")
 
 

@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <math.h>
 #include "xil_printf.h"
 #include "xparameters.h"
 #include "peripherals.h"
@@ -1115,55 +1116,39 @@ void handle_adc_reference_status_cmd(void)
 
 void handle_adc_calibration_cmd(void)
 {
+    static int16_t captured_reference[ADC_VALID_SAMPLE_COUNT];
     static int16_t reconstructed_samples[ADC_VALID_SAMPLE_COUNT];
     static int16_t aligned_samples[ADC_VALID_SAMPLE_COUNT];
 
-    const int16_t *reference;
-    size_t reference_count;
+    size_t reference_count = 0U;
     size_t reconstructed_count = 0U;
 
     calibration_config_t config;
     calibration_state_t state;
     calibration_status_t calibration_status;
 
-    timing_alignment_result_t alignment;
+    timing_analysis_result_t timing_result;
 
-    int frame_status;
     int reconstruction_status;
     int timing_status;
+
+    if (adc_sweep_active)
+    {
+        ERR("Another automatic ADC capture is already in progress.");
+        return;
+    }
+
+    adc_sweep_active = 1;
 
     xil_printf("\r\n");
     xil_printf("===================================\r\n");
     xil_printf("ADC Measurement-Only Calibration\r\n");
+    xil_printf("Reference : first ADC capture\r\n");
+    xil_printf("Signal    : second ADC capture\r\n");
     xil_printf("===================================\r\n");
 
     /*
-     * 1. Verify reference.
-     */
-    if (!reference_buffer_is_ready())
-    {
-        xil_printf(
-            "Calibration cannot start: no reference is loaded.\r\n"
-        );
-        return;
-    }
-
-    reference = reference_buffer_data();
-    reference_count = reference_buffer_length();
-
-    if (reference_count != ADC_VALID_SAMPLE_COUNT)
-    {
-        xil_printf(
-            "Calibration cannot start: expected %u reference "
-            "samples, received %lu.\r\n",
-            ADC_VALID_SAMPLE_COUNT,
-            (unsigned long)reference_count
-        );
-        return;
-    }
-
-    /*
-     * 2. Initialize calibration state.
+     * 1. Initialize calibration state.
      *
      * This does not modify any coefficient by itself.
      */
@@ -1177,23 +1162,52 @@ void handle_adc_calibration_cmd(void)
             "Calibration initialization failed: %d\r\n",
             (int)calibration_status
         );
-        return;
+        goto calibration_done;
     }
 
     /*
-     * 3. Capture one new raw frame.
+     * 2. Capture and reconstruct frame 1 as the fixed reference, matching the
+     * tested adc -timing acquisition method.
      */
-    frame_status = adc_capture_frame();
-
-    if (frame_status != XST_SUCCESS)
+    xil_printf("\r\nCapturing reference frame (1/2).\r\n");
+    if (adc_capture_frame() != XST_SUCCESS)
     {
-        xil_printf("Calibration capture failed.\r\n");
-        return;
+        xil_printf("Calibration reference capture failed.\r\n");
+        goto calibration_done;
     }
 
+    reconstruction_status = adc_reconstruct_frame(
+        RxBufferPtr,
+        DMA_CMD_BUF_SIZE,
+        captured_reference,
+        ADC_VALID_SAMPLE_COUNT,
+        &reference_count
+    );
+
+    if (reconstruction_status != 0)
+    {
+        xil_printf(
+            "Calibration reference reconstruction failed: %d\r\n",
+            reconstruction_status
+        );
+        goto calibration_done;
+    }
+
+    xil_printf(
+        "Reference samples reconstructed: %lu\r\n",
+        (unsigned long)reference_count
+    );
+
     /*
-     * 4. Reconstruct 4096 DMA bytes into 2032 ADC samples.
+     * 3. Capture and reconstruct frame 2 as the signal to align/analyze.
      */
+    xil_printf("\r\nCapturing measurement frame (2/2).\r\n");
+    if (adc_capture_frame() != XST_SUCCESS)
+    {
+        xil_printf("Calibration measurement capture failed.\r\n");
+        goto calibration_done;
+    }
+
     reconstruction_status = adc_reconstruct_frame(
         RxBufferPtr,
         DMA_CMD_BUF_SIZE,
@@ -1205,57 +1219,50 @@ void handle_adc_calibration_cmd(void)
     if (reconstruction_status != 0)
     {
         xil_printf(
-            "ADC frame reconstruction failed: %d\r\n",
+            "Calibration measurement reconstruction failed: %d\r\n",
             reconstruction_status
         );
-        return;
+        goto calibration_done;
+    }
+
+    if (reconstructed_count != reference_count)
+    {
+        xil_printf(
+            "Calibration sample count mismatch: %lu versus %lu.\r\n",
+            (unsigned long)reconstructed_count,
+            (unsigned long)reference_count
+        );
+        goto calibration_done;
     }
 
     xil_printf(
-        "Reconstructed samples: %lu\r\n",
+        "Measurement samples reconstructed: %lu\r\n",
         (unsigned long)reconstructed_count
     );
 
     /*
-     * 5. Find the circular lag relative to the fixed reference.
+     * 4. Use the exact circular alignment and fitted timing analysis already
+     * exercised by adc -timing.
      */
-    timing_status = timing_find_circular_lag(
-        reference,
+    timing_status = timing_analyze_frame(
+        captured_reference,
         reconstructed_samples,
         reconstructed_count,
-        &alignment
+        aligned_samples,
+        &timing_result
     );
 
     if (timing_status != 0)
     {
         xil_printf(
-            "Timing alignment search failed: %d\r\n",
+            "Calibration timing analysis failed: %d\r\n",
             timing_status
         );
-        return;
+        goto calibration_done;
     }
 
     /*
-     * 6. Apply alignment.
-     */
-    timing_status = timing_apply_circular_lag(
-        reconstructed_samples,
-        reconstructed_count,
-        alignment.lag_samples,
-        aligned_samples
-    );
-
-    if (timing_status != 0)
-    {
-        xil_printf(
-            "Timing alignment application failed: %d\r\n",
-            timing_status
-        );
-        return;
-    }
-
-    /*
-     * 7. Analyze only.
+     * 5. Analyze only.
      *
      * Do not call calibration_process_frame(), because that function calls
      * calibration_update() and changes the correction coefficients.
@@ -1263,7 +1270,7 @@ void handle_adc_calibration_cmd(void)
     calibration_status = calibration_analyze_frame(
         &state,
         aligned_samples,
-        reference,
+        captured_reference,
         reconstructed_count
     );
 
@@ -1273,16 +1280,28 @@ void handle_adc_calibration_cmd(void)
             "Calibration analysis failed: %d\r\n",
             (int)calibration_status
         );
-        return;
+        goto calibration_done;
     }
 
     /*
-     * 8. Print measurement results.
+     * 6. Print measurement results.
      */
+    xil_printf("\r\n========== Calibration Result ==========\r\n");
+    xil_printf(
+        "Lag samples            : %ld\r\n",
+        (long)timing_result.lag_samples
+    );
+
     print_float_value(
         "Alignment correlation",
-        alignment.correlation,
+        timing_result.correlation,
         ""
+    );
+
+    print_float_value(
+        "Aligned fitted RMSE",
+        timing_result.aligned_rmse_codes,
+        " codes"
     );
 
     print_float_value(
@@ -1335,4 +1354,7 @@ void handle_adc_calibration_cmd(void)
 
     xil_printf("=========================================\r\n");
     xil_printf("No correction coefficients were updated.\r\n");
+
+calibration_done:
+    adc_sweep_active = 0;
 }

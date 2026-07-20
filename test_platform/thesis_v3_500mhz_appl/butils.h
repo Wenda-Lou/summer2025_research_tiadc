@@ -56,8 +56,9 @@
  *                                            (reserved for future use)
  *              back                          Return to UART command prompt
  *
- *          -cal                             Initialize ADC calibration
- *                                           (requires an uploaded reference)
+ *          -cal                             Measure two captured ADC frames;
+ *                                           frame 1 is the reference and
+ *                                           aligned frame 2 is analyzed
  *
  *          -ref                             Display uploaded reference status
  *                                           and buffer information
