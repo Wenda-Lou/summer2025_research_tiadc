@@ -6,7 +6,7 @@ code revision**.
 
 The Upload Reference TXT path now treats the selected file as the periodic
 signed 16-bit waveform played by the AD9164. It reconstructs 2032 ideal ADC
-samples by periodically resampling from 2.4576 GSPS to the 1.3 GSPS rate
+samples by periodically resampling from 2.6 GSPS to the 1.45 GSPS rate
 configured in `main.c`, then converts full scale to signed 14-bit ADC codes
 (`-8192` through `8191`). The starting DAC index selects the initial waveform
 phase. This reconstruction does not model the unknown DAC/ADC clock phase,

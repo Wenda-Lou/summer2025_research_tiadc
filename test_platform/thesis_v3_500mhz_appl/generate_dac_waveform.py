@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -23,9 +24,9 @@ import numpy as np
 # USER SETTINGS — edit these values
 # =====================================================================
 
-# Desired main tone frequency in Hz. The default is ADC bin 547 for a
-# 2,032-sample frame at 1.3 GSPS: 349.950787401575 MHz.
-TONE_FREQUENCY_HZ = 547 * 1_300_000_000.0 / 2_032
+# Desired main tone frequency in Hz. The generator selects the nearest
+# coherent bin for the configured output length.
+TONE_FREQUENCY_HZ = 100_000_000.0
 
 # Sine-wave peak level in dBFS.
 # Examples:
@@ -52,7 +53,7 @@ DITHER_HIGH_HZ = 600e6
 DITHER_SEED = 1234
 
 # Output TXT filename.
-OUTPUT_FILE = Path("sine_350MHz_2p6GSPS.txt")
+OUTPUT_FILE = Path("sine_100MHz_2p6GSPS.txt")
 
 # Reserve a small number of codes to protect against rounding/clipping.
 HEADROOM_CODES = 16
@@ -62,29 +63,16 @@ HEADROOM_CODES = 16
 # FIXED PROJECT SETTINGS — normally do not change
 # =====================================================================
 
-ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
+ADC_SAMPLE_RATE_HZ = 1_450_000_000.0
 DAC_SAMPLE_RATE_HZ = 2_600_000_000.0
 ADC_FRAME_SAMPLES = 2_032
 DAC_TO_ADC_RATE_RATIO = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ
 
-if not DAC_TO_ADC_RATE_RATIO.is_integer():
-    raise RuntimeError("DAC/ADC sample-rate ratio must be an integer.")
-
-# The fundamental coherent DAC block is 4,064 samples. The AD9164 downloader
-# additionally requires the file length to be divisible by 256, so use the
-# least common multiple: lcm(4,064, 256) = 32,512 samples (eight blocks).
-COHERENT_DAC_BLOCK_SAMPLES = int(
-    ADC_FRAME_SAMPLES * DAC_TO_ADC_RATE_RATIO
-)
+# The ADC and DAC rates are not an integer ratio. Generate a periodic file
+# whose length is compatible with both the analysis-frame bookkeeping and the
+# AD9164 downloader's 256-sample alignment requirement.
 DAC_FILE_ALIGNMENT_SAMPLES = 256
-NUM_SAMPLES = math.lcm(
-    COHERENT_DAC_BLOCK_SAMPLES,
-    DAC_FILE_ALIGNMENT_SAMPLES,
-)
-EXPECTED_ADC_TONE_BIN = 547
-EXPECTED_DAC_TONE_BIN = EXPECTED_ADC_TONE_BIN * (
-    NUM_SAMPLES // COHERENT_DAC_BLOCK_SAMPLES
-)
+NUM_SAMPLES = math.lcm(ADC_FRAME_SAMPLES, DAC_FILE_ALIGNMENT_SAMPLES)
 INT16_MIN = -32_768
 INT16_MAX = 32_767
 
@@ -210,11 +198,6 @@ def main() -> None:
         tone_bin * DAC_SAMPLE_RATE_HZ / NUM_SAMPLES
     )
 
-    if tone_bin != EXPECTED_DAC_TONE_BIN:
-        raise RuntimeError(
-            f"Expected coherent DAC tone bin {EXPECTED_DAC_TONE_BIN}, "
-            f"but configuration produced bin {tone_bin}."
-        )
     if NUM_SAMPLES % DAC_FILE_ALIGNMENT_SAMPLES != 0:
         raise RuntimeError(
             f"DAC file length must be divisible by "
@@ -266,9 +249,10 @@ def main() -> None:
         "adc_sample_rate_hz": ADC_SAMPLE_RATE_HZ,
         "dac_to_adc_rate_ratio": DAC_TO_ADC_RATE_RATIO,
         "adc_frame_samples": ADC_FRAME_SAMPLES,
-        "coherent_dac_block_samples": COHERENT_DAC_BLOCK_SAMPLES,
+        "periodic_dac_file_samples": NUM_SAMPLES,
         "dac_file_alignment_samples": DAC_FILE_ALIGNMENT_SAMPLES,
-        "adc_tone_bin": EXPECTED_ADC_TONE_BIN,
+        "adc_tone_bin": actual_tone_hz * ADC_FRAME_SAMPLES /
+        ADC_SAMPLE_RATE_HZ,
         "num_samples": NUM_SAMPLES,
         "requested_tone_hz": TONE_FREQUENCY_HZ,
         "actual_tone_hz": actual_tone_hz,
@@ -315,7 +299,27 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Generate one or more AD9164 sine-wave TXT files."
+    )
+    parser.add_argument(
+        "--frequencies-mhz",
+        nargs="+",
+        type=float,
+        help="Tone frequencies in MHz; defaults to the configured tone.",
+    )
+    args = parser.parse_args()
+
     try:
-        main()
+        if args.frequencies_mhz:
+            for frequency_mhz in args.frequencies_mhz:
+                TONE_FREQUENCY_HZ = frequency_mhz * 1e6
+                frequency_label = f"{frequency_mhz:g}".replace(".", "p")
+                OUTPUT_FILE = Path(
+                    f"sine_{frequency_label}MHz_2p6GSPS.txt"
+                )
+                main()
+        else:
+            main()
     except Exception as exc:
         raise SystemExit(f"Error: {exc}") from exc

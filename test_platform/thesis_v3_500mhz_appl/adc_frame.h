@@ -8,18 +8,29 @@
 #define ADC_RAW_WORD_COUNT       2048U
 #define ADC_TRAILING_WORDS       8U
 #define ADC_VALID_SAMPLE_COUNT   2032U
+#define ADC_WORDS_PER_DMA_BEAT   8U
+#define ADC_SAMPLES_PER_CHANNEL_PER_BEAT 4U
+#define ADC_CHANNEL_SAMPLE_COUNT (ADC_VALID_SAMPLE_COUNT / 2U)
 
 /*
- * Reconstruct one DMA frame using the same format as frame.py:
- *
- * 1. Interpret bytes as little-endian int16.
- * 2. Arithmetic shift right by two bits.
- * 3. Remove the final eight words.
- * 4. Divide each eight-word group into:
- *      positive branch: words 0..3
- *      negative branch: words 4..7
- * 5. Negate the negative branch and interleave both branches.
+ * Reconstruct both independent HDL converter streams.  Each DMA beat is:
+ *   w0..w3 = ADC0 S0..S3 (Channel A)
+ *   w4..w7 = ADC1 S0..S3 (Channel B)
+ * Words are little-endian signed, left-aligned 14-bit values and therefore
+ * receive one arithmetic right shift by two.  No channel is negated, merged,
+ * interleaved, or averaged.
  */
+int adc_reconstruct_channels(
+    const uint8_t *raw_bytes,
+    size_t raw_byte_count,
+    int16_t *channel_a,
+    size_t channel_a_capacity,
+    int16_t *channel_b,
+    size_t channel_b_capacity,
+    size_t *samples_per_channel
+);
+
+/* Compatibility entry point: returns the chronological Channel A stream. */
 int adc_reconstruct_frame(
     const uint8_t *raw_bytes,
     size_t raw_byte_count,

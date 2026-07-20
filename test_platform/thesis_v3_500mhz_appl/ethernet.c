@@ -260,6 +260,7 @@ static void handle_reference_packet(
     if (memcmp(data, "REFB", 4U) == 0)
     {
         uint16_t total_samples;
+        reference_buffer_format_t format = REFERENCE_FORMAT_ADC_RATE;
 
         if (length < 6U)
         {
@@ -268,12 +269,16 @@ static void handle_reference_packet(
         }
 
         total_samples = read_u16_le(&data[4]);
+        if (length >= 7U) {
+            format = (reference_buffer_format_t)data[6];
+        }
 
-        status = reference_buffer_begin(total_samples);
+        status = reference_buffer_begin_with_format(total_samples, format);
 
         xil_printf(
-            "Reference begin: %u samples, status %d\r\n",
+            "Reference begin: %u samples, format %u, status %d\r\n",
             total_samples,
+            (unsigned int)format,
             (int)status
         );
 

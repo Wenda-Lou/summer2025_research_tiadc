@@ -16,8 +16,13 @@ extern "C" {
  * directly to one ADC capture frame.
  */
 #ifndef REFERENCE_MAX_SAMPLES
-#define REFERENCE_MAX_SAMPLES 2032U
+#define REFERENCE_MAX_SAMPLES 4064U
 #endif
+
+typedef enum {
+    REFERENCE_FORMAT_ADC_RATE = 0,
+    REFERENCE_FORMAT_DAC_RATE_2X = 1
+} reference_buffer_format_t;
 
 typedef enum {
     REFERENCE_BUFFER_OK = 0,
@@ -47,6 +52,10 @@ reference_buffer_status_t reference_buffer_load(
  * Call this before receiving the first UDP reference packet.
  */
 reference_buffer_status_t reference_buffer_begin(size_t expected_sample_count);
+reference_buffer_status_t reference_buffer_begin_with_format(
+    size_t expected_sample_count,
+    reference_buffer_format_t format
+);
 
 /*
  * Copy one chunk into the internal buffer at sample_offset.
@@ -71,6 +80,7 @@ const int16_t *reference_buffer_data(void);
 size_t reference_buffer_length(void);
 size_t reference_buffer_expected_length(void);
 int reference_buffer_is_ready(void);
+reference_buffer_format_t reference_buffer_format(void);
 
 #ifdef __cplusplus
 }

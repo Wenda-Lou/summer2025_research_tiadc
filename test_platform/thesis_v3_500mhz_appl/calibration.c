@@ -109,6 +109,7 @@ calibration_status_t calibration_analyze_frame(
     double sum_adc_ac2 = 0.0;
     double sum_cross = 0.0;
     double sum_error2 = 0.0;
+    double sum_absolute_error = 0.0;
     double sum_fitted_error2 = 0.0;
     double sum_fitted_absolute_error = 0.0;
 
@@ -159,6 +160,7 @@ calibration_status_t calibration_analyze_frame(
         sum_ref_ac2 += ref_ac * ref_ac;
         sum_cross += ref_ac * adc_ac;
         sum_error2 += error * error;
+        sum_absolute_error += fabs(error);
     }
 
     if (sum_ref_ac2 <= CALIBRATION_EPSILON) {
@@ -206,6 +208,8 @@ calibration_status_t calibration_analyze_frame(
         (float)sqrt(sum_ref_ac2 / (double)sample_count);
     state->metrics.rmse_codes =
         (float)sqrt(sum_error2 / (double)sample_count);
+    state->metrics.mae_codes =
+        (float)(sum_absolute_error / (double)sample_count);
     state->metrics.fitted_rmse_codes =
         (float)sqrt(sum_fitted_error2 / (double)sample_count);
     state->metrics.fitted_mae_codes =

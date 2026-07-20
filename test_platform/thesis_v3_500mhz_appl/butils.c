@@ -8,6 +8,8 @@
 #include <stdint.h>
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdbool.h>
 #include "xil_printf.h"
 #include "xparameters.h"
 #include "peripherals.h"
@@ -37,6 +39,52 @@ extern u8 *RxBufferPtr;
 extern uint8_t uart_send_flag; //Send flag enabled by the uart
 volatile uint8_t adc_sweep_active = 0;
 
+typedef struct {
+    double configured_rate_hz;
+    double analysis_rate_hz;
+    double correction_factor;
+    bool measured_rate_valid;
+} adc_sample_rate_state_t;
+
+static adc_sample_rate_state_t g_adc_sample_rate = {
+    ADC_CONFIGURED_SAMPLE_RATE_HZ,
+    ADC_CONFIGURED_SAMPLE_RATE_HZ,
+    1.0,
+    false
+};
+
+double adc_get_configured_sample_rate_hz(void)
+{
+    return g_adc_sample_rate.configured_rate_hz;
+}
+
+double adc_get_effective_sample_rate_hz(void)
+{
+    return g_adc_sample_rate.analysis_rate_hz;
+}
+
+double adc_get_sample_rate_correction_factor(void)
+{
+    return g_adc_sample_rate.correction_factor;
+}
+
+bool adc_effective_sample_rate_is_valid(void)
+{
+    return g_adc_sample_rate.measured_rate_valid;
+}
+
+bool adc_set_effective_sample_rate_hz(double rate_hz)
+{
+    const double configured_hz = g_adc_sample_rate.configured_rate_hz;
+    if (!isfinite(rate_hz) || rate_hz < 0.8 * configured_hz ||
+        rate_hz > 1.2 * configured_hz)
+        return false;
+    g_adc_sample_rate.analysis_rate_hz = rate_hz;
+    g_adc_sample_rate.correction_factor = rate_hz / configured_hz;
+    g_adc_sample_rate.measured_rate_valid = true;
+    return true;
+}
+
 #define ERR(fmt, ...) xil_printf("Command Error: " fmt "\r\n", ##__VA_ARGS__)
 
 #define CAL_ALIGNMENT_GUARD_SAMPLES 64U
@@ -45,10 +93,27 @@ volatile uint8_t adc_sweep_active = 0;
 #define ADC_CAL_MIN_FRAMES                  2U
 #define ADC_CAL_MAX_FRAMES                  100U
 #define CAL_TIMING_MIN_CORRELATION           0.970f
-#define CAL_TIMING_MIN_ANALYSIS_SAMPLES      1800U
+#define CAL_TIMING_MIN_ANALYSIS_SAMPLES       800U
 #define CAL_TIMING_MAX_ABS_FRAC_LAG          0.5f
 #define CAL_TIMING_MIN_ACCEPTED_FRAMES       5U
 #define CAL_TIMING_MIN_ACCEPTANCE_RATE       0.70f
+#define CAL_DAC_REF_MIN_CORRELATION           0.970f
+#define CAL_REF_DEBUG_SAMPLE_COUNT             5U
+#define CAL_REF_FREQ_TOLERANCE_HZ               2000000.0
+#define CAL_REF_VARIANCE_EPSILON                1.0e-6
+#define CAL_REF_TEST_GAIN_TOLERANCE             0.005f
+#define CAL_REF_TEST_OFFSET_TOLERANCE           1.0f
+#define CAL_REF_TEST_CORR_MIN                   0.999f
+#define CAL_REF_TEST_LAG_TOLERANCE              1.0f
+#define CAL_REF_PHASE_EQUIVALENT_CORR_DELTA     0.001f
+#define CAL_REF_SPECTRAL_PEAK_COUNT              10U
+#define CAL_ADC_FULL_SCALE_CODES                 8192.0f
+#define CAL_DAC_FULL_SCALE_CODES                32768.0f
+#define CAL_REF_ADC_DEBUG_SAMPLE_COUNT           32U
+#define KNOWN_TONE_PRINT_SAMPLE_COUNT             64U
+#define KNOWN_TONE_FRAC_SCAN_RADIUS_BINS          32.0
+#define KNOWN_TONE_FRAC_SCAN_STEP_BIN              0.01
+#define KNOWN_TONE_HILBERT_HALF_TAPS              31U
 
 _Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
                "ADC test configuration sample count mismatch");
@@ -84,11 +149,27 @@ typedef struct {
     uint32_t analysis_samples;
     float correlation;
     float raw_rmse;
+    float fitted_rmse;
     calibration_timing_reject_reason_t reject_reason;
 } calibration_timing_frame_result_t;
 
+static int16_t calibration_convert_reference_to_adc_units(int16_t dac_code)
+{
+    /*
+     * No verified AD9164-code to AD9695-code transfer scale is available.
+     * Preserve the uploaded numeric scale and report a relative gain.  Any
+     * future physical conversion belongs in this single function.
+     */
+    return dac_code;
+}
+
 int adc_capture_frame(void);
 static void adc_ifc_sweep(void);
+static int calibration_validate_uploaded_reference(int print_diagnostics);
+static void calibration_run_adc_reference_diagnostic(void);
+static void calibration_run_known_tone_diagnostic(double known_frequency_mhz);
+static void calibration_run_raw_mapping_diagnostic(
+    const int16_t *even_reference, const int16_t *odd_reference);
 void adc_timing_capture(uint32_t frame_count);
 
 static void print_float_value(const char *label, float value, const char *unit)
@@ -117,6 +198,551 @@ static void print_float_value(const char *label, float value, const char *unit)
     );
 }
 
+static void print_double_value(const char *label, double value, const char *unit);
+static void print_double_inline(double value);
+
+typedef struct {
+    size_t dominant_bin;
+    double dominant_frequency_hz;
+} known_tone_spectrum_t;
+
+typedef struct {
+    double expected_fractional_bin;
+    double strongest_fractional_bin;
+    double strongest_frequency_hz;
+    double magnitude_at_expected;
+    double magnitude_at_strongest;
+    double zero_crossing_frequency_hz;
+    size_t positive_crossing_count;
+    double analytic_phase_frequency_hz;
+    size_t analytic_phase_sample_count;
+} known_tone_fractional_result_t;
+
+static double known_tone_mean(const int16_t *samples, size_t count)
+{
+    double mean = 0.0;
+    for (size_t i = 0U; i < count; ++i) mean += (double)samples[i];
+    return count != 0U ? mean / (double)count : 0.0;
+}
+
+/* Direct complex DFT at an arbitrary angular frequency in radians/sample. */
+static double known_tone_exact_dft_magnitude(
+    const int16_t *samples, size_t count, double mean, double omega)
+{
+    const double step_real = cos(omega);
+    const double step_imag = -sin(omega);
+    double oscillator_real = 1.0;
+    double oscillator_imag = 0.0;
+    double real = 0.0;
+    double imaginary = 0.0;
+
+    for (size_t i = 0U; i < count; ++i) {
+        const double value = (double)samples[i] - mean;
+        const double next_real = oscillator_real * step_real -
+                                 oscillator_imag * step_imag;
+        const double next_imag = oscillator_real * step_imag +
+                                 oscillator_imag * step_real;
+        real += value * oscillator_real;
+        imaginary += value * oscillator_imag;
+        oscillator_real = next_real;
+        oscillator_imag = next_imag;
+    }
+    return sqrt(real * real + imaginary * imaginary) / (double)count;
+}
+
+static double known_tone_positive_zero_crossing_frequency(
+    const int16_t *samples, size_t count, double mean, double sample_rate_hz,
+    size_t *crossing_count)
+{
+    double first_crossing = 0.0;
+    double last_crossing = 0.0;
+    size_t crossings = 0U;
+
+    for (size_t i = 1U; i < count; ++i) {
+        const double previous = (double)samples[i - 1U] - mean;
+        const double current = (double)samples[i] - mean;
+        if ((previous <= 0.0) && (current > 0.0)) {
+            const double denominator = current - previous;
+            const double position = (double)(i - 1U) +
+                (denominator != 0.0 ? -previous / denominator : 0.0);
+            if (crossings == 0U) first_crossing = position;
+            last_crossing = position;
+            ++crossings;
+        }
+    }
+    if (crossing_count != NULL) *crossing_count = crossings;
+    if ((crossings < 2U) || (last_crossing <= first_crossing)) return 0.0;
+    return (double)(crossings - 1U) * sample_rate_hz /
+           (last_crossing - first_crossing);
+}
+
+/*
+ * Estimate average unwrapped phase increment using a finite odd-symmetric
+ * Hilbert transformer.  The real component is delayed to the FIR center and
+ * the imaginary component is the corresponding analytic-signal quadrature.
+ */
+static double known_tone_analytic_phase_frequency(
+    const int16_t *samples, size_t count, double mean, double sample_rate_hz,
+    size_t *phase_count)
+{
+    const double pi = 3.14159265358979323846;
+    const size_t half = KNOWN_TONE_HILBERT_HALF_TAPS;
+    double previous_phase = 0.0;
+    double unwrapped_phase = 0.0;
+    double first_unwrapped_phase = 0.0;
+    size_t used = 0U;
+
+    if (count <= 2U * half) {
+        if (phase_count != NULL) *phase_count = 0U;
+        return 0.0;
+    }
+    for (size_t n = half; n < count - half; ++n) {
+        const double real = (double)samples[n] - mean;
+        double imaginary = 0.0;
+        for (int k = -(int)half; k <= (int)half; ++k) {
+            if ((k != 0) && ((abs(k) & 1) != 0)) {
+                imaginary += (2.0 / (pi * (double)k)) *
+                    ((double)samples[(size_t)((int)n - k)] - mean);
+            }
+        }
+        {
+            const double phase = atan2(imaginary, real);
+            if (used == 0U) {
+                previous_phase = phase;
+                first_unwrapped_phase = phase;
+                unwrapped_phase = phase;
+            } else {
+                double increment = phase - previous_phase;
+                while (increment > pi) increment -= 2.0 * pi;
+                while (increment < -pi) increment += 2.0 * pi;
+                unwrapped_phase += increment;
+                previous_phase = phase;
+            }
+            ++used;
+        }
+    }
+    if (phase_count != NULL) *phase_count = used;
+    if (used < 2U) return 0.0;
+    return fabs((unwrapped_phase - first_unwrapped_phase) /
+        (double)(used - 1U)) * sample_rate_hz / (2.0 * pi);
+}
+
+static int known_tone_fractional_analysis(
+    const int16_t *samples, size_t count, double known_frequency_hz,
+    double sample_rate_hz,
+    known_tone_fractional_result_t *result)
+{
+    const double two_pi = 6.28318530717958647692;
+    const double mean = known_tone_mean(samples, count);
+    double first_bin;
+    double last_bin;
+
+    if ((samples == NULL) || (result == NULL) || (count < 4U) ||
+        !(known_frequency_hz > 0.0) || !(sample_rate_hz > 0.0)) return -1;
+    memset(result, 0, sizeof(*result));
+    result->expected_fractional_bin = known_frequency_hz * (double)count /
+                                      sample_rate_hz;
+    result->magnitude_at_expected = known_tone_exact_dft_magnitude(
+        samples, count, mean, two_pi * known_frequency_hz / sample_rate_hz);
+
+    first_bin = result->expected_fractional_bin -
+                KNOWN_TONE_FRAC_SCAN_RADIUS_BINS;
+    last_bin = result->expected_fractional_bin +
+               KNOWN_TONE_FRAC_SCAN_RADIUS_BINS;
+    if (first_bin < 0.01) first_bin = 0.01;
+    if (last_bin > (double)count / 2.0 - 0.01)
+        last_bin = (double)count / 2.0 - 0.01;
+
+    result->magnitude_at_strongest = -1.0;
+    for (double bin = first_bin; bin <= last_bin + 0.000001;
+         bin += KNOWN_TONE_FRAC_SCAN_STEP_BIN) {
+        const double magnitude = known_tone_exact_dft_magnitude(
+            samples, count, mean, two_pi * bin / (double)count);
+        if (magnitude > result->magnitude_at_strongest) {
+            result->magnitude_at_strongest = magnitude;
+            result->strongest_fractional_bin = bin;
+        }
+    }
+    result->strongest_frequency_hz = result->strongest_fractional_bin *
+        sample_rate_hz / (double)count;
+    result->zero_crossing_frequency_hz =
+        known_tone_positive_zero_crossing_frequency(samples, count, mean,
+            sample_rate_hz,
+            &result->positive_crossing_count);
+    result->analytic_phase_frequency_hz =
+        known_tone_analytic_phase_frequency(samples, count, mean,
+            sample_rate_hz,
+            &result->analytic_phase_sample_count);
+    return 0;
+}
+
+static void known_tone_print_fractional_result(
+    const char *channel_name, const known_tone_fractional_result_t *result)
+{
+    xil_printf("\r\n---------- %s Fractional Frequency ----------\r\n",
+               channel_name);
+    print_double_value("Expected fractional bin",
+        result->expected_fractional_bin, "");
+    print_double_value("Strongest fractional bin",
+        result->strongest_fractional_bin, "");
+    print_double_value("Fractional measured freq",
+        result->strongest_frequency_hz / 1.0e6, " MHz");
+    print_double_value("Magnitude at expected freq",
+        result->magnitude_at_expected, "");
+    print_double_value("Magnitude at strongest",
+        result->magnitude_at_strongest, "");
+    print_double_value("Zero-crossing frequency",
+        result->zero_crossing_frequency_hz / 1.0e6, " MHz");
+    xil_printf("Positive zero crossings : %lu\r\n",
+        (unsigned long)result->positive_crossing_count);
+    print_double_value("Analytic-phase frequency",
+        result->analytic_phase_frequency_hz / 1.0e6, " MHz");
+    xil_printf("Analytic phase samples  : %lu\r\n",
+        (unsigned long)result->analytic_phase_sample_count);
+}
+
+static void known_tone_print_first_samples(
+    const char *channel_name, const int16_t *samples, size_t count)
+{
+    const size_t print_count = count < KNOWN_TONE_PRINT_SAMPLE_COUNT ?
+                               count : KNOWN_TONE_PRINT_SAMPLE_COUNT;
+    xil_printf("\r\nFirst %lu reconstructed samples of %s:\r\n",
+        (unsigned long)print_count, channel_name);
+    for (size_t i = 0U; i < print_count; ++i) {
+        xil_printf("%6d%s", (int)samples[i],
+            ((i + 1U) % 8U) == 0U ? "\r\n" : " ");
+    }
+    if ((print_count % 8U) != 0U) xil_printf("\r\n");
+}
+
+static void print_adc_sample_rate_state(void)
+{
+    print_double_value("Configured sample rate",
+        adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
+    print_double_value("Analysis sample rate",
+        adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
+    xil_printf("Rate source            : %s\r\n",
+        adc_effective_sample_rate_is_valid() ?
+        "known-tone measurement" : "configured value");
+    xil_printf("Measured rate valid    : %s\r\n",
+        adc_effective_sample_rate_is_valid() ? "YES" : "NO");
+    print_double_value("Correction factor",
+        adc_get_sample_rate_correction_factor(), "");
+}
+
+static void print_adc_analysis_rate_header(void)
+{
+    print_double_value("Configured sample rate",
+        adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
+    print_double_value("Analysis sample rate",
+        adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
+    xil_printf("Rate source            : %s\r\n",
+        adc_effective_sample_rate_is_valid() ?
+        "known-tone measurement" : "configured value");
+    print_double_value("DAC/ADC rate ratio",
+        DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz(), "");
+}
+
+static int calibration_known_tone_spectrum(
+    const int16_t *samples, size_t count, known_tone_spectrum_t *result)
+{
+    double mean = 0.0, best_magnitude = -1.0;
+    if ((samples == NULL) || (result == NULL) || (count < 4U)) return -1;
+    for (size_t i = 0U; i < count; ++i) mean += samples[i];
+    mean /= (double)count;
+    result->dominant_bin = 0U;
+    for (size_t bin = 1U; bin < count / 2U; ++bin) {
+        const double coefficient = 2.0 * cos(
+            6.28318530717958647692 * (double)bin / (double)count);
+        double previous = 0.0, previous2 = 0.0;
+        for (size_t i = 0U; i < count; ++i) {
+            const double current = ((double)samples[i] - mean) +
+                coefficient * previous - previous2;
+            previous2 = previous; previous = current;
+        }
+        {
+            const double power = previous2 * previous2 + previous * previous -
+                                 coefficient * previous * previous2;
+            if (power > best_magnitude) {
+                best_magnitude = power; result->dominant_bin = bin;
+            }
+        }
+    }
+    result->dominant_frequency_hz = (double)result->dominant_bin *
+        adc_get_effective_sample_rate_hz() / (double)count;
+    return result->dominant_bin == 0U ? -2 : 0;
+}
+
+static unsigned int calibration_decode_chip_decimation(uint8_t value)
+{
+    switch (value & 0x0FU) {
+    case AD9695_DCM2_EN: return 2U;
+    case AD9695_DCM4_EN: return 4U;
+    case AD9695_DCM16_EN: return 16U;
+    case AD9695_DCM3_EN: return 3U;
+    case AD9695_DCM_NONE:
+    default: return 1U;
+    }
+}
+
+static unsigned int calibration_decode_ddc_decimation(uint8_t selector)
+{
+    /* AD9695 DDC filter selector encoding: bypass, 2, 4, 8, 16, 32. */
+    static const uint8_t ratios[] = {1U, 2U, 4U, 8U, 16U, 32U};
+    return selector < sizeof(ratios) ? ratios[selector] : 0U;
+}
+
+static void calibration_print_ad9695_register_diagnostics(void)
+{
+    uint8_t adc_mode = 0U, chip_dcm = 0U;
+    uint8_t test_a = 0U, test_b = 0U;
+    uint8_t ddc_sync = 0U;
+    struct jesd_param_t jesd;
+
+    memset(&jesd, 0, sizeof(jesd));
+    ad9695_read_register(&spi_inst, AD9695_ADC_MODE_REG, &adc_mode);
+    ad9695_read_register(&spi_inst, AD9695_ADC_DCM_REG, &chip_dcm);
+    ad9695_read_register(&spi_inst, AD9695_DDC_SYNC_CTRL_REG, &ddc_sync);
+    ad9695_adc_set_channel_select(0U);
+    ad9695_read_register(&spi_inst, AD9695_REG_TEST_MODE, &test_a);
+    ad9695_adc_set_channel_select(1U);
+    ad9695_read_register(&spi_inst, AD9695_REG_TEST_MODE, &test_b);
+    ad9695_adc_set_channel_select(2U);
+    ad9695_jesd_get_cfg_param(&jesd);
+
+    xil_printf("\r\n========== AD9695 Decoded Register State ==========\r\n");
+    xil_printf("ADC operating mode      : %s (code %u)\r\n",
+        (adc_mode & 0x03U) == 0U ? "full-bandwidth/DDC bypass" : "DDC path",
+        adc_mode & 0x03U);
+    xil_printf("DDC enable              : %s\r\n",
+        (adc_mode & 0x03U) == 0U ? "NO" : "YES");
+    xil_printf("DDC bypass              : %s\r\n",
+        (adc_mode & 0x03U) == 0U ? "YES" : "NO");
+    xil_printf("Chip decimation ratio  : %u\r\n",
+        calibration_decode_chip_decimation(chip_dcm));
+    xil_printf("DDC/NCO sync mode       : update=%s soft-reset=%s sysref-sync=%s\r\n",
+        (ddc_sync & AD9695_DDC_UPDATE_MODE) ? "YES" : "NO",
+        (ddc_sync & AD9695_NCO_SOFT_RESET) ? "ACTIVE" : "inactive",
+        (ddc_sync & AD9695_NCO_SYSREF_SYNC_EN) ? "enabled" : "disabled");
+
+    for (unsigned int ddc = 0U; ddc < 4U; ++ddc) {
+        const uint16_t base = (uint16_t)(ddc * AD9695_DDCX_REG_OFFSET);
+        uint8_t ctrl = 0U, data_sel = 0U, ftw_bytes[6] = {0U};
+        uint64_t ftw_unsigned = 0U;
+        int64_t ftw_signed;
+        uint8_t selector;
+        char nco_label[24];
+        ad9695_read_register(&spi_inst, AD9695_DDCX_CTRL0_REG + base, &ctrl);
+        ad9695_read_register(&spi_inst, AD9695_DDCX_DATA_SEL_REG + base, &data_sel);
+        for (unsigned int byte = 0U; byte < 6U; ++byte) {
+            ad9695_read_register(&spi_inst,
+                AD9695_DDCX_FTW0_REG + base + byte, &ftw_bytes[byte]);
+            ftw_unsigned |= (uint64_t)ftw_bytes[byte] << (8U * byte);
+        }
+        ftw_signed = (ftw_unsigned & (1ULL << 47U)) ?
+            (int64_t)(ftw_unsigned | 0xFFFF000000000000ULL) :
+            (int64_t)ftw_unsigned;
+        selector = (uint8_t)((ctrl & 0x07U) | ((data_sel >> 1U) & 0x08U));
+        xil_printf("DDC%u mixer mode        : %s\r\n", ddc,
+            (ctrl & AD9695_DDCX_MIXER_SEL) ? "mixer selected" : "bypass/no mixer");
+        xil_printf("DDC%u NCO mode          : %u (%s)\r\n", ddc,
+            (ctrl >> 4U) & 0x03U,
+            (((ctrl >> 4U) & 0x03U) == 0U) ? "variable IF" :
+            (((ctrl >> 4U) & 0x03U) == 1U) ? "zero IF" : "test/reserved");
+        xil_printf("DDC%u NCO enable        : %s\r\n", ddc,
+            (ctrl & AD9695_DDCX_MIXER_SEL) ? "YES" : "NO");
+        snprintf(nco_label, sizeof(nco_label), "DDC%u NCO frequency", ddc);
+        print_double_value(nco_label, (double)ftw_signed * ADC_SAMPLE_RATE_HZ /
+            281474976710656.0 / 1.0e6, " MHz");
+        xil_printf("DDC%u decimation        : selector %u, ratio %u\r\n",
+            ddc, selector, calibration_decode_ddc_decimation(selector));
+        xil_printf("DDC%u output format     : %s\r\n", ddc,
+            (ctrl & AD9695_DDCX_COMPLEX_TO_REAL) ? "real" : "complex/IQ");
+    }
+    xil_printf("Test mode Channel A    : %u (%s)\r\n", test_a,
+        test_a == AD9695_TESTMODE_OFF ? "OFF" : "ACTIVE");
+    xil_printf("Test mode Channel B    : %u (%s)\r\n", test_b,
+        test_b == AD9695_TESTMODE_OFF ? "OFF" : "ACTIVE");
+    xil_printf("Output data rate       : ");
+    print_double_inline(ADC_SAMPLE_RATE_HZ /
+        calibration_decode_chip_decimation(chip_dcm) / 1.0e6);
+    xil_printf(" MSPS before any enabled DDC decimation\r\n");
+    xil_printf("JESD transport         : M=%u L=%u F=%u S=%u N=%u NP=%u CS=%u HD=%u\r\n",
+        jesd.jesd_M, jesd.jesd_L, jesd.jesd_F, jesd.jesd_S,
+        jesd.jesd_N, jesd.jesd_NP, jesd.jesd_CS, jesd.jesd_HD);
+    xil_printf("===================================================\r\n");
+    xil_printf("\r\n========== Current Analysis Configuration ==========\r\n");
+    print_double_value("Configured sample rate",
+        adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
+    print_double_value("Analysis sample rate",
+        adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
+    xil_printf("Frequency calculations use the analysis sample rate: YES\r\n");
+    xil_printf("Hardware configuration remains unchanged          : YES\r\n");
+    xil_printf("====================================================\r\n");
+}
+
+static void calibration_run_known_tone_diagnostic(double known_frequency_mhz)
+{
+    static int16_t channel_a[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t channel_b[ADC_CHANNEL_SAMPLE_COUNT];
+    known_tone_spectrum_t spectrum_a, spectrum_b;
+    known_tone_fractional_result_t fractional_a, fractional_b;
+    size_t sample_count = 0U;
+    double implied_a, implied_b;
+    double fractional_rate_a, fractional_rate_b;
+    double analytic_rate_a, analytic_rate_b;
+    double fractional_rate;
+    double analytic_rate;
+    double fractional_frequency_average;
+    double analytic_frequency_average;
+    double zero_crossing_frequency_average;
+    double analytic_frequency_error_hz;
+    double analytic_frequency_error_percent;
+    const double known_frequency_hz = known_frequency_mhz * 1.0e6;
+
+    if (adc_sweep_active) {
+        ERR("Another automatic ADC capture is already in progress.");
+        return;
+    }
+    adc_sweep_active = 1U;
+    if (adc_capture_frame() != XST_SUCCESS ||
+        adc_reconstruct_channels(RxBufferPtr, DMA_CMD_BUF_SIZE,
+            channel_a, ADC_CHANNEL_SAMPLE_COUNT,
+            channel_b, ADC_CHANNEL_SAMPLE_COUNT, &sample_count) != 0) {
+        xil_printf("ERROR: Known-tone DMA capture/reconstruction failed.\r\n");
+        goto known_tone_done;
+    }
+    if ((known_tone_fractional_analysis(channel_a, sample_count,
+             known_frequency_hz, adc_get_effective_sample_rate_hz(),
+             &fractional_a) != 0) ||
+        (known_tone_fractional_analysis(channel_b, sample_count,
+             known_frequency_hz, adc_get_effective_sample_rate_hz(),
+             &fractional_b) != 0)) {
+        xil_printf("ERROR: Fractional-frequency analysis failed.\r\n");
+        goto known_tone_done;
+    }
+
+    fractional_rate_a = fractional_a.strongest_fractional_bin > 0.0 ?
+        known_frequency_hz * (double)sample_count /
+        fractional_a.strongest_fractional_bin : 0.0;
+    fractional_rate_b = fractional_b.strongest_fractional_bin > 0.0 ?
+        known_frequency_hz * (double)sample_count /
+        fractional_b.strongest_fractional_bin : 0.0;
+    analytic_rate_a = fractional_a.analytic_phase_frequency_hz > 0.0 ?
+        known_frequency_hz * adc_get_effective_sample_rate_hz() /
+        fractional_a.analytic_phase_frequency_hz : 0.0;
+    analytic_rate_b = fractional_b.analytic_phase_frequency_hz > 0.0 ?
+        known_frequency_hz * adc_get_effective_sample_rate_hz() /
+        fractional_b.analytic_phase_frequency_hz : 0.0;
+    fractional_rate = 0.5 * (fractional_rate_a + fractional_rate_b);
+    analytic_rate = 0.5 * (analytic_rate_a + analytic_rate_b);
+    if (!isfinite(fractional_rate) || !isfinite(analytic_rate) ||
+        (fractional_rate <= 0.0) || (analytic_rate <= 0.0)) {
+        xil_printf("ERROR: Effective sample-rate estimates are invalid.\r\n");
+        goto known_tone_done;
+    }
+    if (!adc_set_effective_sample_rate_hz(0.5 *
+            (fractional_rate + analytic_rate))) {
+        xil_printf("ERROR: Effective sample-rate estimate is outside the allowed hardware range.\r\n");
+        goto known_tone_done;
+    }
+    xil_printf("Analysis sample rate updated from known-tone measurement.\r\n");
+    print_adc_sample_rate_state();
+
+    /* Recalculate all displayed frequency-domain values on the new time axis. */
+    (void)calibration_known_tone_spectrum(channel_a, sample_count, &spectrum_a);
+    (void)calibration_known_tone_spectrum(channel_b, sample_count, &spectrum_b);
+    (void)known_tone_fractional_analysis(channel_a, sample_count,
+        known_frequency_hz, adc_get_effective_sample_rate_hz(), &fractional_a);
+    (void)known_tone_fractional_analysis(channel_b, sample_count,
+        known_frequency_hz, adc_get_effective_sample_rate_hz(), &fractional_b);
+    implied_a = spectrum_a.dominant_bin > 0U ?
+        known_frequency_mhz * 1.0e6 * sample_count /
+        (double)spectrum_a.dominant_bin : 0.0;
+    implied_b = spectrum_b.dominant_bin > 0U ?
+        known_frequency_mhz * 1.0e6 * sample_count /
+        (double)spectrum_b.dominant_bin : 0.0;
+    fractional_frequency_average = 0.5 *
+        (fractional_a.strongest_frequency_hz +
+         fractional_b.strongest_frequency_hz);
+    analytic_frequency_average = 0.5 *
+        (fractional_a.analytic_phase_frequency_hz +
+         fractional_b.analytic_phase_frequency_hz);
+    zero_crossing_frequency_average = 0.5 *
+        (fractional_a.zero_crossing_frequency_hz +
+         fractional_b.zero_crossing_frequency_hz);
+    analytic_frequency_error_hz = analytic_frequency_average -
+                                  known_frequency_hz;
+    analytic_frequency_error_percent = 100.0 *
+        analytic_frequency_error_hz / known_frequency_hz;
+
+    xil_printf("\r\n========== Known Tone Diagnostic ==========\r\n");
+    print_double_value("Known input frequency", known_frequency_mhz, " MHz");
+    xil_printf("ADC sample count        : %lu\r\n", (unsigned long)sample_count);
+    xil_printf("Dominant FFT bin        : %lu\r\n",
+               (unsigned long)spectrum_a.dominant_bin);
+    print_double_value("Integer-bin frequency",
+        spectrum_a.dominant_frequency_hz / 1.0e6, " MHz");
+    xil_printf("Channel A dominant bin  : %lu\r\n",
+               (unsigned long)spectrum_a.dominant_bin);
+    xil_printf("Channel B dominant bin  : %lu\r\n",
+               (unsigned long)spectrum_b.dominant_bin);
+    xil_printf("Difference between channels: %ld bins\r\n",
+        (long)spectrum_a.dominant_bin - (long)spectrum_b.dominant_bin);
+    print_double_value("Channel B integer-bin frequency",
+        spectrum_b.dominant_frequency_hz / 1.0e6, " MHz");
+    xil_printf("Reference comparison skipped.\r\n");
+    xil_printf("Reason: DPG internal tone generator is the waveform source.\r\n");
+    xil_printf("===========================================\r\n");
+
+    xil_printf("\r\n========== Frequency Estimation Summary ==========\r\n");
+    print_double_value("Known input frequency",
+        known_frequency_mhz, " MHz");
+    print_double_value("Integer-bin frequency",
+        spectrum_a.dominant_frequency_hz / 1.0e6, " MHz");
+    print_double_value("Fractional DFT frequency",
+        fractional_frequency_average / 1.0e6, " MHz");
+    print_double_value("Analytic-phase frequency",
+        analytic_frequency_average / 1.0e6, " MHz");
+    print_double_value("Zero-crossing frequency",
+        zero_crossing_frequency_average / 1.0e6, " MHz");
+    print_double_value("Analytic-phase frequency error",
+        analytic_frequency_error_hz / 1.0e6, " MHz");
+    print_double_value("Analytic-phase error",
+        analytic_frequency_error_percent, " %");
+    xil_printf("==================================================\r\n");
+
+    xil_printf("\r\n========== Sample Rate Calibration ==========\r\n");
+    print_double_value("Configured sample rate",
+        adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
+    print_double_value("Fractional DFT rate estimate",
+        fractional_rate / 1.0e6, " MSPS");
+    print_double_value("Analytic phase rate estimate",
+        analytic_rate / 1.0e6, " MSPS");
+    print_double_value("Analysis sample rate",
+        adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
+    print_double_value("Correction factor",
+        adc_get_sample_rate_correction_factor(), "");
+    print_double_value("Channel A integer-bin implied rate",
+        implied_a / 1.0e6, " MSPS");
+    print_double_value("Channel B integer-bin implied rate",
+        implied_b / 1.0e6, " MSPS");
+    xil_printf("=============================================\r\n");
+
+    xil_printf("\r\n========== Channel A Details ==========\r\n");
+    known_tone_print_fractional_result("Channel A", &fractional_a);
+    xil_printf("\r\n========== Channel B Details ==========\r\n");
+    known_tone_print_fractional_result("Channel B", &fractional_b);
+    xil_printf("\r\n========== Raw Sample Dump ==========\r\n");
+    known_tone_print_first_samples("Channel A", channel_a, sample_count);
+    known_tone_print_first_samples("Channel B", channel_b, sample_count);
+    calibration_print_ad9695_register_diagnostics();
+
+known_tone_done:
+    xil_printf("No calibration coefficients were updated.\r\n");
+    adc_sweep_active = 0U;
+}
+
 static void print_double_value(
     const char *label,
     double value,
@@ -140,6 +766,15 @@ static void print_double_value(
                (long)whole,
                (long)fraction,
                unit != NULL ? unit : "");
+}
+
+static void print_double_inline(double value)
+{
+    const double absolute = fabs(value);
+    const int32_t whole = (int32_t)absolute;
+    const int32_t fraction = (int32_t)((absolute - (double)whole) * 1000000.0);
+    xil_printf("%s%ld.%06ld", value < 0.0 ? "-" : "",
+               (long)whole, (long)fraction);
 }
 
 static int adc_analyze_guarded_overlap(
@@ -251,39 +886,39 @@ static void print_overlap_measurements(
 
 static void print_adc_test_configuration(size_t sample_count)
 {
-    const double ratio = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ;
-    const double cycles =
-        CAL_EXPECTED_TONE_HZ * (double)sample_count / ADC_SAMPLE_RATE_HZ;
-    const double nearest_cycles = round(cycles);
-    const double coherence_error = fabs(cycles - nearest_cycles);
+    const double ratio = DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz();
 
     print_double_value("ADC sample rate",
-                       ADC_SAMPLE_RATE_HZ / 1.0e6, " MHz");
+                       adc_get_effective_sample_rate_hz() / 1.0e6, " MHz");
+    print_adc_sample_rate_state();
     print_double_value("DAC sample rate",
                        DAC_SAMPLE_RATE_HZ / 1.0e6, " MHz");
     print_double_value("DAC/ADC rate ratio", ratio, "");
     xil_printf("Capture samples       : %lu\r\n",
                (unsigned long)sample_count);
-    xil_printf("Expected tone bin     : %u\r\n",
-               (unsigned int)CAL_EXPECTED_TONE_BIN);
-    print_double_value("Expected tone freq",
-                       CAL_EXPECTED_TONE_HZ / 1.0e6, " MHz");
-    print_double_value("Expected cycles/frame", cycles, "");
-    print_double_value("Cycles per ADC frame", cycles, "");
-    print_double_value("Coherence error", coherence_error, " cycles");
+}
 
-    if ((sample_count == ADC_TEST_CAPTURE_SAMPLES) &&
-        isfinite(coherence_error) &&
-        (coherence_error <= CAL_COHERENCE_TOLERANCE)) {
-        xil_printf("Coherence status      : PASS\r\n");
-    } else {
-        xil_printf("Coherence status      : WARNING\r\n");
-        xil_printf("WARNING: The waveform is not coherent with the "
-                   "%lu-sample ADC window.\r\n",
-                   (unsigned long)sample_count);
-        xil_printf("Gain, offset, and mean estimates may vary with "
-                   "capture phase.\r\n");
+static void print_reference_coherence(double reference_frequency_hz,
+                                      size_t sample_count)
+{
+    double cycles;
+    double coherence_error;
+
+    if (!isfinite(reference_frequency_hz) || reference_frequency_hz <= 0.0 ||
+        !isfinite(adc_get_effective_sample_rate_hz()) ||
+        adc_get_effective_sample_rate_hz() <= 0.0 || sample_count == 0U) {
+        xil_printf("Reference coherence   : unavailable\r\n");
+        return;
     }
+    cycles = reference_frequency_hz * (double)sample_count /
+             adc_get_effective_sample_rate_hz();
+    coherence_error = fabs(cycles - round(cycles));
+    print_double_value("Reference cycles/frame", cycles, "");
+    print_double_value("Coherence error", coherence_error, " cycles");
+    xil_printf("Coherence status      : %s\r\n",
+        coherence_error <= CAL_COHERENCE_TOLERANCE ? "PASS" : "WARNING");
+    if (coherence_error > CAL_COHERENCE_TOLERANCE)
+        xil_printf("WARNING: Non-coherent capture may increase frame-to-frame metric variation.\r\n");
 }
 
 static int estimate_tone_frequency(
@@ -334,9 +969,10 @@ static int estimate_tone_frequency(
     }
 
     *frequency_hz =
-        ((double)(crossing_count - 1U) * ADC_SAMPLE_RATE_HZ) /
+        ((double)(crossing_count - 1U) * adc_get_effective_sample_rate_hz()) /
         (last_crossing - first_crossing);
-    *tone_bin = *frequency_hz * (double)sample_count / ADC_SAMPLE_RATE_HZ;
+    *tone_bin = *frequency_hz * (double)sample_count /
+                adc_get_effective_sample_rate_hz();
 
     if (!isfinite(*frequency_hz) || !isfinite(*tone_bin)) {
         return -3;
@@ -351,7 +987,6 @@ static void print_frequency_validation(
 {
     double measured_hz;
     double measured_bin;
-    double difference_hz;
     double measured_coherence_error;
     int status = estimate_tone_frequency(
         samples, sample_count, &measured_hz, &measured_bin
@@ -364,17 +999,12 @@ static void print_frequency_validation(
         return;
     }
 
-    difference_hz = measured_hz - CAL_EXPECTED_TONE_HZ;
     measured_coherence_error = fabs(measured_bin - round(measured_bin));
     print_double_value("Measured tone bin", measured_bin, "");
     print_double_value("Measured tone freq", measured_hz / 1.0e6, " MHz");
-    print_double_value("Tone frequency error",
-                       difference_hz / 1.0e3, " kHz");
     print_double_value("Measured coherence err",
                        measured_coherence_error, " cycles");
-    xil_printf("Frequency validation  : %s\r\n",
-               (fabs(difference_hz) <= CAL_FREQUENCY_TOLERANCE_HZ) ?
-               "PASS" : "WARNING");
+    xil_printf("Frequency measurement : PASS\r\n");
     if (measured_coherence_error > CAL_COHERENCE_TOLERANCE) {
         xil_printf("WARNING: The measured tone is not coherent with the "
                    "%lu-sample ADC window.\r\n",
@@ -537,6 +1167,7 @@ static int adc_measure_timing_frame(
         (uint32_t)fractional_overlap.analysis_count;
     result->correlation = fractional_state.metrics.correlation;
     result->raw_rmse = fractional_state.metrics.rmse_codes;
+    result->fitted_rmse = fractional_state.metrics.fitted_rmse_codes;
 
     if (!isfinite(result->correlation) || !isfinite(result->raw_rmse)) {
         result->reject_reason = CAL_TIMING_REJECT_INVALID_METRIC;
@@ -934,9 +1565,37 @@ void handle_adc_cmd(char* line)
         }
         handle_adc_calibration_cmd(frame_count);
     } else if (strcmp(option, "-ref") == 0) {
-        handle_adc_reference_status_cmd();
+        token = strtok(NULL, " ");
+        if (token == NULL) {
+            handle_adc_reference_status_cmd();
+        } else if ((strcmp(token, "validate") == 0) &&
+                   (strtok(NULL, " ") == NULL)) {
+            (void)calibration_validate_uploaded_reference(1);
+        } else if ((strcmp(token, "diagnose") == 0) &&
+                   (strtok(NULL, " ") == NULL)) {
+            calibration_run_adc_reference_diagnostic();
+        } else if (strcmp(token, "diagnose-tone") == 0) {
+            char *frequency_token = strtok(NULL, " ");
+            char *endptr = NULL;
+            double frequency_mhz;
+            if ((frequency_token == NULL) ||
+                (strtok(NULL, " ") != NULL)) {
+                ERR("Use adc -ref diagnose-tone <frequency_MHz>.");
+                return;
+            }
+            frequency_mhz = strtod(frequency_token, &endptr);
+            if ((endptr == frequency_token) || (*endptr != '\0') ||
+                !isfinite(frequency_mhz) || (frequency_mhz <= 0.0) ||
+                (frequency_mhz >= adc_get_effective_sample_rate_hz() / 2.0e6)) {
+                ERR("Known tone must be above 0 and below 650 MHz.");
+                return;
+            }
+            calibration_run_known_tone_diagnostic(frequency_mhz);
+        } else {
+            ERR("Use adc -ref, adc -ref validate, adc -ref diagnose, or adc -ref diagnose-tone <MHz>.");
+        }
     }else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames], or -ref)", option);
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames], -ref, -ref validate, or -ref diagnose)", option);
     }
 }
 
@@ -1698,83 +2357,1273 @@ static void adc_ifc_sweep(void)
     xil_printf("=================================\r\n");
 }
 
-void handle_adc_reference_status_cmd(void)
+static double calibration_reference_variance(
+    const int16_t *samples,
+    size_t sample_count
+)
 {
-    const int16_t *reference;
-    size_t length;
-    size_t expected_length;
+    double mean = 0.0;
+    double sum = 0.0;
 
-    xil_printf("\r\n========== Reference Buffer ==========\r\n");
+    if ((samples == NULL) || (sample_count == 0U)) return 0.0;
+    for (size_t i = 0U; i < sample_count; ++i) mean += samples[i];
+    mean /= (double)sample_count;
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double centered = (double)samples[i] - mean;
+        sum += centered * centered;
+    }
+    return sum / (double)sample_count;
+}
 
-    xil_printf(
-        "Reference ready   : %s\r\n",
-        reference_buffer_is_ready() ? "YES" : "NO"
-    );
+static int calibration_build_adc_reference_from_raw_dac(
+    const int16_t *raw_dac,
+    size_t raw_count,
+    int16_t *even_reference,
+    int16_t *odd_reference,
+    size_t output_capacity,
+    size_t *reconstructed_count
+)
+{
+    const double source_step = DAC_SAMPLE_RATE_HZ /
+                               adc_get_effective_sample_rate_hz();
 
-    length = reference_buffer_length();
-    expected_length = reference_buffer_expected_length();
+    if ((raw_dac == NULL) || (even_reference == NULL) ||
+        (odd_reference == NULL) || (reconstructed_count == NULL) ||
+        (output_capacity == 0U)) return -1;
 
-    xil_printf(
-        "Reference length  : %lu\r\n",
-        (unsigned long)length
-    );
+    if (!(source_step > 0.0) || !isfinite(source_step)) return -2;
+    for (size_t i = 0U; i < output_capacity; ++i) {
+        const double base_position = (double)i * source_step;
+        const double positions[2] = {base_position, base_position + 1.0};
+        int16_t *outputs[2] = {even_reference, odd_reference};
+        for (size_t phase = 0U; phase < 2U; ++phase) {
+            const double position = fmod(positions[phase], (double)raw_count);
+            const size_t index0 = (size_t)floor(position);
+            const size_t index1 = (index0 + 1U) % raw_count;
+            const double fraction = position - (double)index0;
+            long interpolated;
+            if (index0 >= raw_count) return -3;
+            interpolated = lround((1.0 - fraction) * raw_dac[index0] +
+                                  fraction * raw_dac[index1]);
+            if (interpolated > INT16_MAX) interpolated = INT16_MAX;
+            if (interpolated < INT16_MIN) interpolated = INT16_MIN;
+            outputs[phase][i] = calibration_convert_reference_to_adc_units(
+                (int16_t)interpolated);
+        }
+    }
+    *reconstructed_count = output_capacity;
+    return 0;
+}
 
-    xil_printf(
-        "Expected length   : %lu\r\n",
-        (unsigned long)expected_length
-    );
+static double calibration_dft_magnitude(
+    const int16_t *samples,
+    size_t sample_count,
+    size_t bin
+)
+{
+    const double two_pi = 6.28318530717958647692;
+    double real = 0.0;
+    double imaginary = 0.0;
+    double mean = 0.0;
 
-    if (!reference_buffer_is_ready() || length == 0U)
+    if ((samples == NULL) || (sample_count == 0U) ||
+        (bin > sample_count / 2U)) return 0.0;
+    for (size_t i = 0U; i < sample_count; ++i) mean += samples[i];
+    mean /= (double)sample_count;
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double angle = two_pi * (double)bin * (double)i /
+                             (double)sample_count;
+        const double value = (double)samples[i] - mean;
+        real += value * cos(angle);
+        imaginary -= value * sin(angle);
+    }
+    return sqrt(real * real + imaginary * imaginary) /
+           (double)sample_count;
+}
+
+static int calibration_find_dominant_tone(
+    const int16_t *samples,
+    size_t sample_count,
+    double sample_rate_hz,
+    double *frequency_hz,
+    double *dominant_magnitude
+)
+{
+    size_t best_bin = 1U;
+    double best_magnitude = -1.0;
+
+    if ((samples == NULL) || (frequency_hz == NULL) ||
+        (dominant_magnitude == NULL) || (sample_count < 4U) ||
+        !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0) return -1;
+    for (size_t bin = 1U; bin < sample_count / 2U; ++bin) {
+        const double magnitude = calibration_dft_magnitude(
+            samples, sample_count, bin);
+        if (magnitude > best_magnitude) {
+            best_magnitude = magnitude;
+            best_bin = bin;
+        }
+    }
+    *frequency_hz = (double)best_bin * sample_rate_hz /
+                    (double)sample_count;
+    *dominant_magnitude = best_magnitude;
+    return isfinite(*frequency_hz) ? 0 : -2;
+}
+
+typedef struct {
+    size_t bin;
+    double magnitude;
+} calibration_spectral_peak_t;
+
+typedef struct {
+    size_t dominant_bin;
+    double dominant_frequency_hz;
+    double bin245_magnitude;
+    calibration_spectral_peak_t peaks[CAL_REF_SPECTRAL_PEAK_COUNT];
+} calibration_spectrum_t;
+
+static double calibration_goertzel_magnitude(
+    const int16_t *samples,
+    size_t sample_count,
+    size_t bin,
+    double mean
+)
+{
+    const double omega = 6.28318530717958647692 * (double)bin /
+                         (double)sample_count;
+    const double coefficient = 2.0 * cos(omega);
+    double previous = 0.0;
+    double previous2 = 0.0;
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double current = ((double)samples[i] - mean) +
+                               coefficient * previous - previous2;
+        previous2 = previous;
+        previous = current;
+    }
     {
-        xil_printf("No reference currently loaded.\r\n");
+        double power = previous2 * previous2 + previous * previous -
+                       coefficient * previous * previous2;
+        if (power < 0.0 && power > -1.0e-6) power = 0.0;
+        return power > 0.0 ? sqrt(power) / (double)sample_count : 0.0;
+    }
+}
+
+static int calibration_calculate_full_spectrum(
+    const int16_t *samples,
+    size_t sample_count,
+    double sample_rate_hz,
+    calibration_spectrum_t *spectrum
+)
+{
+    double mean = 0.0;
+
+    if ((samples == NULL) || (spectrum == NULL) || (sample_count < 4U))
+        return -1;
+    memset(spectrum, 0, sizeof(*spectrum));
+    for (size_t i = 0U; i < sample_count; ++i) mean += samples[i];
+    mean /= (double)sample_count;
+
+    for (size_t bin = 1U; bin < sample_count / 2U; ++bin) {
+        const double magnitude = calibration_goertzel_magnitude(
+            samples, sample_count, bin, mean);
+        if (bin == 245U) spectrum->bin245_magnitude = magnitude;
+        for (size_t rank = 0U; rank < CAL_REF_SPECTRAL_PEAK_COUNT; ++rank) {
+            if (magnitude > spectrum->peaks[rank].magnitude) {
+                for (size_t move = CAL_REF_SPECTRAL_PEAK_COUNT - 1U;
+                     move > rank; --move)
+                    spectrum->peaks[move] = spectrum->peaks[move - 1U];
+                spectrum->peaks[rank].bin = bin;
+                spectrum->peaks[rank].magnitude = magnitude;
+                break;
+            }
+        }
+    }
+    spectrum->dominant_bin = spectrum->peaks[0].bin;
+    spectrum->dominant_frequency_hz =
+        (double)spectrum->dominant_bin * sample_rate_hz /
+        (double)sample_count;
+    return spectrum->dominant_bin != 0U ? 0 : -2;
+}
+
+static void calibration_print_spectrum(
+    const char *name,
+    const int16_t *samples,
+    size_t sample_count,
+    double sample_rate_hz,
+    calibration_spectrum_t *spectrum
+)
+{
+    xil_printf("\r\n---------- %s Spectrum ----------\r\n", name);
+    if (calibration_calculate_full_spectrum(
+            samples, sample_count, sample_rate_hz, spectrum) != 0) {
+        xil_printf("Spectrum status         : FAIL\r\n");
         return;
     }
+    xil_printf("Dominant bin            : %lu\r\n",
+               (unsigned long)spectrum->dominant_bin);
+    print_double_value("Dominant frequency",
+                       spectrum->dominant_frequency_hz / 1.0e6, " MHz");
+    xil_printf("Rank   Bin   Frequency MHz   Magnitude\r\n");
+    for (size_t rank = 0U; rank < CAL_REF_SPECTRAL_PEAK_COUNT; ++rank) {
+        const calibration_spectral_peak_t *peak = &spectrum->peaks[rank];
+        xil_printf("%-6lu %-5lu ", (unsigned long)(rank + 1U),
+                   (unsigned long)peak->bin);
+        print_double_inline((double)peak->bin * sample_rate_hz /
+                            (double)sample_count / 1.0e6);
+        xil_printf("          ");
+        print_double_inline(peak->magnitude);
+        xil_printf("\r\n");
+    }
+}
 
-    reference = reference_buffer_data();
+static float calibration_best_reference_correlation(
+    const int16_t *candidate,
+    size_t candidate_count,
+    const int16_t *even_reference,
+    const int16_t *odd_reference,
+    size_t reference_stride
+)
+{
+    static int16_t reference_work[ADC_VALID_SAMPLE_COUNT];
+    timing_alignment_result_t result;
+    float best = -1.0f;
 
-    xil_printf(
-        "First sample      : %d\r\n",
-        (int)reference[0]
-    );
+    if ((candidate == NULL) || (candidate_count == 0U) ||
+        (reference_stride == 0U)) return 0.0f;
+    for (unsigned int phase = 0U; phase < 2U; ++phase) {
+        const int16_t *source = phase == 0U ? even_reference : odd_reference;
+        for (size_t i = 0U; i < candidate_count; ++i)
+            reference_work[i] = source[i * reference_stride];
+        if (timing_find_circular_lag(reference_work, candidate,
+                candidate_count, &result) == 0 && result.correlation > best)
+            best = result.correlation;
+    }
+    return best;
+}
 
-    if (length > 1U)
-    {
-        xil_printf(
-            "Second sample     : %d\r\n",
-            (int)reference[1]
-        );
+static void calibration_print_order_candidate(
+    const char *name,
+    const int16_t *candidate,
+    size_t candidate_count,
+    double sample_rate_hz,
+    const int16_t *even_reference,
+    const int16_t *odd_reference,
+    size_t reference_stride,
+    float *correlation_out,
+    size_t *dominant_bin_out
+)
+{
+    calibration_spectrum_t spectrum;
+    const float correlation = calibration_best_reference_correlation(
+        candidate, candidate_count, even_reference, odd_reference,
+        reference_stride);
+    const int spectral_status = calibration_calculate_full_spectrum(
+        candidate, candidate_count, sample_rate_hz, &spectrum);
+
+    xil_printf("\r\nCandidate name          : %s\r\n", name);
+    xil_printf("Sample count            : %lu\r\n", (unsigned long)candidate_count);
+    print_double_value("Effective sample rate", sample_rate_hz / 1.0e6, " MHz");
+    xil_printf("Dominant bin            : %lu\r\n",
+               (unsigned long)(spectral_status == 0 ? spectrum.dominant_bin : 0U));
+    print_double_value("Dominant frequency", spectral_status == 0 ?
+        spectrum.dominant_frequency_hz / 1.0e6 : 0.0, " MHz");
+    print_float_value("DAC-reference correlation", correlation, "");
+    if (correlation_out != NULL) *correlation_out = correlation;
+    if (dominant_bin_out != NULL) *dominant_bin_out =
+        spectral_status == 0 ? spectrum.dominant_bin : 0U;
+}
+
+static void calibration_decode_raw_mapping(
+    const uint8_t *raw, size_t beats, unsigned int mapping,
+    int16_t *channel_a, int16_t *channel_b)
+{
+    static const uint8_t indices[4][8] = {
+        {0,1,2,3,4,5,6,7}, {4,5,6,7,0,1,2,3},
+        {3,2,1,0,7,6,5,4}, {7,6,5,4,3,2,1,0}
+    };
+    for (size_t beat = 0U; beat < beats; ++beat) {
+        uint16_t words[8];
+        for (size_t word = 0U; word < 8U; ++word) {
+            const size_t offset = (beat * 16U) + (word * 2U);
+            words[word] = (uint16_t)raw[offset] |
+                          ((uint16_t)raw[offset + 1U] << 8U);
+        }
+        for (size_t i = 0U; i < 4U; ++i) {
+            channel_a[beat * 4U + i] =
+                ((int16_t)words[indices[mapping][i]]) >> 2;
+            channel_b[beat * 4U + i] =
+                ((int16_t)words[indices[mapping][i + 4U]]) >> 2;
+        }
+    }
+}
+
+static void calibration_print_raw_beats(const uint8_t *raw, const char *title)
+{
+    xil_printf("\r\n%s\r\n", title);
+    for (size_t beat = 0U; beat < 16U; ++beat) {
+        xil_printf("Beat %lu hex   :", (unsigned long)beat);
+        for (size_t word = 0U; word < 8U; ++word) {
+            const size_t offset = beat * 16U + word * 2U;
+            const uint16_t value = (uint16_t)raw[offset] |
+                                   ((uint16_t)raw[offset + 1U] << 8U);
+            xil_printf(" %04X", value);
+        }
+        xil_printf("\r\nBeat %lu signed:", (unsigned long)beat);
+        for (size_t word = 0U; word < 8U; ++word) {
+            const size_t offset = beat * 16U + word * 2U;
+            const int16_t value = (int16_t)((uint16_t)raw[offset] |
+                ((uint16_t)raw[offset + 1U] << 8U));
+            xil_printf(" %d", (int)value);
+        }
+        xil_printf("\r\n");
+    }
+}
+
+static float calibration_ramp_order_score(const int16_t *samples, size_t count)
+{
+    size_t matches = 0U;
+    if (count < 2U) return 0.0f;
+    for (size_t i = 1U; i < count; ++i) {
+        const int16_t previous = samples[i - 1U];
+        const int16_t current = samples[i];
+        if ((current == previous + 1) ||
+            ((previous >= 8190) && (current <= -8191))) ++matches;
+    }
+    return (float)matches / (float)(count - 1U);
+}
+
+static void calibration_print_raw_channel_metrics(
+    const char *name, const int16_t *samples, size_t count,
+    const int16_t *even_reference, const int16_t *odd_reference)
+{
+    calibration_spectrum_t spectrum;
+    calibration_spectrum_t reference_spectrum;
+    double mean = 0.0, rms = 0.0;
+    int16_t minimum, maximum;
+    minimum = maximum = samples[0];
+    for (size_t i = 0U; i < count; ++i) {
+        mean += samples[i]; rms += (double)samples[i] * samples[i];
+        if (samples[i] < minimum) minimum = samples[i];
+        if (samples[i] > maximum) maximum = samples[i];
+    }
+    mean /= count; rms = sqrt(rms / count);
+    (void)calibration_calculate_full_spectrum(
+        samples, count, adc_get_effective_sample_rate_hz(), &spectrum);
+    (void)calibration_calculate_full_spectrum(even_reference, count,
+        adc_get_effective_sample_rate_hz(), &reference_spectrum);
+    xil_printf("\r\n%s\r\n", name);
+    xil_printf("Sample count            : %lu\r\n", (unsigned long)count);
+    print_double_value("Mean", mean, " codes");
+    print_double_value("RMS", rms, " codes");
+    xil_printf("Minimum                 : %d\r\n", (int)minimum);
+    xil_printf("Maximum                 : %d\r\n", (int)maximum);
+    xil_printf("Dominant spectral bin   : %lu\r\n",
+               (unsigned long)spectrum.dominant_bin);
+    print_double_value("Dominant frequency",
+        spectrum.dominant_frequency_hz / 1.0e6, " MHz");
+    print_double_value("Reference tone frequency",
+        reference_spectrum.dominant_frequency_hz / 1.0e6, " MHz");
+    print_double_value("Magnitude at reference bin",
+        calibration_goertzel_magnitude(samples, count,
+            reference_spectrum.dominant_bin, mean), "");
+    print_double_value("Magnitude at dominant bin",
+        calibration_goertzel_magnitude(samples, count,
+            spectrum.dominant_bin, mean), "");
+    print_float_value("Uploaded-DAC correlation",
+        calibration_best_reference_correlation(samples, count,
+            even_reference, odd_reference, 1U), "");
+    xil_printf("First 32 samples        :\r\n");
+    for (size_t i = 0U; i < 32U && i < count; ++i)
+        xil_printf("%d%s", (int)samples[i],
+                   ((i + 1U) % 8U) == 0U ? "\r\n" : " ");
+}
+
+static calibration_timing_frame_result_t calibration_print_channel_alignment(
+    const char *label, const int16_t *reference, const int16_t *measurement,
+    size_t count)
+{
+    static int16_t work_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t work_measurement[ADC_VALID_SAMPLE_COUNT];
+    calibration_timing_frame_result_t result;
+    memset(&result, 0, sizeof(result));
+    (void)adc_measure_timing_frame(reference, measurement, count,
+        work_reference, work_measurement, &result);
+    xil_printf("\r\n%s\r\n", label);
+    print_float_value("Correlation", result.correlation, "");
+    xil_printf("Lag                     : %ld samples\r\n",
+               (long)result.integer_lag);
+    print_float_value("Fractional lag", result.fractional_lag, " samples");
+    print_float_value("RMSE", result.fitted_rmse, " codes");
+    return result;
+}
+
+static int calibration_prepare_uploaded_dac_reference(
+    int16_t *even_reference,
+    int16_t *odd_reference,
+    size_t *reconstructed_count,
+    double *even_variance,
+    double *odd_variance,
+    int print_errors
+)
+{
+    const int16_t *raw_reference;
+    size_t raw_count;
+    int status;
+
+    if (!reference_buffer_is_ready()) {
+        if (print_errors) xil_printf("ERROR: No valid DAC reference uploaded.\r\n");
+        return -1;
+    }
+    if (!isfinite(adc_get_effective_sample_rate_hz()) ||
+        adc_get_effective_sample_rate_hz() <= 0.0) {
+        if (print_errors) xil_printf("ERROR: Invalid effective ADC sample-rate value.\r\n");
+        return -7;
+    }
+    raw_reference = reference_buffer_data();
+    raw_count = reference_buffer_length();
+    if (raw_reference == NULL) {
+        if (print_errors) xil_printf("ERROR: Uploaded DAC reference pointer is NULL.\r\n");
+        return -2;
+    }
+    if (reference_buffer_format() != REFERENCE_FORMAT_DAC_RATE_2X) {
+        if (print_errors) xil_printf("ERROR: Uploaded reference is not tagged as raw DAC-rate data.\r\n");
+        return -3;
+    }
+    if (raw_count < (2U * ADC_CHANNEL_SAMPLE_COUNT)) {
+        if (print_errors) {
+            xil_printf("ERROR: Uploaded DAC reference is too short.\r\n");
+            xil_printf("Raw DAC samples       : %lu\r\n", (unsigned long)raw_count);
+            xil_printf("Required DAC samples  : %lu\r\n",
+                       (unsigned long)(2U * ADC_CHANNEL_SAMPLE_COUNT));
+        }
+        return -4;
     }
 
-    xil_printf(
-        "Middle sample     : %d\r\n",
-        (int)reference[length / 2U]
-    );
+    /* Analyze exactly one ADC DMA frame; extra uploaded samples stay intact. */
+    status = calibration_build_adc_reference_from_raw_dac(
+        raw_reference, raw_count,
+        even_reference, odd_reference, ADC_CHANNEL_SAMPLE_COUNT,
+        reconstructed_count);
+    if ((status != 0) || (*reconstructed_count != ADC_CHANNEL_SAMPLE_COUNT)) {
+        if (print_errors) xil_printf("ERROR: DAC reference reconstruction bounds check failed.\r\n");
+        return -5;
+    }
+    *even_variance = calibration_reference_variance(
+        even_reference, *reconstructed_count);
+    *odd_variance = calibration_reference_variance(
+        odd_reference, *reconstructed_count);
+    if (!isfinite(*even_variance) || !isfinite(*odd_variance) ||
+        (*even_variance <= CAL_REF_VARIANCE_EPSILON) ||
+        (*odd_variance <= CAL_REF_VARIANCE_EPSILON)) {
+        if (print_errors) xil_printf("ERROR: Reconstructed DAC reference has near-zero variance.\r\n");
+        return -6;
+    }
+    return 0;
+}
 
-    xil_printf(
-        "Last sample       : %d\r\n",
-        (int)reference[length - 1U]
-    );
+static const calibration_timing_frame_result_t *calibration_select_phase(
+    const calibration_timing_frame_result_t *even_result,
+    const calibration_timing_frame_result_t *odd_result
+)
+{
+    if (!even_result->alignment_success) return odd_result;
+    if (!odd_result->alignment_success) return even_result;
+    if (odd_result->correlation > even_result->correlation) return odd_result;
+    if ((fabsf(odd_result->correlation - even_result->correlation) <= 1.0e-6f) &&
+        (odd_result->fitted_rmse < even_result->fitted_rmse)) return odd_result;
+    return even_result;
+}
+
+typedef struct {
+    const int16_t *selected_reference;
+    const int16_t *selected_adc;
+    const char *selected_channel_name;
+    const char *selected_phase_name;
+    size_t sample_count;
+    calibration_timing_frame_result_t timing;
+    calibration_state_t fit_state;
+    adc_cal_overlap_t fit_overlap;
+    double reference_frequency_hz;
+    double adc_frequency_hz;
+    const char *failure_reason;
+    int status;
+} adc_reference_analysis_t;
+
+/* Analyze one already-captured two-channel frame against both DAC phases. */
+static int calibration_analyze_reference_frame(
+    const int16_t *even_reference,
+    const int16_t *odd_reference,
+    const int16_t *channel_a,
+    const int16_t *channel_b,
+    size_t sample_count,
+    int16_t *fractional_reference,
+    int16_t *fractional_measurement,
+    int locked_channel,
+    adc_reference_analysis_t *analysis)
+{
+    calibration_timing_frame_result_t results[2][2];
+    const int16_t *channels[2] = { channel_a, channel_b };
+    const int16_t *references[2] = { even_reference, odd_reference };
+    const char *channel_names[2] = { "Channel A", "Channel B" };
+    const char *phase_names[2] = { "EVEN", "ODD" };
+    calibration_spectrum_t reference_spectrum;
+    calibration_spectrum_t adc_spectrum;
+    size_t best_channel = 0U;
+    size_t best_phase = 0U;
+    int have_alignment = 0;
+
+    if (analysis == NULL) return -1;
+    memset(analysis, 0, sizeof(*analysis));
+    analysis->failure_reason = "invalid analysis input";
+    if (sample_count == 0U) return -1;
+    if (!isfinite(adc_get_effective_sample_rate_hz()) ||
+        adc_get_effective_sample_rate_hz() <= 0.0) {
+        analysis->failure_reason = "invalid sample-rate value";
+        return -1;
+    }
+
+    for (size_t channel = 0U; channel < 2U; ++channel) {
+        if (locked_channel >= 0 && channel != (size_t)locked_channel)
+            continue;
+        for (size_t phase = 0U; phase < 2U; ++phase) {
+            (void)adc_measure_timing_frame(references[phase], channels[channel],
+                sample_count, fractional_reference, fractional_measurement,
+                &results[channel][phase]);
+            if (results[channel][phase].alignment_success &&
+                (!have_alignment ||
+                 results[channel][phase].correlation >
+                     results[best_channel][best_phase].correlation ||
+                 (fabsf(results[channel][phase].correlation -
+                        results[best_channel][best_phase].correlation) <= 1.0e-6f &&
+                  results[channel][phase].fitted_rmse <
+                      results[best_channel][best_phase].fitted_rmse))) {
+                best_channel = channel;
+                best_phase = phase;
+                have_alignment = 1;
+            }
+        }
+    }
+    if (!have_alignment) {
+        analysis->failure_reason = "no valid reference phase";
+        return -2;
+    }
+
+    analysis->selected_reference = references[best_phase];
+    analysis->selected_adc = channels[best_channel];
+    analysis->selected_channel_name = channel_names[best_channel];
+    analysis->selected_phase_name = phase_names[best_phase];
+    analysis->sample_count = sample_count;
+    analysis->timing = results[best_channel][best_phase];
+
+    if (adc_analyze_fractional_overlap(analysis->selected_reference,
+            analysis->selected_adc, sample_count,
+            (double)analysis->timing.total_lag, fractional_reference,
+            fractional_measurement, &analysis->fit_state,
+            &analysis->fit_overlap) != 0)
+    {
+        analysis->failure_reason = "insufficient overlap";
+        return -3;
+    }
+    if (calibration_calculate_full_spectrum(analysis->selected_reference,
+            sample_count, adc_get_effective_sample_rate_hz(),
+            &reference_spectrum) != 0 ||
+        calibration_calculate_full_spectrum(analysis->selected_adc,
+            sample_count, adc_get_effective_sample_rate_hz(),
+            &adc_spectrum) != 0)
+    {
+        analysis->failure_reason = "reference frequency measurement failed";
+        return -4;
+    }
+
+    analysis->reference_frequency_hz = reference_spectrum.dominant_frequency_hz;
+    analysis->adc_frequency_hz = adc_spectrum.dominant_frequency_hz;
+    if (!isfinite(analysis->reference_frequency_hz) ||
+        !isfinite(analysis->adc_frequency_hz)) {
+        analysis->failure_reason = "invalid numerical result";
+        return -5;
+    }
+    if (analysis->fit_overlap.analysis_count < CAL_MIN_ANALYSIS_SAMPLES ||
+        analysis->timing.reject_reason == CAL_TIMING_REJECT_TOO_FEW_SAMPLES) {
+        analysis->failure_reason = "insufficient overlap";
+        return -5;
+    }
+    if (analysis->timing.correlation < CAL_DAC_REF_MIN_CORRELATION ||
+        analysis->timing.reject_reason == CAL_TIMING_REJECT_LOW_CORRELATION) {
+        analysis->failure_reason = "aligned correlation below threshold";
+        return -5;
+    }
+    if (!analysis->timing.accepted) {
+        analysis->failure_reason =
+            cal_timing_reject_reason_text(analysis->timing.reject_reason);
+        return -5;
+    }
+    if (fabs(analysis->reference_frequency_hz - analysis->adc_frequency_hz) >
+        fmax(CAL_REF_FREQ_TOLERANCE_HZ,
+             2.0 * adc_get_effective_sample_rate_hz() / (double)sample_count)) {
+        analysis->failure_reason = "reference frequency mismatch";
+        return -5;
+    }
+
+    analysis->failure_reason = "none";
+    analysis->status = 0;
+    return 0;
+}
+
+static int calibration_run_synthetic_test(
+    const char *phase_name,
+    const int16_t *injected_reference,
+    const int16_t *even_reference,
+    const int16_t *odd_reference,
+    size_t sample_count,
+    float injected_gain,
+    float injected_offset,
+    int32_t injected_lag
+)
+{
+    static int16_t simulated_adc[ADC_VALID_SAMPLE_COUNT];
+    static int16_t work_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t work_measurement[ADC_VALID_SAMPLE_COUNT];
+    calibration_timing_frame_result_t even_result;
+    calibration_timing_frame_result_t odd_result;
+    const calibration_timing_frame_result_t *selected;
+    const int16_t *selected_reference;
+    calibration_state_t fit_state;
+    adc_cal_overlap_t fit_overlap;
+    int fit_status;
+    int pass;
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        int64_t source = (int64_t)i - (int64_t)injected_lag;
+        long value;
+        source %= (int64_t)sample_count;
+        if (source < 0) source += (int64_t)sample_count;
+        value = lround((double)injected_gain * injected_reference[source] +
+                       (double)injected_offset);
+        if (value > INT16_MAX) value = INT16_MAX;
+        if (value < INT16_MIN) value = INT16_MIN;
+        simulated_adc[i] = (int16_t)value;
+    }
+
+    (void)adc_measure_timing_frame(even_reference, simulated_adc, sample_count,
+        work_reference, work_measurement, &even_result);
+    (void)adc_measure_timing_frame(odd_reference, simulated_adc, sample_count,
+        work_reference, work_measurement, &odd_result);
+    selected = calibration_select_phase(&even_result, &odd_result);
+    selected_reference = selected == &odd_result ? odd_reference : even_reference;
+    fit_status = adc_analyze_fractional_overlap(
+        selected_reference, simulated_adc, sample_count, selected->total_lag,
+        work_reference, work_measurement, &fit_state, &fit_overlap);
+
+    pass = selected_reference == injected_reference && fit_status == 0 &&
+           fabsf(selected->total_lag - (float)injected_lag) <=
+               CAL_REF_TEST_LAG_TOLERANCE &&
+           fabsf(fit_state.metrics.measured_gain - injected_gain) <=
+               CAL_REF_TEST_GAIN_TOLERANCE &&
+           fabsf(fit_state.metrics.measured_offset - injected_offset) <=
+               CAL_REF_TEST_OFFSET_TOLERANCE &&
+           fit_state.metrics.correlation >= CAL_REF_TEST_CORR_MIN;
+
+    xil_printf("\r\n---------- Synthetic %s Test ----------\r\n", phase_name);
+    xil_printf("Injected phase          : %s\r\n", phase_name);
+    xil_printf("Selected phase          : %s\r\n",
+               selected_reference == odd_reference ? "ODD" : "EVEN");
+    xil_printf("Injected lag            : %ld\r\n", (long)injected_lag);
+    print_float_value("Recovered lag", selected->total_lag, " samples");
+    print_float_value("Injected gain", injected_gain, "");
+    print_float_value("Recovered gain", fit_status == 0 ?
+                      fit_state.metrics.measured_gain : 0.0f, "");
+    print_float_value("Injected offset", injected_offset, " codes");
+    print_float_value("Recovered offset", fit_status == 0 ?
+                      fit_state.metrics.measured_offset : 0.0f, " codes");
+    print_float_value("Correlation", fit_status == 0 ?
+                      fit_state.metrics.correlation : 0.0f, "");
+    xil_printf("Test status             : %s\r\n", pass ? "PASS" : "FAIL");
+    return pass ? 0 : -1;
+}
+
+static int calibration_validate_uploaded_reference(int print_diagnostics)
+{
+    static int16_t even_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t odd_reference[ADC_VALID_SAMPLE_COUNT];
+    const int16_t *raw_reference = reference_buffer_data();
+    const size_t raw_count = reference_buffer_length();
+    size_t reconstructed_count = 0U;
+    double even_variance = 0.0;
+    double odd_variance = 0.0;
+    double raw_frequency = 0.0, even_frequency = 0.0, odd_frequency = 0.0;
+    double raw_magnitude = 0.0, even_magnitude = 0.0, odd_magnitude = 0.0;
+    int status = calibration_prepare_uploaded_dac_reference(
+        even_reference, odd_reference, &reconstructed_count,
+        &even_variance, &odd_variance, 1);
+    int frequency_ok;
+    int even_test;
+    int odd_test;
+
+    if (status != 0) return status;
+    frequency_ok =
+        calibration_find_dominant_tone(raw_reference, raw_count,
+            DAC_SAMPLE_RATE_HZ, &raw_frequency, &raw_magnitude) == 0 &&
+        calibration_find_dominant_tone(even_reference, reconstructed_count,
+            adc_get_effective_sample_rate_hz(),
+            &even_frequency, &even_magnitude) == 0 &&
+        calibration_find_dominant_tone(odd_reference, reconstructed_count,
+            adc_get_effective_sample_rate_hz(),
+            &odd_frequency, &odd_magnitude) == 0;
+
+    if (print_diagnostics) {
+        xil_printf("\r\n========== DAC Reference Reconstruction ==========\r\n");
+        xil_printf("Reference uploaded       : YES\r\n");
+        print_double_value("Raw DAC sample rate", DAC_SAMPLE_RATE_HZ / 1.0e9, " GSPS");
+        print_double_value("ADC sample rate", adc_get_effective_sample_rate_hz() / 1.0e9, " GSPS");
+        print_adc_sample_rate_state();
+        print_double_value("DAC/ADC rate ratio",
+            DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz(), "");
+        xil_printf("Raw DAC samples          : %lu\r\n", (unsigned long)raw_count);
+        xil_printf("Reconstructed samples    : %lu\r\n", (unsigned long)reconstructed_count);
+        xil_printf("Required ADC samples     : %u\r\n", ADC_CHANNEL_SAMPLE_COUNT);
+        print_double_value("EVEN reference variance", even_variance, "");
+        print_double_value("ODD reference variance", odd_variance, "");
+        xil_printf("\r\nFirst reconstructed samples:\r\n");
+        xil_printf("ADC index   resampled EVEN value   resampled ODD value\r\n");
+        for (size_t i = 0U; i < CAL_REF_DEBUG_SAMPLE_COUNT &&
+             i < reconstructed_count; ++i) {
+            xil_printf("%-11lu %-22d %d\r\n",
+                (unsigned long)i, (int)even_reference[i],
+                (int)odd_reference[i]);
+        }
+        if (frequency_ok) {
+            print_double_value("Raw DAC dominant freq", raw_frequency / 1.0e6, " MHz");
+            print_double_value("EVEN dominant freq", even_frequency / 1.0e6, " MHz");
+            print_double_value("ODD dominant freq", odd_frequency / 1.0e6, " MHz");
+            print_double_value("Raw expected magnitude", raw_magnitude, "");
+            print_double_value("EVEN expected magnitude", even_magnitude, "");
+            print_double_value("ODD expected magnitude", odd_magnitude, "");
+        }
+    }
+
+    if (!frequency_ok)
+        xil_printf("WARNING: Reconstructed dominant frequency could not be measured.\r\n");
+    even_test = calibration_run_synthetic_test("EVEN", even_reference,
+        even_reference, odd_reference, reconstructed_count, 0.95f, 25.0f, 37);
+    odd_test = calibration_run_synthetic_test("ODD", odd_reference,
+        even_reference, odd_reference, reconstructed_count, 1.02f, -15.0f, -21);
+    status = (even_test == 0 && odd_test == 0) ? 0 : -10;
+    if (print_diagnostics) {
+        xil_printf("Reconstruction status    : %s\r\n", status == 0 ? "PASS" : "FAIL");
+        xil_printf("==================================================\r\n");
+        xil_printf("No correction coefficients were updated.\r\n");
+    }
+    return status;
+}
+
+static void calibration_run_adc_reference_diagnostic(void)
+{
+    static int16_t even_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t odd_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t adc_samples[ADC_VALID_SAMPLE_COUNT];
+    static int16_t candidate[ADC_VALID_SAMPLE_COUNT];
+    calibration_spectrum_t even_spectrum;
+    calibration_spectrum_t odd_spectrum;
+    calibration_spectrum_t adc_spectrum;
+    calibration_timing_frame_result_t even_alignment;
+    calibration_timing_frame_result_t odd_alignment;
+    const calibration_timing_frame_result_t *selected_alignment;
+    size_t reference_count = 0U;
+    size_t adc_count = 0U;
+    double even_variance, odd_variance;
+    int16_t minimum, maximum;
+    double mean = 0.0, rms_sum = 0.0;
+    float best_candidate_correlation = -1.0f;
+    const char *best_candidate_name = "none";
+    int capture_status;
+    int diagnostic_pass = 0;
+
+    print_adc_sample_rate_state();
+    if (calibration_prepare_uploaded_dac_reference(
+            even_reference, odd_reference, &reference_count,
+            &even_variance, &odd_variance, 1) != 0) return;
+    if (adc_sweep_active) {
+        ERR("Another automatic ADC capture is already in progress.");
+        return;
+    }
+    adc_sweep_active = 1U;
+    xil_printf("\r\nCapturing one 4095-byte DMA frame for diagnosis.\r\n");
+    capture_status = adc_capture_frame();
+    if (capture_status != XST_SUCCESS) {
+        xil_printf("ERROR: Diagnostic DMA capture failed.\r\n");
+        goto diagnostic_done;
+    }
+    if (adc_reconstruct_frame(RxBufferPtr, DMA_CMD_BUF_SIZE, adc_samples,
+            ADC_VALID_SAMPLE_COUNT, &adc_count) != 0 ||
+        adc_count != ADC_CHANNEL_SAMPLE_COUNT) {
+        xil_printf("ERROR: Diagnostic ADC reconstruction failed.\r\n");
+        goto diagnostic_done;
+    }
+
+    minimum = maximum = adc_samples[0];
+    for (size_t i = 0U; i < adc_count; ++i) {
+        const double value = adc_samples[i];
+        if (adc_samples[i] < minimum) minimum = adc_samples[i];
+        if (adc_samples[i] > maximum) maximum = adc_samples[i];
+        mean += value;
+        rms_sum += value * value;
+    }
+    mean /= (double)adc_count;
+    rms_sum = sqrt(rms_sum / (double)adc_count);
+
+    xil_printf("\r\n========== DMA-Reconstructed ADC Frame ==========\r\n");
+    xil_printf("ADC sample count        : %lu\r\n", (unsigned long)adc_count);
+    xil_printf("ADC minimum             : %d\r\n", (int)minimum);
+    xil_printf("ADC maximum             : %d\r\n", (int)maximum);
+    print_double_value("ADC mean", mean, " codes");
+    print_double_value("ADC RMS", rms_sum, " codes");
+    xil_printf("First 32 reconstructed ADC samples:\r\n");
+    for (size_t i = 0U; i < CAL_REF_ADC_DEBUG_SAMPLE_COUNT; ++i) {
+        xil_printf("%d%s", (int)adc_samples[i],
+                   ((i + 1U) % 8U) == 0U ? "\r\n" : " ");
+    }
+
+    xil_printf("\r\nReconstruction assumptions under test:\r\n");
+    xil_printf("Raw words              : little-endian signed int16\r\n");
+    xil_printf("ADC width/alignment    : signed left-aligned 14-bit, arithmetic >> 2\r\n");
+    xil_printf("Eight-word ordering    : ADC0 S0..S3, ADC1 S0..S3\r\n");
+    xil_printf("JESD configuration     : M=2, L=4, N=16, NP=16; no I/Q remap in this function\r\n");
+    xil_printf("Lane/beat ordering     : assumed to be resolved by FPGA DMA producer\r\n");
+
+    calibration_print_spectrum("DAC EVEN reference", even_reference,
+        reference_count, adc_get_effective_sample_rate_hz(), &even_spectrum);
+    calibration_print_spectrum("DAC ODD reference", odd_reference,
+        reference_count, adc_get_effective_sample_rate_hz(), &odd_spectrum);
+    calibration_print_spectrum("Real ADC capture", adc_samples,
+        adc_count, adc_get_effective_sample_rate_hz(), &adc_spectrum);
+
+    /* Inspect the untouched DMA words and both independent converters. */
+    calibration_run_raw_mapping_diagnostic(even_reference, odd_reference);
+
+    xil_printf("\r\n========== Sample-Order Experiments ==========\r\n");
+#define RUN_CANDIDATE(candidate_name, data, count, rate, stride) do { \
+        float candidate_correlation; size_t candidate_bin; \
+        calibration_print_order_candidate(candidate_name, data, count, rate, \
+            even_reference, odd_reference, stride, \
+            &candidate_correlation, &candidate_bin); \
+        if (candidate_correlation > best_candidate_correlation) { \
+            best_candidate_correlation = candidate_correlation; \
+            best_candidate_name = candidate_name; \
+        } \
+    } while (0)
+
+    RUN_CANDIDATE("A. Current reconstructed sequence", adc_samples,
+                  adc_count, adc_get_effective_sample_rate_hz(), 1U);
+    for (size_t i = 0U; i < adc_count; ++i) {
+        const uint16_t value = (uint16_t)adc_samples[i];
+        candidate[i] = (int16_t)((value << 8U) | (value >> 8U));
+    }
+    RUN_CANDIDATE("B. Byte-swapped 16-bit samples", candidate,
+                  adc_count, adc_get_effective_sample_rate_hz(), 1U);
+    for (size_t i = 0U; i < adc_count; i += 2U) {
+        candidate[i] = adc_samples[i + 1U];
+        candidate[i + 1U] = adc_samples[i];
+    }
+    RUN_CANDIDATE("C. Adjacent sample pairs swapped", candidate,
+                  adc_count, adc_get_effective_sample_rate_hz(), 1U);
+    for (size_t phase = 0U; phase < 2U; ++phase) {
+        const size_t count = adc_count / 2U;
+        for (size_t i = 0U; i < count; ++i)
+            candidate[i] = adc_samples[(2U * i) + phase];
+        RUN_CANDIDATE(phase == 0U ? "D. Even-index samples only" :
+                      "E. Odd-index samples only", candidate, count,
+                      adc_get_effective_sample_rate_hz() / 2.0, 2U);
+    }
+    for (size_t phase = 0U; phase < 4U; ++phase) {
+        const char *names[4] = {
+            "F0. Every-fourth phase 0", "F1. Every-fourth phase 1",
+            "F2. Every-fourth phase 2", "F3. Every-fourth phase 3"};
+        const size_t count = adc_count / 4U;
+        for (size_t i = 0U; i < count; ++i)
+            candidate[i] = adc_samples[(4U * i) + phase];
+        RUN_CANDIDATE(names[phase], candidate, count,
+                      adc_get_effective_sample_rate_hz() / 4.0, 4U);
+    }
+#undef RUN_CANDIDATE
+
+    (void)adc_measure_timing_frame(even_reference, adc_samples, adc_count,
+        candidate, candidate + adc_count, &even_alignment);
+    (void)adc_measure_timing_frame(odd_reference, adc_samples, adc_count,
+        candidate, candidate + adc_count, &odd_alignment);
+    selected_alignment = calibration_select_phase(&even_alignment,
+        &odd_alignment);
+    diagnostic_pass = selected_alignment->accepted &&
+        selected_alignment->correlation >= CAL_DAC_REF_MIN_CORRELATION &&
+        selected_alignment->analysis_samples >= CAL_MIN_ANALYSIS_SAMPLES &&
+        fabs(adc_spectrum.dominant_frequency_hz -
+             (selected_alignment == &odd_alignment ?
+              odd_spectrum.dominant_frequency_hz :
+              even_spectrum.dominant_frequency_hz)) <=
+            fmax(CAL_REF_FREQ_TOLERANCE_HZ,
+                 2.0 * adc_get_effective_sample_rate_hz() / (double)adc_count);
+
+    xil_printf("\r\n========== ADC Reference Diagnostic ==========\r\n");
+    xil_printf("DAC EVEN dominant bin       : %lu\r\n",
+               (unsigned long)even_spectrum.dominant_bin);
+    xil_printf("DAC ODD dominant bin        : %lu\r\n",
+               (unsigned long)odd_spectrum.dominant_bin);
+    xil_printf("ADC dominant bin            : %lu\r\n",
+               (unsigned long)adc_spectrum.dominant_bin);
+    print_float_value("Aligned reference correlation",
+                      selected_alignment->correlation, "");
+    xil_printf("Aligned overlap samples      : %lu\r\n",
+               (unsigned long)selected_alignment->analysis_samples);
+    xil_printf("Best sample-order candidate : %s\r\n", best_candidate_name);
+    print_float_value("Best candidate correlation",
+                      best_candidate_correlation, "");
+    xil_printf("Diagnostic status           : %s\r\n",
+               diagnostic_pass ? "PASS" : "FAIL");
+    xil_printf("==============================================\r\n");
+
+diagnostic_done:
+    xil_printf("No correction coefficients were updated.\r\n");
+    adc_sweep_active = 0U;
+}
+
+static void calibration_run_raw_mapping_diagnostic(
+    const int16_t *even_reference, const int16_t *odd_reference)
+{
+    static int16_t channel_a[ADC_VALID_SAMPLE_COUNT];
+    static int16_t channel_b[ADC_VALID_SAMPLE_COUNT];
+    static int16_t current_reconstruction[ADC_VALID_SAMPLE_COUNT];
+    const size_t beat_count = ADC_VALID_SAMPLE_COUNT / 8U;
+    const size_t channel_count = beat_count * 4U;
+    uint8_t saved_mode_a = AD9695_TESTMODE_OFF;
+    uint8_t saved_mode_b = AD9695_TESTMODE_OFF;
+    float best_ramp_score = 0.0f;
+    float best_dac_correlation = -1.0f;
+    size_t best_dominant_bin = 0U;
+    size_t selected_a_bin = 0U, selected_b_bin = 0U;
+    size_t normal_bins[4][2] = {{0U}};
+    calibration_spectrum_t reference_spectrum, legacy_spectrum;
+    calibration_spectrum_t channel_a_spectrum, channel_b_spectrum;
+    calibration_timing_frame_result_t ab_alignment;
+    float legacy_dac_correlation = 0.0f;
+    float channel_a_dac_correlation = 0.0f;
+    float channel_b_dac_correlation = 0.0f;
+    unsigned int best_mapping = 0U;
+    char best_channel = 'A';
+    int ramp_capture_ok = 0;
+    size_t current_count = 0U;
+    struct jesd_param_t jesd_readback;
+
+    memset(&jesd_readback, 0, sizeof(jesd_readback));
+    ad9695_jesd_get_cfg_param(&jesd_readback);
+    xil_printf("\r\nJESD SPI readback: M=%u L=%u F=%u S=%u N=%u NP=%u CS=%u HD=%u\r\n",
+        jesd_readback.jesd_M, jesd_readback.jesd_L,
+        jesd_readback.jesd_F, jesd_readback.jesd_S,
+        jesd_readback.jesd_N, jesd_readback.jesd_NP,
+        jesd_readback.jesd_CS, jesd_readback.jesd_HD);
+
+    calibration_print_raw_beats(RxBufferPtr,
+        "========== First 16 Normal Raw DMA Beats ==========");
+    calibration_decode_raw_mapping(RxBufferPtr, beat_count, 0U,
+        channel_a, channel_b);
+    (void)adc_reconstruct_frame(RxBufferPtr, DMA_CMD_BUF_SIZE,
+        current_reconstruction, ADC_VALID_SAMPLE_COUNT, &current_count);
+    xil_printf("\r\nFirst 32 reconstruction comparison:\r\n");
+    xil_printf("Index   Compatibility A    Channel A direct Channel B direct\r\n");
+    for (size_t i = 0U; i < 32U; ++i) {
+        xil_printf("%-7lu %-18d %-16d %d\r\n", (unsigned long)i,
+            i < current_count ? (int)current_reconstruction[i] : 0,
+            (int)channel_a[i], (int)channel_b[i]);
+    }
+    for (unsigned int mapping = 0U; mapping < 1U; ++mapping) {
+        char label_a[40], label_b[40];
+        calibration_decode_raw_mapping(RxBufferPtr, beat_count, mapping,
+            channel_a, channel_b);
+        snprintf(label_a, sizeof(label_a), "Mapping %u Channel A", mapping + 1U);
+        snprintf(label_b, sizeof(label_b), "Mapping %u Channel B", mapping + 1U);
+        calibration_print_raw_channel_metrics(label_a, channel_a,
+            channel_count, even_reference, odd_reference);
+        calibration_print_raw_channel_metrics(label_b, channel_b,
+            channel_count, even_reference, odd_reference);
+        {
+            calibration_spectrum_t spectrum;
+            float correlation = calibration_best_reference_correlation(
+                channel_a, channel_count, even_reference, odd_reference, 1U);
+            (void)calibration_calculate_full_spectrum(channel_a, channel_count,
+                adc_get_effective_sample_rate_hz(), &spectrum);
+            normal_bins[mapping][0] = spectrum.dominant_bin;
+            if (correlation > best_dac_correlation) {
+                best_dac_correlation = correlation;
+                best_dominant_bin = spectrum.dominant_bin;
+                best_mapping = mapping; best_channel = 'A';
+            }
+            correlation = calibration_best_reference_correlation(
+                channel_b, channel_count, even_reference, odd_reference, 1U);
+            (void)calibration_calculate_full_spectrum(channel_b, channel_count,
+                adc_get_effective_sample_rate_hz(), &spectrum);
+            normal_bins[mapping][1] = spectrum.dominant_bin;
+            if (correlation > best_dac_correlation) {
+                best_dac_correlation = correlation;
+                best_dominant_bin = spectrum.dominant_bin;
+                best_mapping = mapping; best_channel = 'B';
+            }
+        }
+    }
+
+    /* Mapping 1 is proven chronological by the ramp: analyze only it. */
+    calibration_decode_raw_mapping(RxBufferPtr, beat_count, 0U,
+        channel_a, channel_b);
+    (void)calibration_calculate_full_spectrum(current_reconstruction,
+        current_count, adc_get_effective_sample_rate_hz(), &legacy_spectrum);
+    (void)calibration_calculate_full_spectrum(channel_a, channel_count,
+        adc_get_effective_sample_rate_hz(), &channel_a_spectrum);
+    (void)calibration_calculate_full_spectrum(channel_b, channel_count,
+        adc_get_effective_sample_rate_hz(), &channel_b_spectrum);
+    (void)calibration_calculate_full_spectrum(even_reference, channel_count,
+        adc_get_effective_sample_rate_hz(), &reference_spectrum);
+    legacy_dac_correlation = calibration_best_reference_correlation(
+        current_reconstruction, current_count, even_reference, odd_reference, 1U);
+    channel_a_dac_correlation = calibration_best_reference_correlation(
+        channel_a, channel_count, even_reference, odd_reference, 1U);
+    channel_b_dac_correlation = calibration_best_reference_correlation(
+        channel_b, channel_count, even_reference, odd_reference, 1U);
+    {
+        timing_alignment_result_t even_result, odd_result;
+        const int16_t *dac_a = even_reference;
+        const int16_t *dac_b = even_reference;
+        if (timing_find_circular_lag(even_reference, channel_a,
+                channel_count, &even_result) == 0 &&
+            timing_find_circular_lag(odd_reference, channel_a,
+                channel_count, &odd_result) == 0 &&
+            odd_result.correlation > even_result.correlation) dac_a = odd_reference;
+        if (timing_find_circular_lag(even_reference, channel_b,
+                channel_count, &even_result) == 0 &&
+            timing_find_circular_lag(odd_reference, channel_b,
+                channel_count, &odd_result) == 0 &&
+            odd_result.correlation > even_result.correlation) dac_b = odd_reference;
+        (void)calibration_print_channel_alignment(
+            "DAC reference vs Channel A", dac_a, channel_a, channel_count);
+        (void)calibration_print_channel_alignment(
+            "DAC reference vs Channel B", dac_b, channel_b, channel_count);
+    }
+    ab_alignment = calibration_print_channel_alignment(
+        "Channel A vs Channel B", channel_a, channel_b, channel_count);
+
+    xil_printf("\r\n========== AD9695 Ramp Transport Test ==========\r\n");
+    ad9695_adc_set_channel_select(0U);
+    ad9695_read_register(&spi_inst, AD9695_REG_TEST_MODE, &saved_mode_a);
+    ad9695_adc_set_channel_select(1U);
+    ad9695_read_register(&spi_inst, AD9695_REG_TEST_MODE, &saved_mode_b);
+    ad9695_adc_set_channel_select(0U);
+    ad9695_write_register(&spi_inst, AD9695_REG_TEST_MODE, AD9695_TESTMODE_RAMP);
+    ad9695_adc_set_channel_select(1U);
+    ad9695_write_register(&spi_inst, AD9695_REG_TEST_MODE, AD9695_TESTMODE_RAMP);
+    ad9695_adc_set_channel_select(2U);
+    usleep(1000U);
+    if (adc_capture_frame() == XST_SUCCESS) {
+        ramp_capture_ok = 1;
+        calibration_print_raw_beats(RxBufferPtr,
+            "First 16 ramp-mode raw DMA beats:");
+        for (unsigned int mapping = 0U; mapping < 1U; ++mapping) {
+            float score_a, score_b;
+            calibration_decode_raw_mapping(RxBufferPtr, beat_count, mapping,
+                channel_a, channel_b);
+            score_a = calibration_ramp_order_score(channel_a, channel_count);
+            score_b = calibration_ramp_order_score(channel_b, channel_count);
+            xil_printf("Mapping %u ramp score A/B: ", mapping + 1U);
+            print_double_inline(score_a); xil_printf(" / ");
+            print_double_inline(score_b); xil_printf("\r\n");
+            if ((mapping == best_mapping) && (best_channel == 'A'))
+                best_ramp_score = score_a;
+            if ((mapping == best_mapping) && (best_channel == 'B'))
+                best_ramp_score = score_b;
+        }
+    } else {
+        xil_printf("ERROR: Ramp-mode DMA capture failed.\r\n");
+    }
+
+    /* Mandatory cleanup: restore both channel registers on every path. */
+    ad9695_adc_set_channel_select(0U);
+    ad9695_write_register(&spi_inst, AD9695_REG_TEST_MODE, saved_mode_a);
+    ad9695_adc_set_channel_select(1U);
+    ad9695_write_register(&spi_inst, AD9695_REG_TEST_MODE, saved_mode_b);
+    ad9695_adc_set_channel_select(2U);
+
+    selected_a_bin = normal_bins[best_mapping][0];
+    selected_b_bin = normal_bins[best_mapping][1];
+
+    xil_printf("\r\n========== Raw JESD/DMA Mapping Summary ==========\r\n");
+    xil_printf("ADC channel mapping      : Mapping %u, Channel %c\r\n",
+               best_mapping + 1U, best_channel);
+    xil_printf("Words per beat           : 8\r\n");
+    xil_printf("Samples/channel/beat     : 4 (M=2 assumption)\r\n");
+    xil_printf("Configured JESD          : M=2 L=4 F=1 S=derived/readback N=16 NP=16\r\n");
+    xil_printf("DMA bus width            : 128 bits (8 x 16-bit words)\r\n");
+    xil_printf("Bit alignment            : unresolved; compare raw and ramp hex\r\n");
+    xil_printf("Required right shift     : %s\r\n",
+               best_ramp_score > 0.90f ? "2 indicated by ramp" : "UNCONFIRMED");
+    xil_printf("Selected calibration channel: %c (diagnostic only)\r\n", best_channel);
+    xil_printf("Selected dominant bin    : %lu\r\n",
+               (unsigned long)best_dominant_bin);
+    xil_printf("Channel A dominant bin   : %lu\r\n", (unsigned long)selected_a_bin);
+    xil_printf("Channel B dominant bin   : %lu\r\n", (unsigned long)selected_b_bin);
+    print_float_value("Selected DAC correlation", best_dac_correlation, "");
+    print_float_value("Best ramp order score", best_ramp_score, "");
+    {
+        const double selected_frequency = (double)best_dominant_bin *
+            adc_get_effective_sample_rate_hz() / (double)channel_count;
+        const int hypothesis_pass = ramp_capture_ok &&
+            best_ramp_score > 0.90f && best_dac_correlation > 0.98f &&
+            fabs(selected_frequency - reference_spectrum.dominant_frequency_hz) <=
+                CAL_REF_FREQ_TOLERANCE_HZ;
+        print_double_value("Selected dominant freq",
+                           selected_frequency / 1.0e6, " MHz");
+        if (hypothesis_pass)
+            xil_printf("Likely calibration channel: %c (diagnostic only)\r\n",
+                       best_channel);
+        else
+            xil_printf("Two-channel hypothesis not confirmed.\r\n");
+        xil_printf("Diagnostic status        : %s\r\n",
+                   hypothesis_pass ? "PASS" : "FAIL");
+    }
+    xil_printf("No calibration mapping or coefficients were changed.\r\n");
+    xil_printf("==================================================\r\n");
+
+    {
+        const double legacy_frequency = legacy_spectrum.dominant_frequency_hz;
+        const double channel_a_frequency = channel_a_spectrum.dominant_frequency_hz;
+        const double channel_b_frequency = channel_b_spectrum.dominant_frequency_hz;
+        const int both_tones =
+            fabs(channel_a_frequency - reference_spectrum.dominant_frequency_hz) <=
+                CAL_REF_FREQ_TOLERANCE_HZ &&
+            fabs(channel_b_frequency - reference_spectrum.dominant_frequency_hz) <=
+                CAL_REF_FREQ_TOLERANCE_HZ;
+        const char *recommended = "Neither";
+        if (both_tones && ab_alignment.correlation > 0.98f) {
+            recommended = channel_a_dac_correlation >=
+                          channel_b_dac_correlation ? "A" : "B";
+        }
+        xil_printf("\r\n========================================\r\n");
+        xil_printf("Compatibility Channel A reconstruction:\r\n");
+        print_double_value("Dominant frequency", legacy_frequency / 1.0e6, " MHz");
+        print_float_value("Correlation to DAC", legacy_dac_correlation, "");
+        xil_printf("Channel A:\r\n");
+        print_double_value("Dominant frequency", channel_a_frequency / 1.0e6, " MHz");
+        print_float_value("Correlation to DAC", channel_a_dac_correlation, "");
+        xil_printf("Channel B:\r\n");
+        print_double_value("Dominant frequency", channel_b_frequency / 1.0e6, " MHz");
+        print_float_value("Correlation to DAC", channel_b_dac_correlation, "");
+        print_float_value("A-B correlation", ab_alignment.correlation, "");
+        xil_printf("Recommended calibration channel: %s\r\n", recommended);
+        if (both_tones && ab_alignment.correlation > 0.98f)
+            xil_printf("Conclusion: independent ADC data paths are consistent.\r\n");
+        xil_printf("========================================\r\n");
+    }
+}
+
+void handle_adc_reference_status_cmd(void)
+{
+    static int16_t even_reference[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t odd_reference[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t channel_a[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t channel_b[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t fractional_reference[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t fractional_measurement[ADC_CHANNEL_SAMPLE_COUNT];
+    adc_reference_analysis_t analysis;
+    size_t reference_count = 0U;
+    size_t adc_count = 0U;
+    double even_variance = 0.0;
+    double odd_variance = 0.0;
+    int status = -1;
+
+    if (!reference_buffer_is_ready() || reference_buffer_length() == 0U) {
+        xil_printf("ADC reference analysis stopped: uploaded DAC reference is not available.\r\n");
+        return;
+    }
+    if (adc_sweep_active) {
+        ERR("Another automatic ADC capture is already in progress.");
+        return;
+    }
+    print_adc_analysis_rate_header();
+    if (calibration_prepare_uploaded_dac_reference(even_reference,
+            odd_reference, &reference_count, &even_variance,
+            &odd_variance, 1) != 0)
+        return;
+
+    adc_sweep_active = 1U;
+    if (adc_capture_frame() != XST_SUCCESS) {
+        xil_printf("ADC reference analysis stopped: DMA capture failed.\r\n");
+        goto reference_done;
+    }
+    if (adc_reconstruct_channels(RxBufferPtr, DMA_CMD_BUF_SIZE,
+            channel_a, ADC_CHANNEL_SAMPLE_COUNT, channel_b,
+            ADC_CHANNEL_SAMPLE_COUNT, &adc_count) != 0 ||
+        adc_count != reference_count) {
+        xil_printf("ADC reference analysis stopped: sample reconstruction failed.\r\n");
+        goto reference_done;
+    }
+    status = calibration_analyze_reference_frame(even_reference,
+        odd_reference, channel_a, channel_b, adc_count,
+        fractional_reference, fractional_measurement, -1, &analysis);
+
+    xil_printf("\r\n========== ADC Reference Analysis ==========\r\n");
+    xil_printf("ADC samples             : %lu\r\n", (unsigned long)adc_count);
+    print_double_value("Configured sample rate",
+        adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
+    print_double_value("Analysis sample rate",
+        adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
+    if (status == 0) {
+        print_double_value("Reference dominant freq",
+            analysis.reference_frequency_hz / 1.0e6, " MHz");
+        print_double_value("ADC dominant freq",
+            analysis.adc_frequency_hz / 1.0e6, " MHz");
+        xil_printf("Selected ADC channel    : %s\r\n",
+            analysis.selected_channel_name);
+        xil_printf("Selected reference phase: %s\r\n",
+            analysis.selected_phase_name);
+        xil_printf("Integer lag             : %ld samples\r\n",
+            (long)analysis.timing.integer_lag);
+        print_float_value("Fractional lag", analysis.timing.fractional_lag,
+            " samples");
+        print_float_value("Alignment correlation",
+            analysis.timing.correlation, "");
+        print_float_value("Aligned RMSE",
+            analysis.fit_state.metrics.fitted_rmse_codes, " codes");
+        print_reference_coherence(analysis.reference_frequency_hz, adc_count);
+    } else {
+        xil_printf("Failure reason          : %s\r\n",
+            analysis.failure_reason != NULL ? analysis.failure_reason :
+            "unknown analysis error");
+    }
+    xil_printf("Reference status        : %s\r\n",
+        status == 0 ? "PASS" : "FAIL");
+    xil_printf("============================================\r\n");
+    xil_printf("No correction coefficients were updated.\r\n");
+
+reference_done:
+    adc_sweep_active = 0U;
 }
 
 void handle_adc_calibration_cmd(uint32_t frame_count)
 {
-    static int16_t captured_reference[ADC_VALID_SAMPLE_COUNT];
-    static int16_t reconstructed_samples[ADC_VALID_SAMPLE_COUNT];
+    static int16_t even_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t odd_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t channel_a[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t channel_b[ADC_CHANNEL_SAMPLE_COUNT];
     static int16_t fractional_reference[ADC_VALID_SAMPLE_COUNT];
     static int16_t fractional_measurement[ADC_VALID_SAMPLE_COUNT];
-    static float accepted_correlations[ADC_CAL_MAX_FRAMES - 1U];
-    static float accepted_rmse[ADC_CAL_MAX_FRAMES - 1U];
+    static float correlations[ADC_CAL_MAX_FRAMES];
+    static float gains[ADC_CAL_MAX_FRAMES];
+    static float offsets[ADC_CAL_MAX_FRAMES];
+    static float fitted_rmse[ADC_CAL_MAX_FRAMES];
 
-    size_t reference_count = 0U;
+    const int16_t *uploaded_reference;
+    size_t uploaded_count;
     size_t reconstructed_count = 0U;
-    uint32_t successful_captures = 0U;
     uint32_t accepted_frames = 0U;
+    int calibration_channel = -1;
     double sum_correlation = 0.0;
-    int32_t min_integer_lag = 0;
-    int32_t max_integer_lag = 0;
-    float min_fractional_lag = 0.0f;
-    float max_fractional_lag = 0.0f;
-
+    double even_variance;
+    double odd_variance;
+    calibration_spectrum_t header_reference_spectrum;
     int reconstruction_status;
 
     if ((frame_count < ADC_CAL_MIN_FRAMES) ||
@@ -1783,6 +3632,15 @@ void handle_adc_calibration_cmd(uint32_t frame_count)
             ADC_CAL_MIN_FRAMES, ADC_CAL_MAX_FRAMES);
         return;
     }
+
+    print_adc_analysis_rate_header();
+    uploaded_reference = reference_buffer_data();
+    uploaded_count = reference_buffer_length();
+    (void)uploaded_reference;
+    (void)uploaded_count;
+    if (calibration_prepare_uploaded_dac_reference(
+            even_reference, odd_reference, &reconstructed_count,
+            &even_variance, &odd_variance, 1) != 0) return;
 
     if (adc_sweep_active)
     {
@@ -1793,214 +3651,150 @@ void handle_adc_calibration_cmd(uint32_t frame_count)
     adc_sweep_active = 1;
 
     xil_printf("\r\n");
-    xil_printf("===================================\r\n");
-    xil_printf("ADC Timing-Only Calibration Validation\r\n");
-    xil_printf("Reference : first ADC capture\r\n");
-    xil_printf("Measurements: frames 2 through %u\r\n",
-               (unsigned int)frame_count);
-    xil_printf("===================================\r\n");
-    print_adc_test_configuration(ADC_VALID_SAMPLE_COUNT);
-
-    /*
-     * 1. Capture and reconstruct frame 1 as the fixed reference, matching the
-     * tested adc -timing acquisition method.
-     */
-    xil_printf("\r\nCapturing reference frame (1/%u).\r\n",
-               (unsigned int)frame_count);
-    if (adc_capture_frame() != XST_SUCCESS)
-    {
-        xil_printf("Calibration reference capture failed.\r\n");
-        goto calibration_done;
+    xil_printf("ADC DAC-Referenced Calibration Measurement\r\n");
+    xil_printf("Reference source: uploaded DAC TXT\r\n");
+    xil_printf("Requested frames: %lu\r\n", (unsigned long)frame_count);
+    xil_printf("ADC samples per channel: %u\r\n", ADC_CHANNEL_SAMPLE_COUNT);
+    if (calibration_calculate_full_spectrum(even_reference,
+            reconstructed_count, adc_get_effective_sample_rate_hz(),
+            &header_reference_spectrum) == 0) {
+        print_double_value("Reference frequency",
+            header_reference_spectrum.dominant_frequency_hz / 1.0e6,
+            " MHz");
+        print_reference_coherence(
+            header_reference_spectrum.dominant_frequency_hz,
+            reconstructed_count);
     }
 
-    reconstruction_status = adc_reconstruct_frame(
-        RxBufferPtr,
-        DMA_CMD_BUF_SIZE,
-        captured_reference,
-        ADC_VALID_SAMPLE_COUNT,
-        &reference_count
-    );
-
-    if (reconstruction_status != 0)
+    for (uint32_t frame = 1U; frame <= frame_count; ++frame)
     {
-        xil_printf(
-            "Calibration reference reconstruction failed: %d\r\n",
-            reconstruction_status
-        );
-        goto calibration_done;
-    }
+        adc_reference_analysis_t analysis;
+        calibration_timing_frame_result_t *selected = &analysis.timing;
+        calibration_state_t *fit_state = &analysis.fit_state;
+        int fit_status;
 
-    xil_printf(
-        "Reference samples reconstructed: %lu\r\n",
-        (unsigned long)reference_count
-    );
-    if (reference_count != ADC_TEST_CAPTURE_SAMPLES)
-    {
-        xil_printf(
-            "Calibration reference rejected: expected %u samples, got %lu.\r\n",
-            (unsigned int)ADC_TEST_CAPTURE_SAMPLES,
-            (unsigned long)reference_count
-        );
-        goto calibration_done;
-    }
-
-    for (uint32_t frame = 2U; frame <= frame_count; ++frame)
-    {
-        calibration_timing_frame_result_t result;
-        int measurement_status;
-
-        memset(&result, 0, sizeof(result));
-
-        xil_printf("\r\n[TIMING_FRAME %lu/%lu]\r\n",
-                   (unsigned long)frame,
-                   (unsigned long)frame_count);
+        xil_printf("\r\n---------- Calibration Frame %lu ----------\r\n",
+                   (unsigned long)frame);
 
         if (adc_capture_frame() != XST_SUCCESS) {
-            result.reject_reason = CAL_TIMING_REJECT_DMA;
-            goto print_frame_result;
+            xil_printf("Frame status           : REJECTED\r\n");
+            xil_printf("Rejection reason       : DMA capture failed\r\n");
+            continue;
         }
-        result.capture_success = 1U;
-        ++successful_captures;
 
-        reconstruction_status = adc_reconstruct_frame(
-            RxBufferPtr, DMA_CMD_BUF_SIZE, reconstructed_samples,
-            ADC_VALID_SAMPLE_COUNT, &reconstructed_count
+        reconstruction_status = adc_reconstruct_channels(
+            RxBufferPtr, DMA_CMD_BUF_SIZE, channel_a,
+            ADC_CHANNEL_SAMPLE_COUNT, channel_b,
+            ADC_CHANNEL_SAMPLE_COUNT, &reconstructed_count
         );
         if ((reconstruction_status != 0) ||
-            (reconstructed_count != reference_count)) {
-            result.reject_reason = CAL_TIMING_REJECT_RECONSTRUCTION;
-            goto print_frame_result;
+            (reconstructed_count != ADC_CHANNEL_SAMPLE_COUNT)) {
+            xil_printf("Frame status           : REJECTED\r\n");
+            xil_printf("Rejection reason       : sample reconstruction failed\r\n");
+            continue;
         }
 
-        measurement_status = adc_measure_timing_frame(
-            captured_reference,
-            reconstructed_samples,
-            reconstructed_count,
-            fractional_reference,
-            fractional_measurement,
-            &result
-        );
-        (void)measurement_status;
+        fit_status = calibration_analyze_reference_frame(even_reference,
+            odd_reference, channel_a, channel_b, reconstructed_count,
+            fractional_reference, fractional_measurement,
+            calibration_channel, &analysis);
 
-        if (result.accepted)
+        xil_printf("Channel                : %s\r\n",
+                   analysis.selected_channel_name != NULL ?
+                   analysis.selected_channel_name : "none");
+        xil_printf("Reference phase        : %s\r\n",
+                   analysis.selected_phase_name != NULL ?
+                   analysis.selected_phase_name : "none");
+        if (fit_status != 0) {
+            xil_printf("Frame status           : REJECTED\r\n");
+            xil_printf("Rejection reason       : %s\r\n",
+                analysis.failure_reason != NULL ? analysis.failure_reason :
+                "unknown analysis error");
+            continue;
+        }
+        xil_printf("Integer lag            : %ld samples\r\n",
+                   (long)selected->integer_lag);
+        print_float_value("Fractional lag", selected->fractional_lag, " samples");
+        xil_printf("Analysis samples       : %lu\r\n",
+                   (unsigned long)selected->analysis_samples);
+        print_float_value("Correlation", selected->correlation, "");
+
+        if (!selected->accepted ||
+            (selected->correlation < CAL_DAC_REF_MIN_CORRELATION)) {
+            xil_printf("Frame status           : REJECTED\r\n");
+            xil_printf("Rejection reason       : %s\r\n",
+                       selected->correlation < CAL_DAC_REF_MIN_CORRELATION ?
+                       "DAC-reference correlation below 0.970000" :
+                       cal_timing_reject_reason_text(selected->reject_reason));
+            continue;
+        }
+
         {
-            const uint32_t index = accepted_frames;
-            accepted_correlations[index] = result.correlation;
-            accepted_rmse[index] = result.raw_rmse;
-            sum_correlation += (double)result.correlation;
-
-            if (accepted_frames == 0U) {
-                min_integer_lag = result.integer_lag;
-                max_integer_lag = result.integer_lag;
-                min_fractional_lag = result.fractional_lag;
-                max_fractional_lag = result.fractional_lag;
-            } else {
-                if (result.integer_lag < min_integer_lag)
-                    min_integer_lag = result.integer_lag;
-                if (result.integer_lag > max_integer_lag)
-                    max_integer_lag = result.integer_lag;
-                if (result.fractional_lag < min_fractional_lag)
-                    min_fractional_lag = result.fractional_lag;
-                if (result.fractional_lag > max_fractional_lag)
-                    max_fractional_lag = result.fractional_lag;
-            }
-            ++accepted_frames;
+            const float normalized_gain = fit_state->metrics.measured_gain *
+                (CAL_DAC_FULL_SCALE_CODES / CAL_ADC_FULL_SCALE_CODES);
+            const float normalized_offset = fit_state->metrics.measured_offset /
+                CAL_ADC_FULL_SCALE_CODES;
+            print_float_value("Normalized gain", normalized_gain, "");
+            print_float_value("Scale deviation from nominal",
+                normalized_gain - 1.0f, "");
+            print_float_value("Fitted DC offset",
+                fit_state->metrics.measured_offset, " ADC codes");
+            print_float_value("Normalized DC offset", normalized_offset,
+                " full-scale");
         }
+        print_float_value("Fitted MAE", fit_state->metrics.fitted_mae_codes,
+                          " codes");
+        print_float_value("Fitted RMSE", fit_state->metrics.fitted_rmse_codes,
+                          " codes");
+        xil_printf("Frame status           : ACCEPTED\r\n");
+        correlations[accepted_frames] = selected->correlation;
+        gains[accepted_frames] = fit_state->metrics.measured_gain *
+            (CAL_DAC_FULL_SCALE_CODES / CAL_ADC_FULL_SCALE_CODES);
+        offsets[accepted_frames] = fit_state->metrics.measured_offset;
+        fitted_rmse[accepted_frames] = fit_state->metrics.fitted_rmse_codes;
+        sum_correlation += (double)selected->correlation;
+        if (calibration_channel < 0)
+            calibration_channel = analysis.selected_adc == channel_b ? 1 : 0;
+        ++accepted_frames;
 
-print_frame_result:
-        xil_printf("Integer lag          : %ld samples\r\n",
-                   (long)result.integer_lag);
-        print_float_value("Fractional lag", result.fractional_lag, " samples");
-        print_float_value("Total estimated lag", result.total_lag, " samples");
-        xil_printf("Valid overlap        : %lu samples\r\n",
-                   (unsigned long)result.valid_overlap_samples);
-        xil_printf("Analysis samples     : %lu\r\n",
-                   (unsigned long)result.analysis_samples);
-        print_float_value("Correlation", result.correlation, "");
-        print_float_value("Raw aligned RMSE", result.raw_rmse, " codes");
-        xil_printf("Timing result        : %s\r\n",
-                   result.accepted ? "PASS" : "REJECT");
-        if (!result.accepted) {
-            xil_printf("Reject reason        : %s\r\n",
-                       cal_timing_reject_reason_text(result.reject_reason));
-        }
-
-        if (frame < frame_count) {
-            usleep(ADC_TIMING_INTERFRAME_DELAY_US);
-        }
+        if (frame < frame_count) usleep(ADC_TIMING_INTERFRAME_DELAY_US);
     }
 
+    xil_printf("\r\n========== DAC-Referenced Calibration Summary ==========\r\n");
+    xil_printf("Requested frames          : %lu\r\n", (unsigned long)frame_count);
+    xil_printf("Accepted frames           : %lu\r\n", (unsigned long)accepted_frames);
+    xil_printf("Rejected frames           : %lu\r\n",
+               (unsigned long)(frame_count - accepted_frames));
+    xil_printf("Calibration channel       : %s\r\n",
+               calibration_channel == 0 ? "Channel A" :
+               (calibration_channel == 1 ? "Channel B" : "none"));
+    if (accepted_frames > 0U) {
+        float min_corr = correlations[0];
+        for (uint32_t i = 1U; i < accepted_frames; ++i)
+            if (correlations[i] < min_corr) min_corr = correlations[i];
+        print_double_value("Mean correlation",
+                           sum_correlation / (double)accepted_frames, "");
+        print_float_value("Minimum correlation", min_corr, "");
+        print_float_value("Median normalized gain",
+                          median_float(gains, accepted_frames), "");
+        print_float_value("Median fitted offset",
+                          median_float(offsets, accepted_frames), " codes");
+        print_float_value("Median fitted RMSE",
+                          median_float(fitted_rmse, accepted_frames), " codes");
+    }
     {
-        const uint32_t measurement_frames = frame_count - 1U;
-        const uint32_t rejected_frames = measurement_frames - accepted_frames;
         const float acceptance_rate =
-            (float)accepted_frames / (float)measurement_frames;
-        const uint32_t required_accepted =
-            (measurement_frames < CAL_TIMING_MIN_ACCEPTED_FRAMES) ?
-            measurement_frames : CAL_TIMING_MIN_ACCEPTED_FRAMES;
-        const int overall_pass =
-            (accepted_frames >= required_accepted) &&
-            (acceptance_rate >= CAL_TIMING_MIN_ACCEPTANCE_RATE);
-
-        xil_printf("\r\n========== Timing Alignment Summary ==========\r\n");
-        xil_printf("Requested frames       : %lu\r\n",
-                   (unsigned long)frame_count);
-        xil_printf("Reference frames        : 1\r\n");
-        xil_printf("Measurement frames      : %lu\r\n",
-                   (unsigned long)measurement_frames);
-        xil_printf("Successful captures     : %lu\r\n",
-                   (unsigned long)successful_captures);
-        xil_printf("Accepted frames         : %lu\r\n",
-                   (unsigned long)accepted_frames);
-        xil_printf("Rejected frames         : %lu\r\n",
-                   (unsigned long)rejected_frames);
-        print_float_value("Acceptance rate", acceptance_rate * 100.0f, " %");
-        print_float_value("Correlation threshold",
-                          CAL_TIMING_MIN_CORRELATION, "");
-        xil_printf("Minimum analysis samples: %u\r\n",
-                   (unsigned int)CAL_TIMING_MIN_ANALYSIS_SAMPLES);
-
-        if (accepted_frames > 0U)
-        {
-            float min_corr = accepted_correlations[0];
-            float min_rmse = accepted_rmse[0];
-            float max_rmse = accepted_rmse[0];
-            for (uint32_t i = 1U; i < accepted_frames; ++i) {
-                if (accepted_correlations[i] < min_corr)
-                    min_corr = accepted_correlations[i];
-                if (accepted_rmse[i] < min_rmse)
-                    min_rmse = accepted_rmse[i];
-                if (accepted_rmse[i] > max_rmse)
-                    max_rmse = accepted_rmse[i];
-            }
-            print_double_value("Mean correlation",
-                               sum_correlation / (double)accepted_frames, "");
-            print_float_value("Median correlation",
-                              median_float(accepted_correlations,
-                                           accepted_frames), "");
-            print_float_value("Minimum accepted corr", min_corr, "");
-            print_float_value("Median raw RMSE",
-                              median_float(accepted_rmse, accepted_frames),
-                              " codes");
-            print_float_value("Minimum raw RMSE", min_rmse, " codes");
-            print_float_value("Maximum raw RMSE", max_rmse, " codes");
-            xil_printf("Integer lag range      : %ld to %ld samples\r\n",
-                       (long)min_integer_lag, (long)max_integer_lag);
-            print_float_value("Minimum fractional lag",
-                              min_fractional_lag, " samples");
-            print_float_value("Maximum fractional lag",
-                              max_fractional_lag, " samples");
-        }
-        else
-        {
-            xil_printf("No accepted frames available for statistics.\r\n");
-        }
-        xil_printf("Timing status          : %s\r\n",
-                   overall_pass ? "PASS" : "FAIL");
-        xil_printf("==============================================\r\n");
+            (float)accepted_frames / (float)frame_count;
+        const uint32_t required =
+            frame_count < CAL_TIMING_MIN_ACCEPTED_FRAMES ?
+            frame_count : CAL_TIMING_MIN_ACCEPTED_FRAMES;
+        xil_printf("Calibration status        : %s\r\n",
+                   ((accepted_frames >= required) &&
+                    (acceptance_rate >= CAL_TIMING_MIN_ACCEPTANCE_RATE)) ?
+                   "PASS" : "FAIL");
     }
+    xil_printf("========================================================\r\n");
 
-calibration_done:
     xil_printf("No correction coefficients were updated.\r\n");
     adc_sweep_active = 0;
 }

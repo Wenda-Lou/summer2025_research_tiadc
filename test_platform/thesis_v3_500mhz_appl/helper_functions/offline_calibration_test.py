@@ -15,7 +15,7 @@ from .reference_upload import send_reference
 @dataclass
 class CalibrationSettings:
     tone_frequency_hz: float = 350_000_000.0
-    adc_sample_rate_hz: float = 1_300_000_000.0
+    adc_sample_rate_hz: float = 1_450_000_000.0
     target_amplitude_codes: float | None = None
     target_offset_codes: float = 0.0
     offset_learning_rate: float = 0.25

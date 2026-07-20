@@ -370,13 +370,13 @@ void ad9695_jesd_get_cfg_param(struct jesd_param_t *jesd_param)
     jesd_param->jesd_F  = AD9695_JESD_F    (tmp_reg[1]) + 1;
     jesd_param->jesd_K  = AD9695_JESD_K    (tmp_reg[2]) + 1;
     jesd_param->jesd_M  = AD9695_JESD_M    (tmp_reg[3]) + 1;
-    jesd_param->jesd_CS = (tmp_reg[4] & 0xC) >> 6;
+    jesd_param->jesd_CS = (tmp_reg[4] & 0xC0U) >> 6;
     jesd_param->jesd_N  = AD9695_JESD_N    (tmp_reg[4]) + 1;
-    jesd_param->jesd_NP = AD9695_JESD_NP   (tmp_reg[4]) + 1;
-    jesd_param->jesd_S  = AD9695_JESD_S    (tmp_reg[5]);
+    jesd_param->jesd_NP = AD9695_JESD_NP   (tmp_reg[5]) + 1;
+    jesd_param->jesd_S  = AD9695_JESD_S    (tmp_reg[6]) + 1;
 
-    jesd_param->jesd_HD = (tmp_reg[6] & AD9695_JESD_HD) ? 1 : 0;
-    jesd_param->jesd_CF = AD9695_JESD_CF(tmp_reg[6]);
+    jesd_param->jesd_HD = (tmp_reg[7] & AD9695_JESD_HD) ? 1 : 0;
+    jesd_param->jesd_CF = AD9695_JESD_CF(tmp_reg[7]);
 
     for (i = 0; i < AD9695_JESD_ID_CFG_REG_OFFSET; ++i) {
         ad9695_read_register(&spi_inst, AD9695_JESD_DID_CFG_REG + i, &tmp_reg[i]);

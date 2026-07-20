@@ -23,13 +23,16 @@ import numpy as np
 FPGA_IP = "192.168.1.10"
 FPGA_PORT = 6666
 REFERENCE_SAMPLE_COUNT = 2032
-DAC_SAMPLE_RATE_HZ = 2_457_600_000.0
-ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
+DAC_REFERENCE_SAMPLE_COUNT = 4064
+DAC_SAMPLE_RATE_HZ = 2_600_000_000.0
+ADC_SAMPLE_RATE_HZ = 1_450_000_000.0
 DAC_BITS = 16
 ADC_BITS = 14
 # Firmware accepts at most (512 - 8) / 2 = 252 samples per REFD packet.
 # Keep 240 to match the previously used conservative packet size.
 REFERENCE_CHUNK_SAMPLES = 240
+REFERENCE_FORMAT_ADC_RATE = 0
+REFERENCE_FORMAT_DAC_RATE_2X = 1
 
 
 
@@ -153,6 +156,7 @@ def prepare_reference_samples(
     reference_samples: Iterable[float],
     *,
     require_full_buffer: bool = True,
+    reference_format: int = REFERENCE_FORMAT_ADC_RATE,
 ) -> np.ndarray:
     """Convert reference values to little-endian signed 16-bit samples."""
     reference = np.asarray(reference_samples, dtype=np.float64).reshape(-1)
@@ -162,15 +166,25 @@ def prepare_reference_samples(
     if not np.all(np.isfinite(reference)):
         raise ValueError("Reference contains NaN or infinite values.")
 
-    if require_full_buffer and reference.size != REFERENCE_SAMPLE_COUNT:
+    expected_count = (
+        DAC_REFERENCE_SAMPLE_COUNT
+        if reference_format == REFERENCE_FORMAT_DAC_RATE_2X
+        else REFERENCE_SAMPLE_COUNT
+    )
+    if reference_format not in (
+        REFERENCE_FORMAT_ADC_RATE,
+        REFERENCE_FORMAT_DAC_RATE_2X,
+    ):
+        raise ValueError("Unsupported reference format.")
+    if require_full_buffer and reference.size != expected_count:
         raise ValueError(
-            f"Expected exactly {REFERENCE_SAMPLE_COUNT} samples, "
+            f"Expected exactly {expected_count} samples, "
             f"received {reference.size}."
         )
-    if reference.size > REFERENCE_SAMPLE_COUNT:
+    if reference.size > expected_count:
         raise ValueError(
             f"Reference contains {reference.size} samples; "
-            f"maximum is {REFERENCE_SAMPLE_COUNT}."
+            f"maximum is {expected_count}."
         )
 
     return np.clip(np.rint(reference), -32768, 32767).astype("<i2")
@@ -181,6 +195,7 @@ def build_reference_packets(
     *,
     chunk_samples: int = REFERENCE_CHUNK_SAMPLES,
     require_full_buffer: bool = True,
+    reference_format: int = REFERENCE_FORMAT_ADC_RATE,
 ) -> list[bytes]:
     """Build packets without sending them, for local inspection/testing."""
     if not 1 <= chunk_samples <= 252:
@@ -189,9 +204,12 @@ def build_reference_packets(
     reference = prepare_reference_samples(
         reference_samples,
         require_full_buffer=require_full_buffer,
+        reference_format=reference_format,
     )
 
-    packets = [b"REFB" + struct.pack("<H", reference.size)]
+    packets = [
+        b"REFB" + struct.pack("<HB", reference.size, reference_format)
+    ]
 
     for offset in range(0, reference.size, chunk_samples):
         chunk = reference[offset : offset + chunk_samples]
@@ -212,12 +230,14 @@ def send_reference(
     chunk_samples: int = REFERENCE_CHUNK_SAMPLES,
     packet_delay_s: float = 0.01,
     require_full_buffer: bool = True,
+    reference_format: int = REFERENCE_FORMAT_ADC_RATE,
 ) -> int:
     """Send one prepared reference using the existing FPGA UDP protocol."""
     packets = build_reference_packets(
         reference_samples,
         chunk_samples=chunk_samples,
         require_full_buffer=require_full_buffer,
+        reference_format=reference_format,
     )
 
     destination = (fpga_ip, fpga_port)

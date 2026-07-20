@@ -56,11 +56,17 @@
  *                                            (reserved for future use)
  *              back                          Return to UART command prompt
  *
- *          -cal [frames]                    Timing-only validation (default 10);
- *                                           frame 1 is the fixed reference
+ *          -cal [frames]                    Measurement-only calibration against
+ *                                           the uploaded DAC TXT (default 10)
  *
  *          -ref                             Display uploaded reference status
  *                                           and buffer information
+ *          -ref validate                    Validate raw DAC 2:1 reconstruction,
+ *                                           tone, and synthetic alignment tests
+ *          -ref diagnose                    Capture one ADC DMA frame and test
+ *                                           spectrum/sample-order hypotheses
+ *          -ref diagnose-tone <MHz>         Diagnose a known external/DPG tone
+ *                                           without uploaded-reference checks
  * --------------------------------------------------------------------------  
  *  © 2025 Your Project Name — MIT License                                      
  * ==========================================================================*/
@@ -69,6 +75,13 @@
 #define CONSOLE_CMDS_H
 
 #include <stdint.h>
+#include <stdbool.h>
+
+double adc_get_configured_sample_rate_hz(void);
+double adc_get_effective_sample_rate_hz(void);
+double adc_get_sample_rate_correction_factor(void);
+bool adc_effective_sample_rate_is_valid(void);
+bool adc_set_effective_sample_rate_hz(double rate_hz);
 
 #define ADC_TIMING_DEFAULT_FRAMES       20U
 #define ADC_TIMING_MAX_FRAMES           1000U

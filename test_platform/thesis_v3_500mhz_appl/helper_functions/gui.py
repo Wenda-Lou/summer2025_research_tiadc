@@ -11,9 +11,10 @@ from .reference_upload import (
     FPGA_IP,
     FPGA_PORT,
     REFERENCE_SAMPLE_COUNT,
+    DAC_REFERENCE_SAMPLE_COUNT,
+    REFERENCE_FORMAT_DAC_RATE_2X,
     clear_reference,
     load_reference_txt,
-    reconstruct_adc_reference,
     send_reference,
 )
 
@@ -595,8 +596,8 @@ def gui_receive_timing_captures():
 
 def gui_upload_reference_txt():
     """
-    Select a periodic AD9164 TXT waveform, reconstruct 2032 samples on the
-    configured ADC time grid, and upload signed 14-bit codes to the FPGA.
+    Select a periodic AD9164 TXT waveform and upload one 4064-sample raw DAC
+    block. Firmware explicitly builds its EVEN and ODD ADC-rate candidates.
     """
     txt_file = filedialog.askopenfilename(
         parent=root,
@@ -615,10 +616,10 @@ def gui_upload_reference_txt():
     try:
         all_samples = load_reference_txt(txt_file)
 
-        if all_samples.size < 2:
+        if all_samples.size < DAC_REFERENCE_SAMPLE_COUNT:
             raise ValueError(
                 f"The selected file contains only {all_samples.size} samples.\n\n"
-                "At least two samples are required for periodic reconstruction."
+                f"At least {DAC_REFERENCE_SAMPLE_COUNT} DAC samples are required."
             )
 
     except Exception as exc:
@@ -635,7 +636,7 @@ def gui_upload_reference_txt():
     dialog.transient(root)
     dialog.grab_set()
 
-    max_start = all_samples.size - 1
+    max_start = all_samples.size - DAC_REFERENCE_SAMPLE_COUNT
     selected_path = Path(txt_file)
 
     tk.Label(
@@ -657,8 +658,8 @@ def gui_upload_reference_txt():
         text=(
             f"File: {selected_path.name}\n"
             f"Total numeric samples: {all_samples.size}\n"
-            f"Reconstructed ADC samples: {REFERENCE_SAMPLE_COUNT}\n"
-            "DAC rate: 2.4576 GSPS; ADC rate: 1.3 GSPS; ADC: signed 14-bit"
+            f"Uploaded DAC samples: {DAC_REFERENCE_SAMPLE_COUNT}\n"
+            "DAC rate: 2.6 GSPS; ADC rate: 1.45 GSPS; ADC: signed 14-bit"
         ),
         justify="left",
         anchor="w",
@@ -717,14 +718,13 @@ def gui_upload_reference_txt():
                 f"Starting DAC index must be between 0 and {max_start}."
             )
 
-        selected = reconstruct_adc_reference(
-            all_samples,
-            start_dac_index=float(start_index),
-        )
+        selected = all_samples[
+            start_index:start_index + DAC_REFERENCE_SAMPLE_COUNT
+        ].copy()
 
-        if selected.size != REFERENCE_SAMPLE_COUNT:
+        if selected.size != DAC_REFERENCE_SAMPLE_COUNT:
             raise ValueError(
-                f"Expected {REFERENCE_SAMPLE_COUNT} selected samples, "
+                f"Expected {DAC_REFERENCE_SAMPLE_COUNT} selected samples, "
                 f"received {selected.size}."
             )
 
@@ -734,7 +734,7 @@ def gui_upload_reference_txt():
         try:
             start_index, selected = get_selected_samples()
             preview_var.set(
-                f"Starting DAC index: {start_index} (periodic resampling)\n"
+                f"Starting DAC index: {start_index} (raw 2x DAC block)\n"
                 f"Minimum: {int(selected.min())}\n"
                 f"Maximum: {int(selected.max())}\n"
                 f"First sample: {int(selected[0])}\n"
@@ -848,6 +848,7 @@ def gui_upload_reference_txt():
                 fpga_port=fpga_port,
                 packet_delay_s=packet_delay,
                 require_full_buffer=True,
+                reference_format=REFERENCE_FORMAT_DAC_RATE_2X,
             )
 
             status_var.set(

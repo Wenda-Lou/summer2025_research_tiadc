@@ -85,6 +85,7 @@ typedef struct {
     float adc_rms_ac;
     float reference_rms_ac;
     /* Raw aligned error: adc - reference. */
+    float mae_codes;
     float rmse_codes;
     /* Residual after fitting adc ~= gain * reference + offset. */
     float fitted_rmse_codes;

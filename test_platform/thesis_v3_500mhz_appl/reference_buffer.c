@@ -9,6 +9,7 @@ static size_t expected_length = 0U;
 static size_t written_sample_count = 0U;
 
 static uint8_t reference_ready = 0U;
+static reference_buffer_format_t reference_format = REFERENCE_FORMAT_ADC_RATE;
 
 /*
  * A byte-per-sample written map is simple and reliable for the current
@@ -26,6 +27,7 @@ void reference_buffer_clear(void)
     expected_length = 0U;
     written_sample_count = 0U;
     reference_ready = 0U;
+    reference_format = REFERENCE_FORMAT_ADC_RATE;
 }
 
 reference_buffer_status_t reference_buffer_load(
@@ -67,6 +69,17 @@ reference_buffer_status_t reference_buffer_begin(
     size_t expected_sample_count
 )
 {
+    return reference_buffer_begin_with_format(
+        expected_sample_count,
+        REFERENCE_FORMAT_ADC_RATE
+    );
+}
+
+reference_buffer_status_t reference_buffer_begin_with_format(
+    size_t expected_sample_count,
+    reference_buffer_format_t format
+)
+{
     if (expected_sample_count == 0U) {
         return REFERENCE_BUFFER_ERR_EMPTY;
     }
@@ -74,9 +87,14 @@ reference_buffer_status_t reference_buffer_begin(
     if (expected_sample_count > REFERENCE_MAX_SAMPLES) {
         return REFERENCE_BUFFER_ERR_TOO_LARGE;
     }
+    if ((format != REFERENCE_FORMAT_ADC_RATE) &&
+        (format != REFERENCE_FORMAT_DAC_RATE_2X)) {
+        return REFERENCE_BUFFER_ERR_INDEX;
+    }
 
     reference_buffer_clear();
     expected_length = expected_sample_count;
+    reference_format = format;
 
     return REFERENCE_BUFFER_OK;
 }
@@ -161,4 +179,9 @@ size_t reference_buffer_expected_length(void)
 int reference_buffer_is_ready(void)
 {
     return reference_ready != 0U;
+}
+
+reference_buffer_format_t reference_buffer_format(void)
+{
+    return reference_format;
 }
