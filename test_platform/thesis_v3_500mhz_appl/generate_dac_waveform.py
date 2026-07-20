@@ -4,9 +4,10 @@ Generate a seamless periodic TXT waveform for AD9164 DPG Downloader.
 
 Edit only the USER SETTINGS section below, then run:
 
-    python generate_dac_waveform_settings.py
+    python generate_dac_waveform.py
 
-The output contains 65,536 signed 16-bit samples, one sample per line.
+The output uses the AD9164-compatible plain-text format: one signed 16-bit
+integer per line, with a record length divisible by 256.
 """
 
 from __future__ import annotations
@@ -22,9 +23,9 @@ import numpy as np
 # USER SETTINGS — edit these values
 # =====================================================================
 
-# Desired main tone frequency in Hz.
-# The script automatically uses the nearest coherent frequency.
-TONE_FREQUENCY_HZ = 350e6
+# Desired main tone frequency in Hz. The default is ADC bin 547 for a
+# 2,032-sample frame at 1.3 GSPS: 349.950787401575 MHz.
+TONE_FREQUENCY_HZ = 547 * 1_300_000_000.0 / 2_032
 
 # Sine-wave peak level in dBFS.
 # Examples:
@@ -51,7 +52,7 @@ DITHER_HIGH_HZ = 600e6
 DITHER_SEED = 1234
 
 # Output TXT filename.
-OUTPUT_FILE = Path("sine_350MHz.txt")
+OUTPUT_FILE = Path("sine_350MHz_2p6GSPS.txt")
 
 # Reserve a small number of codes to protect against rounding/clipping.
 HEADROOM_CODES = 16
@@ -61,8 +62,29 @@ HEADROOM_CODES = 16
 # FIXED PROJECT SETTINGS — normally do not change
 # =====================================================================
 
-DAC_SAMPLE_RATE_HZ = 2_457_600_000.0
-NUM_SAMPLES = 65_536
+ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
+DAC_SAMPLE_RATE_HZ = 2_600_000_000.0
+ADC_FRAME_SAMPLES = 2_032
+DAC_TO_ADC_RATE_RATIO = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ
+
+if not DAC_TO_ADC_RATE_RATIO.is_integer():
+    raise RuntimeError("DAC/ADC sample-rate ratio must be an integer.")
+
+# The fundamental coherent DAC block is 4,064 samples. The AD9164 downloader
+# additionally requires the file length to be divisible by 256, so use the
+# least common multiple: lcm(4,064, 256) = 32,512 samples (eight blocks).
+COHERENT_DAC_BLOCK_SAMPLES = int(
+    ADC_FRAME_SAMPLES * DAC_TO_ADC_RATE_RATIO
+)
+DAC_FILE_ALIGNMENT_SAMPLES = 256
+NUM_SAMPLES = math.lcm(
+    COHERENT_DAC_BLOCK_SAMPLES,
+    DAC_FILE_ALIGNMENT_SAMPLES,
+)
+EXPECTED_ADC_TONE_BIN = 547
+EXPECTED_DAC_TONE_BIN = EXPECTED_ADC_TONE_BIN * (
+    NUM_SAMPLES // COHERENT_DAC_BLOCK_SAMPLES
+)
 INT16_MIN = -32_768
 INT16_MAX = 32_767
 
@@ -188,6 +210,17 @@ def main() -> None:
         tone_bin * DAC_SAMPLE_RATE_HZ / NUM_SAMPLES
     )
 
+    if tone_bin != EXPECTED_DAC_TONE_BIN:
+        raise RuntimeError(
+            f"Expected coherent DAC tone bin {EXPECTED_DAC_TONE_BIN}, "
+            f"but configuration produced bin {tone_bin}."
+        )
+    if NUM_SAMPLES % DAC_FILE_ALIGNMENT_SAMPLES != 0:
+        raise RuntimeError(
+            f"DAC file length must be divisible by "
+            f"{DAC_FILE_ALIGNMENT_SAMPLES}."
+        )
+
     sine_peak_codes = (
         INT16_MAX * 10.0 ** (SINE_PEAK_DBFS / 20.0)
     )
@@ -230,6 +263,12 @@ def main() -> None:
     metadata = {
         "output_file": str(OUTPUT_FILE),
         "dac_sample_rate_hz": DAC_SAMPLE_RATE_HZ,
+        "adc_sample_rate_hz": ADC_SAMPLE_RATE_HZ,
+        "dac_to_adc_rate_ratio": DAC_TO_ADC_RATE_RATIO,
+        "adc_frame_samples": ADC_FRAME_SAMPLES,
+        "coherent_dac_block_samples": COHERENT_DAC_BLOCK_SAMPLES,
+        "dac_file_alignment_samples": DAC_FILE_ALIGNMENT_SAMPLES,
+        "adc_tone_bin": EXPECTED_ADC_TONE_BIN,
         "num_samples": NUM_SAMPLES,
         "requested_tone_hz": TONE_FREQUENCY_HZ,
         "actual_tone_hz": actual_tone_hz,

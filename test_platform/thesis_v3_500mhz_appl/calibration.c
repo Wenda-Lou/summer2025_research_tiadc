@@ -109,6 +109,8 @@ calibration_status_t calibration_analyze_frame(
     double sum_adc_ac2 = 0.0;
     double sum_cross = 0.0;
     double sum_error2 = 0.0;
+    double sum_fitted_error2 = 0.0;
+    double sum_fitted_absolute_error = 0.0;
 
     double measured_gain;
     double measured_offset;
@@ -174,6 +176,22 @@ calibration_status_t calibration_analyze_frame(
     corrected_gain = measured_gain;
     corrected_mean_error = mean_adc - mean_ref;
 
+    /*
+     * Third pass: residual after removing the best-fit gain and offset.
+     * Keep this separate from raw aligned RMSE, which measures adc-reference.
+     */
+    for (i = 0U; i < sample_count; ++i) {
+        const double corrected_adc =
+            ((double)adc_samples[i] + (double)state->offset_correction) *
+            (double)state->gain_correction;
+        const double fitted_adc =
+            measured_gain * (double)reference_samples[i] + measured_offset;
+        const double fitted_error = corrected_adc - fitted_adc;
+
+        sum_fitted_error2 += fitted_error * fitted_error;
+        sum_fitted_absolute_error += fabs(fitted_error);
+    }
+
     denom_corr = sqrt(sum_ref_ac2 * sum_adc_ac2);
 
     state->metrics.adc_mean = (float)mean_adc;
@@ -188,6 +206,10 @@ calibration_status_t calibration_analyze_frame(
         (float)sqrt(sum_ref_ac2 / (double)sample_count);
     state->metrics.rmse_codes =
         (float)sqrt(sum_error2 / (double)sample_count);
+    state->metrics.fitted_rmse_codes =
+        (float)sqrt(sum_fitted_error2 / (double)sample_count);
+    state->metrics.fitted_mae_codes =
+        (float)(sum_fitted_absolute_error / (double)sample_count);
 
     if (denom_corr > CALIBRATION_EPSILON) {
         state->metrics.correlation = (float)(sum_cross / denom_corr);

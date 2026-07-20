@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <limits.h>
 #include <math.h>
 #include "xil_printf.h"
 #include "xparameters.h"
@@ -23,6 +24,7 @@
 #include "reference_buffer.h"
 #include "adc_frame.h"
 #include "timing_alignment.h"
+#include "adc_test_config.h"
 
 #include "xil_cache.h"
 #include "xuartps.h"
@@ -36,6 +38,54 @@ extern uint8_t uart_send_flag; //Send flag enabled by the uart
 volatile uint8_t adc_sweep_active = 0;
 
 #define ERR(fmt, ...) xil_printf("Command Error: " fmt "\r\n", ##__VA_ARGS__)
+
+#define CAL_ALIGNMENT_GUARD_SAMPLES 64U
+#define CAL_MIN_ANALYSIS_SAMPLES    512U
+#define ADC_CAL_DEFAULT_FRAMES              10U
+#define ADC_CAL_MIN_FRAMES                  2U
+#define ADC_CAL_MAX_FRAMES                  100U
+#define CAL_TIMING_MIN_CORRELATION           0.970f
+#define CAL_TIMING_MIN_ANALYSIS_SAMPLES      1800U
+#define CAL_TIMING_MAX_ABS_FRAC_LAG          0.5f
+#define CAL_TIMING_MIN_ACCEPTED_FRAMES       5U
+#define CAL_TIMING_MIN_ACCEPTANCE_RATE       0.70f
+
+_Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
+               "ADC test configuration sample count mismatch");
+
+typedef struct {
+    size_t reference_start;
+    size_t measurement_start;
+    size_t overlap_count;
+    size_t analysis_count;
+    size_t applied_guard;
+} adc_cal_overlap_t;
+
+typedef enum {
+    CAL_TIMING_REJECT_NONE = 0,
+    CAL_TIMING_REJECT_DMA,
+    CAL_TIMING_REJECT_RECONSTRUCTION,
+    CAL_TIMING_REJECT_INTEGER_ALIGNMENT,
+    CAL_TIMING_REJECT_FRACTIONAL_ALIGNMENT,
+    CAL_TIMING_REJECT_INVALID_OVERLAP,
+    CAL_TIMING_REJECT_LOW_CORRELATION,
+    CAL_TIMING_REJECT_TOO_FEW_SAMPLES,
+    CAL_TIMING_REJECT_INVALID_METRIC
+} calibration_timing_reject_reason_t;
+
+typedef struct {
+    uint8_t capture_success;
+    uint8_t alignment_success;
+    uint8_t accepted;
+    int32_t integer_lag;
+    float fractional_lag;
+    float total_lag;
+    uint32_t valid_overlap_samples;
+    uint32_t analysis_samples;
+    float correlation;
+    float raw_rmse;
+    calibration_timing_reject_reason_t reject_reason;
+} calibration_timing_frame_result_t;
 
 int adc_capture_frame(void);
 static void adc_ifc_sweep(void);
@@ -65,6 +115,535 @@ static void print_float_value(const char *label, float value, const char *unit)
         (long)fraction,
         unit != NULL ? unit : ""
     );
+}
+
+static void print_double_value(
+    const char *label,
+    double value,
+    const char *unit
+)
+{
+    int32_t whole;
+    int32_t fraction;
+    double absolute_value = fabs(value);
+
+    if (!isfinite(value)) {
+        xil_printf("%-22s: invalid\r\n", label);
+        return;
+    }
+
+    whole = (int32_t)absolute_value;
+    fraction = (int32_t)((absolute_value - (double)whole) * 1000000.0);
+    xil_printf("%-22s: %s%ld.%06ld%s\r\n",
+               label,
+               value < 0.0 ? "-" : "",
+               (long)whole,
+               (long)fraction,
+               unit != NULL ? unit : "");
+}
+
+static int adc_analyze_guarded_overlap(
+    const int16_t *reference,
+    const int16_t *measurement,
+    size_t sample_count,
+    int32_t lag_samples,
+    calibration_state_t *state,
+    adc_cal_overlap_t *overlap
+)
+{
+    calibration_config_t config;
+    calibration_status_t status;
+
+    if ((reference == NULL) || (measurement == NULL) ||
+        (state == NULL) || (overlap == NULL) || (sample_count == 0U))
+    {
+        return -1;
+    }
+
+    memset(overlap, 0, sizeof(*overlap));
+
+    /* timing_apply_circular_lag() uses aligned[i] = signal[i + lag]. */
+    if (lag_samples >= 0)
+    {
+        overlap->measurement_start = (size_t)lag_samples;
+        if (overlap->measurement_start >= sample_count) {
+            return -2;
+        }
+        overlap->overlap_count =
+            sample_count - overlap->measurement_start;
+    }
+    else
+    {
+        overlap->reference_start = (size_t)(-(int64_t)lag_samples);
+        if (overlap->reference_start >= sample_count) {
+            return -2;
+        }
+        overlap->overlap_count = sample_count - overlap->reference_start;
+    }
+
+    overlap->analysis_count = overlap->overlap_count;
+
+    if (overlap->analysis_count >=
+        (CAL_MIN_ANALYSIS_SAMPLES + (2U * CAL_ALIGNMENT_GUARD_SAMPLES)))
+    {
+        overlap->reference_start += CAL_ALIGNMENT_GUARD_SAMPLES;
+        overlap->measurement_start += CAL_ALIGNMENT_GUARD_SAMPLES;
+        overlap->analysis_count -= 2U * CAL_ALIGNMENT_GUARD_SAMPLES;
+        overlap->applied_guard = CAL_ALIGNMENT_GUARD_SAMPLES;
+    }
+
+    if (overlap->analysis_count < CAL_MIN_ANALYSIS_SAMPLES) {
+        return -3;
+    }
+
+    calibration_default_config(&config);
+    status = calibration_init(state, &config);
+    if (status != CALIBRATION_OK) {
+        return -10 + (int)status;
+    }
+
+    status = calibration_analyze_frame(
+        state,
+        &measurement[overlap->measurement_start],
+        &reference[overlap->reference_start],
+        overlap->analysis_count
+    );
+
+    if (status != CALIBRATION_OK) {
+        return -20 + (int)status;
+    }
+
+    return 0;
+}
+
+static void print_overlap_measurements(
+    const calibration_state_t *state,
+    const adc_cal_overlap_t *overlap
+)
+{
+    xil_printf("Valid overlap samples  : %lu\r\n",
+               (unsigned long)overlap->overlap_count);
+    xil_printf("Guard samples per edge : %lu\r\n",
+               (unsigned long)overlap->applied_guard);
+    xil_printf("Analysis samples       : %lu\r\n",
+               (unsigned long)overlap->analysis_count);
+    print_float_value("Overlap correlation",
+                      state->metrics.correlation, "");
+    print_float_value("Reference mean",
+                      state->metrics.reference_mean, " codes");
+    print_float_value("Measurement mean",
+                      state->metrics.adc_mean, " codes");
+    print_float_value("Offset difference",
+                      state->metrics.offset_error_codes, " codes");
+    print_float_value("Fitted offset",
+                      state->metrics.measured_offset, " codes");
+    print_float_value("Relative gain",
+                      state->metrics.measured_gain, "");
+    print_float_value("Relative gain error",
+                      state->metrics.gain_error_ratio, "");
+    print_float_value("Raw aligned RMSE",
+                      state->metrics.rmse_codes, " codes");
+    print_float_value("Gain/offset fit RMSE",
+                      state->metrics.fitted_rmse_codes, " codes");
+    print_float_value("Fitted MAE",
+                      state->metrics.fitted_mae_codes, " codes");
+}
+
+static void print_adc_test_configuration(size_t sample_count)
+{
+    const double ratio = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ;
+    const double cycles =
+        CAL_EXPECTED_TONE_HZ * (double)sample_count / ADC_SAMPLE_RATE_HZ;
+    const double nearest_cycles = round(cycles);
+    const double coherence_error = fabs(cycles - nearest_cycles);
+
+    print_double_value("ADC sample rate",
+                       ADC_SAMPLE_RATE_HZ / 1.0e6, " MHz");
+    print_double_value("DAC sample rate",
+                       DAC_SAMPLE_RATE_HZ / 1.0e6, " MHz");
+    print_double_value("DAC/ADC rate ratio", ratio, "");
+    xil_printf("Capture samples       : %lu\r\n",
+               (unsigned long)sample_count);
+    xil_printf("Expected tone bin     : %u\r\n",
+               (unsigned int)CAL_EXPECTED_TONE_BIN);
+    print_double_value("Expected tone freq",
+                       CAL_EXPECTED_TONE_HZ / 1.0e6, " MHz");
+    print_double_value("Expected cycles/frame", cycles, "");
+    print_double_value("Cycles per ADC frame", cycles, "");
+    print_double_value("Coherence error", coherence_error, " cycles");
+
+    if ((sample_count == ADC_TEST_CAPTURE_SAMPLES) &&
+        isfinite(coherence_error) &&
+        (coherence_error <= CAL_COHERENCE_TOLERANCE)) {
+        xil_printf("Coherence status      : PASS\r\n");
+    } else {
+        xil_printf("Coherence status      : WARNING\r\n");
+        xil_printf("WARNING: The waveform is not coherent with the "
+                   "%lu-sample ADC window.\r\n",
+                   (unsigned long)sample_count);
+        xil_printf("Gain, offset, and mean estimates may vary with "
+                   "capture phase.\r\n");
+    }
+}
+
+static int estimate_tone_frequency(
+    const int16_t *samples,
+    size_t sample_count,
+    double *frequency_hz,
+    double *tone_bin
+)
+{
+    double mean = 0.0;
+    double first_crossing = 0.0;
+    double last_crossing = 0.0;
+    size_t crossing_count = 0U;
+
+    if ((samples == NULL) || (frequency_hz == NULL) ||
+        (tone_bin == NULL) || (sample_count < 3U)) {
+        return -1;
+    }
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        mean += (double)samples[i];
+    }
+    mean /= (double)sample_count;
+
+    for (size_t i = 0U; i + 1U < sample_count; ++i) {
+        const double y0 = (double)samples[i] - mean;
+        const double y1 = (double)samples[i + 1U] - mean;
+
+        if ((y0 <= 0.0) && (y1 > 0.0)) {
+            const double difference = y1 - y0;
+            double crossing;
+
+            if (fabs(difference) <= CAL_FRACTIONAL_EPSILON) {
+                continue;
+            }
+            crossing = (double)i - (y0 / difference);
+            if (crossing_count == 0U) {
+                first_crossing = crossing;
+            }
+            last_crossing = crossing;
+            ++crossing_count;
+        }
+    }
+
+    if ((crossing_count < 2U) ||
+        (last_crossing <= first_crossing)) {
+        return -2;
+    }
+
+    *frequency_hz =
+        ((double)(crossing_count - 1U) * ADC_SAMPLE_RATE_HZ) /
+        (last_crossing - first_crossing);
+    *tone_bin = *frequency_hz * (double)sample_count / ADC_SAMPLE_RATE_HZ;
+
+    if (!isfinite(*frequency_hz) || !isfinite(*tone_bin)) {
+        return -3;
+    }
+    return 0;
+}
+
+static void print_frequency_validation(
+    const int16_t *samples,
+    size_t sample_count
+)
+{
+    double measured_hz;
+    double measured_bin;
+    double difference_hz;
+    double measured_coherence_error;
+    int status = estimate_tone_frequency(
+        samples, sample_count, &measured_hz, &measured_bin
+    );
+
+    if (status != 0) {
+        xil_printf("Measured frequency    : unavailable (status %d)\r\n",
+                   status);
+        xil_printf("Frequency validation  : WARNING\r\n");
+        return;
+    }
+
+    difference_hz = measured_hz - CAL_EXPECTED_TONE_HZ;
+    measured_coherence_error = fabs(measured_bin - round(measured_bin));
+    print_double_value("Measured tone bin", measured_bin, "");
+    print_double_value("Measured tone freq", measured_hz / 1.0e6, " MHz");
+    print_double_value("Tone frequency error",
+                       difference_hz / 1.0e3, " kHz");
+    print_double_value("Measured coherence err",
+                       measured_coherence_error, " cycles");
+    xil_printf("Frequency validation  : %s\r\n",
+               (fabs(difference_hz) <= CAL_FREQUENCY_TOLERANCE_HZ) ?
+               "PASS" : "WARNING");
+    if (measured_coherence_error > CAL_COHERENCE_TOLERANCE) {
+        xil_printf("WARNING: The measured tone is not coherent with the "
+                   "%lu-sample ADC window.\r\n",
+                   (unsigned long)sample_count);
+    }
+}
+
+static int adc_analyze_fractional_overlap(
+    const int16_t *reference,
+    const int16_t *measurement,
+    size_t sample_count,
+    double total_lag,
+    int16_t *reference_work,
+    int16_t *measurement_work,
+    calibration_state_t *state,
+    adc_cal_overlap_t *overlap
+)
+{
+    size_t valid_count = 0U;
+
+    if ((reference == NULL) || (measurement == NULL) ||
+        (reference_work == NULL) || (measurement_work == NULL) ||
+        !isfinite(total_lag)) {
+        return -1;
+    }
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double source_position = (double)i + total_lag;
+        size_t lower;
+        double fraction;
+        double interpolated;
+        long rounded;
+
+        if ((source_position < 0.0) ||
+            (source_position >= (double)(sample_count - 1U))) {
+            continue;
+        }
+
+        lower = (size_t)floor(source_position);
+        fraction = source_position - (double)lower;
+        interpolated =
+            (1.0 - fraction) * (double)measurement[lower] +
+            fraction * (double)measurement[lower + 1U];
+
+        if (!isfinite(interpolated)) {
+            return -2;
+        }
+        rounded = lround(interpolated);
+        if (rounded > INT16_MAX) rounded = INT16_MAX;
+        if (rounded < INT16_MIN) rounded = INT16_MIN;
+
+        reference_work[valid_count] = reference[i];
+        measurement_work[valid_count] = (int16_t)rounded;
+        ++valid_count;
+    }
+
+    if (valid_count < CAL_MIN_ANALYSIS_SAMPLES) {
+        return -3;
+    }
+
+    return adc_analyze_guarded_overlap(
+        reference_work,
+        measurement_work,
+        valid_count,
+        0,
+        state,
+        overlap
+    );
+}
+
+static const char *cal_timing_reject_reason_text(
+    calibration_timing_reject_reason_t reason
+)
+{
+    switch (reason) {
+    case CAL_TIMING_REJECT_DMA:
+        return "DMA capture failed";
+    case CAL_TIMING_REJECT_RECONSTRUCTION:
+        return "sample reconstruction failed";
+    case CAL_TIMING_REJECT_INTEGER_ALIGNMENT:
+        return "integer alignment failed";
+    case CAL_TIMING_REJECT_FRACTIONAL_ALIGNMENT:
+        return "fractional alignment failed";
+    case CAL_TIMING_REJECT_INVALID_OVERLAP:
+        return "invalid overlap";
+    case CAL_TIMING_REJECT_LOW_CORRELATION:
+        return "correlation below 0.970000";
+    case CAL_TIMING_REJECT_TOO_FEW_SAMPLES:
+        return "insufficient guarded overlap";
+    case CAL_TIMING_REJECT_INVALID_METRIC:
+        return "invalid timing metric";
+    case CAL_TIMING_REJECT_NONE:
+    default:
+        return "none";
+    }
+}
+
+static int adc_measure_timing_frame(
+    const int16_t *reference,
+    const int16_t *measurement,
+    size_t sample_count,
+    int16_t *fractional_reference_work,
+    int16_t *fractional_measurement_work,
+    calibration_timing_frame_result_t *result
+)
+{
+    timing_alignment_result_t integer_alignment;
+    calibration_state_t fractional_state;
+    adc_cal_overlap_t fractional_overlap;
+    int status;
+
+    if (result == NULL) {
+        return -1;
+    }
+    memset(result, 0, sizeof(*result));
+    result->capture_success = 1U;
+
+    status = timing_find_circular_lag(
+        reference, measurement, sample_count, &integer_alignment
+    );
+    if (status != 0) {
+        result->reject_reason = CAL_TIMING_REJECT_INTEGER_ALIGNMENT;
+        return status;
+    }
+    result->integer_lag = integer_alignment.lag_samples;
+
+    status = timing_estimate_fractional_lag(
+        reference, measurement, sample_count,
+        result->integer_lag, &result->fractional_lag
+    );
+    if (status != 0) {
+        result->reject_reason = CAL_TIMING_REJECT_FRACTIONAL_ALIGNMENT;
+        return status;
+    }
+
+    result->total_lag =
+        (float)result->integer_lag + result->fractional_lag;
+    if (!isfinite(result->fractional_lag) ||
+        !isfinite(result->total_lag)) {
+        result->reject_reason = CAL_TIMING_REJECT_INVALID_METRIC;
+        return -2;
+    }
+
+    status = adc_analyze_fractional_overlap(
+        reference, measurement, sample_count, (double)result->total_lag,
+        fractional_reference_work, fractional_measurement_work,
+        &fractional_state, &fractional_overlap
+    );
+    if (status != 0) {
+        result->reject_reason =
+            (status == -3) ? CAL_TIMING_REJECT_TOO_FEW_SAMPLES :
+                             CAL_TIMING_REJECT_INVALID_OVERLAP;
+        return status;
+    }
+
+    result->alignment_success = 1U;
+    result->valid_overlap_samples =
+        (uint32_t)fractional_overlap.overlap_count;
+    result->analysis_samples =
+        (uint32_t)fractional_overlap.analysis_count;
+    result->correlation = fractional_state.metrics.correlation;
+    result->raw_rmse = fractional_state.metrics.rmse_codes;
+
+    if (!isfinite(result->correlation) || !isfinite(result->raw_rmse)) {
+        result->reject_reason = CAL_TIMING_REJECT_INVALID_METRIC;
+    } else if (result->analysis_samples < CAL_TIMING_MIN_ANALYSIS_SAMPLES) {
+        result->reject_reason = CAL_TIMING_REJECT_TOO_FEW_SAMPLES;
+    } else if (fabsf(result->fractional_lag) >
+               CAL_TIMING_MAX_ABS_FRAC_LAG) {
+        result->reject_reason = CAL_TIMING_REJECT_FRACTIONAL_ALIGNMENT;
+    } else if (result->correlation < CAL_TIMING_MIN_CORRELATION) {
+        result->reject_reason = CAL_TIMING_REJECT_LOW_CORRELATION;
+    } else {
+        result->accepted = 1U;
+        result->reject_reason = CAL_TIMING_REJECT_NONE;
+    }
+
+    return 0;
+}
+
+static float median_float(float *values, size_t count)
+{
+    if ((values == NULL) || (count == 0U)) {
+        return 0.0f;
+    }
+
+    for (size_t i = 1U; i < count; ++i) {
+        const float value = values[i];
+        size_t j = i;
+        while ((j > 0U) && (values[j - 1U] > value)) {
+            values[j] = values[j - 1U];
+            --j;
+        }
+        values[j] = value;
+    }
+
+    if ((count & 1U) != 0U) {
+        return values[count / 2U];
+    }
+    return 0.5f * (values[(count / 2U) - 1U] + values[count / 2U]);
+}
+
+static int print_alignment_measurements(
+    const int16_t *reference,
+    const int16_t *measurement,
+    size_t sample_count,
+    int32_t integer_lag,
+    int16_t *fractional_reference_work,
+    int16_t *fractional_measurement_work,
+    calibration_metrics_t *fractional_metrics_out,
+    float *total_lag_out
+)
+{
+    calibration_state_t integer_state;
+    calibration_state_t fractional_state;
+    adc_cal_overlap_t integer_overlap;
+    adc_cal_overlap_t fractional_overlap;
+    float fractional_lag = 0.0f;
+    double total_lag;
+    int status;
+
+    status = adc_analyze_guarded_overlap(
+        reference, measurement, sample_count, integer_lag,
+        &integer_state, &integer_overlap
+    );
+    if (status != 0) {
+        return status;
+    }
+
+    status = timing_estimate_fractional_lag(
+        reference, measurement, sample_count, integer_lag, &fractional_lag
+    );
+    if (status != 0) {
+        xil_printf("Fractional lag refinement warning: %d; using 0.\r\n",
+                   status);
+        fractional_lag = 0.0f;
+    }
+
+    total_lag = (double)integer_lag + (double)fractional_lag;
+    if (!isfinite(total_lag)) {
+        return -30;
+    }
+
+    status = adc_analyze_fractional_overlap(
+        reference, measurement, sample_count, total_lag,
+        fractional_reference_work, fractional_measurement_work,
+        &fractional_state, &fractional_overlap
+    );
+    if (status != 0) {
+        return -40 + status;
+    }
+
+    xil_printf("Integer lag samples    : %ld\r\n", (long)integer_lag);
+    print_float_value("Fractional lag samples", fractional_lag, "");
+    print_float_value("Total estimated lag", (float)total_lag, " samples");
+
+    xil_printf("-- Integer-aligned overlap --\r\n");
+    print_overlap_measurements(&integer_state, &integer_overlap);
+    xil_printf("-- Fractional-aligned overlap --\r\n");
+    print_overlap_measurements(&fractional_state, &fractional_overlap);
+
+    if (fractional_metrics_out != NULL) {
+        *fractional_metrics_out = fractional_state.metrics;
+    }
+    if (total_lag_out != NULL) {
+        *total_lag_out = (float)total_lag;
+    }
+
+    return 0;
 }
 
 static int next_tok(char **ctx, char *out, size_t len) {
@@ -333,11 +912,31 @@ void handle_adc_cmd(char* line)
     {
         handle_adc_offset_cmd();
     } else if (strcmp(option, "-cal") == 0) {
-        handle_adc_calibration_cmd();
+        uint32_t frame_count = ADC_CAL_DEFAULT_FRAMES;
+        token = strtok(NULL, " ");
+        if (token != NULL)
+        {
+            char *endptr = NULL;
+            unsigned long parsed = strtoul(token, &endptr, 0);
+            if ((endptr == token) || (*endptr != '\0') ||
+                (parsed < ADC_CAL_MIN_FRAMES) ||
+                (parsed > ADC_CAL_MAX_FRAMES))
+            {
+                ERR("Invalid calibration frame count. Use %u to %u.",
+                    ADC_CAL_MIN_FRAMES, ADC_CAL_MAX_FRAMES);
+                return;
+            }
+            frame_count = (uint32_t)parsed;
+        }
+        if (strtok(NULL, " ") != NULL) {
+            ERR("Too many arguments for adc -cal.");
+            return;
+        }
+        handle_adc_calibration_cmd(frame_count);
     } else if (strcmp(option, "-ref") == 0) {
         handle_adc_reference_status_cmd();
     }else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal, or -ref)", option);
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames], or -ref)", option);
     }
 }
 
@@ -709,6 +1308,8 @@ void adc_timing_capture(uint32_t frame_count)
     static int16_t timing_reference[ADC_VALID_SAMPLE_COUNT];
     static int16_t reconstructed_samples[ADC_VALID_SAMPLE_COUNT];
     static int16_t aligned_samples[ADC_VALID_SAMPLE_COUNT];
+    static int16_t fractional_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t fractional_measurement[ADC_VALID_SAMPLE_COUNT];
 
     uint32_t successful_captures = 0U;
     size_t reference_count = 0U;
@@ -716,6 +1317,7 @@ void adc_timing_capture(uint32_t frame_count)
     timing_analysis_result_t result;
     int reconstruction_status;
     int timing_status;
+    int overlap_status;
 
     if ((frame_count == 0U) || (frame_count > ADC_TIMING_MAX_FRAMES))
     {
@@ -741,6 +1343,7 @@ void adc_timing_capture(uint32_t frame_count)
                ADC_VALID_SAMPLE_COUNT);
     xil_printf("Analysis         : circular lag + fitted RMSE\r\n");
     xil_printf("===================================\r\n");
+    print_adc_test_configuration(ADC_VALID_SAMPLE_COUNT);
 
     /*
      * Frame 1 becomes the fixed reference, exactly as in receive_data.py.
@@ -770,7 +1373,17 @@ void adc_timing_capture(uint32_t frame_count)
         return;
     }
 
+    if (reference_count != ADC_TEST_CAPTURE_SAMPLES)
+    {
+        xil_printf("Timing reference rejected: expected %u samples, got %lu.\r\n",
+                   (unsigned int)ADC_TEST_CAPTURE_SAMPLES,
+                   (unsigned long)reference_count);
+        adc_sweep_active = 0;
+        return;
+    }
+
     successful_captures = 1U;
+    print_frequency_validation(timing_reference, reference_count);
 
     /*
      * Analyze frame 1 against itself so the output matches the Python
@@ -812,6 +1425,20 @@ void adc_timing_capture(uint32_t frame_count)
                (int)result.signal_min);
     xil_printf("Raw maximum            : %d codes\r\n",
                (int)result.signal_max);
+    overlap_status = print_alignment_measurements(
+        timing_reference,
+        timing_reference,
+        reference_count,
+        result.lag_samples,
+        fractional_reference,
+        fractional_measurement,
+        NULL,
+        NULL
+    );
+    if (overlap_status != 0) {
+        xil_printf("Guarded overlap analysis failed: %d\r\n",
+                   overlap_status);
+    }
     xil_printf("Timing status          : PASS\r\n");
 
     for (uint32_t frame = 2U; frame <= frame_count; frame++)
@@ -896,6 +1523,21 @@ void adc_timing_capture(uint32_t frame_count)
                    (int)result.signal_min);
         xil_printf("Raw maximum            : %d codes\r\n",
                    (int)result.signal_max);
+
+        overlap_status = print_alignment_measurements(
+            timing_reference,
+            reconstructed_samples,
+            reconstructed_count,
+            result.lag_samples,
+            fractional_reference,
+            fractional_measurement,
+            NULL,
+            NULL
+        );
+        if (overlap_status != 0) {
+            xil_printf("Guarded overlap analysis failed: %d\r\n",
+                       overlap_status);
+        }
 
         if (result.correlation < ADC_TIMING_MIN_CORRELATION)
         {
@@ -1114,23 +1756,33 @@ void handle_adc_reference_status_cmd(void)
     );
 }
 
-void handle_adc_calibration_cmd(void)
+void handle_adc_calibration_cmd(uint32_t frame_count)
 {
     static int16_t captured_reference[ADC_VALID_SAMPLE_COUNT];
     static int16_t reconstructed_samples[ADC_VALID_SAMPLE_COUNT];
-    static int16_t aligned_samples[ADC_VALID_SAMPLE_COUNT];
+    static int16_t fractional_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t fractional_measurement[ADC_VALID_SAMPLE_COUNT];
+    static float accepted_correlations[ADC_CAL_MAX_FRAMES - 1U];
+    static float accepted_rmse[ADC_CAL_MAX_FRAMES - 1U];
 
     size_t reference_count = 0U;
     size_t reconstructed_count = 0U;
-
-    calibration_config_t config;
-    calibration_state_t state;
-    calibration_status_t calibration_status;
-
-    timing_analysis_result_t timing_result;
+    uint32_t successful_captures = 0U;
+    uint32_t accepted_frames = 0U;
+    double sum_correlation = 0.0;
+    int32_t min_integer_lag = 0;
+    int32_t max_integer_lag = 0;
+    float min_fractional_lag = 0.0f;
+    float max_fractional_lag = 0.0f;
 
     int reconstruction_status;
-    int timing_status;
+
+    if ((frame_count < ADC_CAL_MIN_FRAMES) ||
+        (frame_count > ADC_CAL_MAX_FRAMES)) {
+        ERR("Calibration frame count must be between %u and %u.",
+            ADC_CAL_MIN_FRAMES, ADC_CAL_MAX_FRAMES);
+        return;
+    }
 
     if (adc_sweep_active)
     {
@@ -1142,34 +1794,19 @@ void handle_adc_calibration_cmd(void)
 
     xil_printf("\r\n");
     xil_printf("===================================\r\n");
-    xil_printf("ADC Measurement-Only Calibration\r\n");
+    xil_printf("ADC Timing-Only Calibration Validation\r\n");
     xil_printf("Reference : first ADC capture\r\n");
-    xil_printf("Signal    : second ADC capture\r\n");
+    xil_printf("Measurements: frames 2 through %u\r\n",
+               (unsigned int)frame_count);
     xil_printf("===================================\r\n");
+    print_adc_test_configuration(ADC_VALID_SAMPLE_COUNT);
 
     /*
-     * 1. Initialize calibration state.
-     *
-     * This does not modify any coefficient by itself.
-     */
-    calibration_default_config(&config);
-
-    calibration_status = calibration_init(&state, &config);
-
-    if (calibration_status != CALIBRATION_OK)
-    {
-        xil_printf(
-            "Calibration initialization failed: %d\r\n",
-            (int)calibration_status
-        );
-        goto calibration_done;
-    }
-
-    /*
-     * 2. Capture and reconstruct frame 1 as the fixed reference, matching the
+     * 1. Capture and reconstruct frame 1 as the fixed reference, matching the
      * tested adc -timing acquisition method.
      */
-    xil_printf("\r\nCapturing reference frame (1/2).\r\n");
+    xil_printf("\r\nCapturing reference frame (1/%u).\r\n",
+               (unsigned int)frame_count);
     if (adc_capture_frame() != XST_SUCCESS)
     {
         xil_printf("Calibration reference capture failed.\r\n");
@@ -1197,164 +1834,173 @@ void handle_adc_calibration_cmd(void)
         "Reference samples reconstructed: %lu\r\n",
         (unsigned long)reference_count
     );
-
-    /*
-     * 3. Capture and reconstruct frame 2 as the signal to align/analyze.
-     */
-    xil_printf("\r\nCapturing measurement frame (2/2).\r\n");
-    if (adc_capture_frame() != XST_SUCCESS)
-    {
-        xil_printf("Calibration measurement capture failed.\r\n");
-        goto calibration_done;
-    }
-
-    reconstruction_status = adc_reconstruct_frame(
-        RxBufferPtr,
-        DMA_CMD_BUF_SIZE,
-        reconstructed_samples,
-        ADC_VALID_SAMPLE_COUNT,
-        &reconstructed_count
-    );
-
-    if (reconstruction_status != 0)
+    if (reference_count != ADC_TEST_CAPTURE_SAMPLES)
     {
         xil_printf(
-            "Calibration measurement reconstruction failed: %d\r\n",
-            reconstruction_status
-        );
-        goto calibration_done;
-    }
-
-    if (reconstructed_count != reference_count)
-    {
-        xil_printf(
-            "Calibration sample count mismatch: %lu versus %lu.\r\n",
-            (unsigned long)reconstructed_count,
+            "Calibration reference rejected: expected %u samples, got %lu.\r\n",
+            (unsigned int)ADC_TEST_CAPTURE_SAMPLES,
             (unsigned long)reference_count
         );
         goto calibration_done;
     }
 
-    xil_printf(
-        "Measurement samples reconstructed: %lu\r\n",
-        (unsigned long)reconstructed_count
-    );
-
-    /*
-     * 4. Use the exact circular alignment and fitted timing analysis already
-     * exercised by adc -timing.
-     */
-    timing_status = timing_analyze_frame(
-        captured_reference,
-        reconstructed_samples,
-        reconstructed_count,
-        aligned_samples,
-        &timing_result
-    );
-
-    if (timing_status != 0)
+    for (uint32_t frame = 2U; frame <= frame_count; ++frame)
     {
-        xil_printf(
-            "Calibration timing analysis failed: %d\r\n",
-            timing_status
+        calibration_timing_frame_result_t result;
+        int measurement_status;
+
+        memset(&result, 0, sizeof(result));
+
+        xil_printf("\r\n[TIMING_FRAME %lu/%lu]\r\n",
+                   (unsigned long)frame,
+                   (unsigned long)frame_count);
+
+        if (adc_capture_frame() != XST_SUCCESS) {
+            result.reject_reason = CAL_TIMING_REJECT_DMA;
+            goto print_frame_result;
+        }
+        result.capture_success = 1U;
+        ++successful_captures;
+
+        reconstruction_status = adc_reconstruct_frame(
+            RxBufferPtr, DMA_CMD_BUF_SIZE, reconstructed_samples,
+            ADC_VALID_SAMPLE_COUNT, &reconstructed_count
         );
-        goto calibration_done;
+        if ((reconstruction_status != 0) ||
+            (reconstructed_count != reference_count)) {
+            result.reject_reason = CAL_TIMING_REJECT_RECONSTRUCTION;
+            goto print_frame_result;
+        }
+
+        measurement_status = adc_measure_timing_frame(
+            captured_reference,
+            reconstructed_samples,
+            reconstructed_count,
+            fractional_reference,
+            fractional_measurement,
+            &result
+        );
+        (void)measurement_status;
+
+        if (result.accepted)
+        {
+            const uint32_t index = accepted_frames;
+            accepted_correlations[index] = result.correlation;
+            accepted_rmse[index] = result.raw_rmse;
+            sum_correlation += (double)result.correlation;
+
+            if (accepted_frames == 0U) {
+                min_integer_lag = result.integer_lag;
+                max_integer_lag = result.integer_lag;
+                min_fractional_lag = result.fractional_lag;
+                max_fractional_lag = result.fractional_lag;
+            } else {
+                if (result.integer_lag < min_integer_lag)
+                    min_integer_lag = result.integer_lag;
+                if (result.integer_lag > max_integer_lag)
+                    max_integer_lag = result.integer_lag;
+                if (result.fractional_lag < min_fractional_lag)
+                    min_fractional_lag = result.fractional_lag;
+                if (result.fractional_lag > max_fractional_lag)
+                    max_fractional_lag = result.fractional_lag;
+            }
+            ++accepted_frames;
+        }
+
+print_frame_result:
+        xil_printf("Integer lag          : %ld samples\r\n",
+                   (long)result.integer_lag);
+        print_float_value("Fractional lag", result.fractional_lag, " samples");
+        print_float_value("Total estimated lag", result.total_lag, " samples");
+        xil_printf("Valid overlap        : %lu samples\r\n",
+                   (unsigned long)result.valid_overlap_samples);
+        xil_printf("Analysis samples     : %lu\r\n",
+                   (unsigned long)result.analysis_samples);
+        print_float_value("Correlation", result.correlation, "");
+        print_float_value("Raw aligned RMSE", result.raw_rmse, " codes");
+        xil_printf("Timing result        : %s\r\n",
+                   result.accepted ? "PASS" : "REJECT");
+        if (!result.accepted) {
+            xil_printf("Reject reason        : %s\r\n",
+                       cal_timing_reject_reason_text(result.reject_reason));
+        }
+
+        if (frame < frame_count) {
+            usleep(ADC_TIMING_INTERFRAME_DELAY_US);
+        }
     }
 
-    /*
-     * 5. Analyze only.
-     *
-     * Do not call calibration_process_frame(), because that function calls
-     * calibration_update() and changes the correction coefficients.
-     */
-    calibration_status = calibration_analyze_frame(
-        &state,
-        aligned_samples,
-        captured_reference,
-        reconstructed_count
-    );
-
-    if (calibration_status != CALIBRATION_OK)
     {
-        xil_printf(
-            "Calibration analysis failed: %d\r\n",
-            (int)calibration_status
-        );
-        goto calibration_done;
+        const uint32_t measurement_frames = frame_count - 1U;
+        const uint32_t rejected_frames = measurement_frames - accepted_frames;
+        const float acceptance_rate =
+            (float)accepted_frames / (float)measurement_frames;
+        const uint32_t required_accepted =
+            (measurement_frames < CAL_TIMING_MIN_ACCEPTED_FRAMES) ?
+            measurement_frames : CAL_TIMING_MIN_ACCEPTED_FRAMES;
+        const int overall_pass =
+            (accepted_frames >= required_accepted) &&
+            (acceptance_rate >= CAL_TIMING_MIN_ACCEPTANCE_RATE);
+
+        xil_printf("\r\n========== Timing Alignment Summary ==========\r\n");
+        xil_printf("Requested frames       : %lu\r\n",
+                   (unsigned long)frame_count);
+        xil_printf("Reference frames        : 1\r\n");
+        xil_printf("Measurement frames      : %lu\r\n",
+                   (unsigned long)measurement_frames);
+        xil_printf("Successful captures     : %lu\r\n",
+                   (unsigned long)successful_captures);
+        xil_printf("Accepted frames         : %lu\r\n",
+                   (unsigned long)accepted_frames);
+        xil_printf("Rejected frames         : %lu\r\n",
+                   (unsigned long)rejected_frames);
+        print_float_value("Acceptance rate", acceptance_rate * 100.0f, " %");
+        print_float_value("Correlation threshold",
+                          CAL_TIMING_MIN_CORRELATION, "");
+        xil_printf("Minimum analysis samples: %u\r\n",
+                   (unsigned int)CAL_TIMING_MIN_ANALYSIS_SAMPLES);
+
+        if (accepted_frames > 0U)
+        {
+            float min_corr = accepted_correlations[0];
+            float min_rmse = accepted_rmse[0];
+            float max_rmse = accepted_rmse[0];
+            for (uint32_t i = 1U; i < accepted_frames; ++i) {
+                if (accepted_correlations[i] < min_corr)
+                    min_corr = accepted_correlations[i];
+                if (accepted_rmse[i] < min_rmse)
+                    min_rmse = accepted_rmse[i];
+                if (accepted_rmse[i] > max_rmse)
+                    max_rmse = accepted_rmse[i];
+            }
+            print_double_value("Mean correlation",
+                               sum_correlation / (double)accepted_frames, "");
+            print_float_value("Median correlation",
+                              median_float(accepted_correlations,
+                                           accepted_frames), "");
+            print_float_value("Minimum accepted corr", min_corr, "");
+            print_float_value("Median raw RMSE",
+                              median_float(accepted_rmse, accepted_frames),
+                              " codes");
+            print_float_value("Minimum raw RMSE", min_rmse, " codes");
+            print_float_value("Maximum raw RMSE", max_rmse, " codes");
+            xil_printf("Integer lag range      : %ld to %ld samples\r\n",
+                       (long)min_integer_lag, (long)max_integer_lag);
+            print_float_value("Minimum fractional lag",
+                              min_fractional_lag, " samples");
+            print_float_value("Maximum fractional lag",
+                              max_fractional_lag, " samples");
+        }
+        else
+        {
+            xil_printf("No accepted frames available for statistics.\r\n");
+        }
+        xil_printf("Timing status          : %s\r\n",
+                   overall_pass ? "PASS" : "FAIL");
+        xil_printf("==============================================\r\n");
     }
-
-    /*
-     * 6. Print measurement results.
-     */
-    xil_printf("\r\n========== Calibration Result ==========\r\n");
-    xil_printf(
-        "Lag samples            : %ld\r\n",
-        (long)timing_result.lag_samples
-    );
-
-    print_float_value(
-        "Alignment correlation",
-        timing_result.correlation,
-        ""
-    );
-
-    print_float_value(
-        "Aligned fitted RMSE",
-        timing_result.aligned_rmse_codes,
-        " codes"
-    );
-
-    print_float_value(
-        "ADC mean",
-        state.metrics.adc_mean,
-        " codes"
-    );
-
-    print_float_value(
-        "Reference mean",
-        state.metrics.reference_mean,
-        " codes"
-    );
-
-    print_float_value(
-        "Measured gain",
-        state.metrics.measured_gain,
-        ""
-    );
-
-    print_float_value(
-        "Measured offset",
-        state.metrics.measured_offset,
-        " codes"
-    );
-
-    print_float_value(
-        "Gain error",
-        state.metrics.gain_error_ratio,
-        ""
-    );
-
-    print_float_value(
-        "Offset error",
-        state.metrics.offset_error_codes,
-        " codes"
-    );
-
-    print_float_value(
-        "RMSE",
-        state.metrics.rmse_codes,
-        " codes"
-    );
-
-    print_float_value(
-        "Analysis correlation",
-        state.metrics.correlation,
-        ""
-    );
-
-    xil_printf("=========================================\r\n");
-    xil_printf("No correction coefficients were updated.\r\n");
 
 calibration_done:
+    xil_printf("No correction coefficients were updated.\r\n");
     adc_sweep_active = 0;
 }

@@ -111,6 +111,70 @@ int timing_find_circular_lag(
     return 0;
 }
 
+int timing_estimate_fractional_lag(
+    const int16_t *reference,
+    const int16_t *signal,
+    size_t sample_count,
+    int32_t integer_lag,
+    float *fractional_lag
+)
+{
+    double reference_mean = 0.0;
+    double signal_mean = 0.0;
+    double scores[3] = {0.0, 0.0, 0.0};
+    double denominator;
+    double fraction;
+
+    if ((reference == NULL) || (signal == NULL) ||
+        (fractional_lag == NULL)) {
+        return -1;
+    }
+    if (sample_count < TIMING_MIN_SAMPLES) {
+        return -2;
+    }
+    if ((integer_lag < -(int32_t)(sample_count / 2U)) ||
+        (integer_lag > (int32_t)(sample_count / 2U))) {
+        return -3;
+    }
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        reference_mean += (double)reference[i];
+        signal_mean += (double)signal[i];
+    }
+    reference_mean /= (double)sample_count;
+    signal_mean /= (double)sample_count;
+
+    for (int neighbor = -1; neighbor <= 1; ++neighbor) {
+        const int32_t lag = integer_lag + neighbor;
+        double score = 0.0;
+
+        for (size_t i = 0U; i < sample_count; ++i) {
+            const size_t signal_index = wrap_index(
+                (int64_t)i + (int64_t)lag,
+                sample_count
+            );
+            score += ((double)reference[i] - reference_mean) *
+                     ((double)signal[signal_index] - signal_mean);
+        }
+        scores[neighbor + 1] = score;
+    }
+
+    denominator = scores[0] - (2.0 * scores[1]) + scores[2];
+    if (!isfinite(denominator) || fabs(denominator) <= TIMING_EPSILON) {
+        *fractional_lag = 0.0f;
+        return -4;
+    }
+
+    fraction = 0.5 * (scores[0] - scores[2]) / denominator;
+    if (!isfinite(fraction) || (fraction < -0.5) || (fraction > 0.5)) {
+        *fractional_lag = 0.0f;
+        return -5;
+    }
+
+    *fractional_lag = (float)fraction;
+    return 0;
+}
+
 int timing_apply_circular_lag(
     const int16_t *signal,
     size_t sample_count,

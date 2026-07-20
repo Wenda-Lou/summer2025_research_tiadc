@@ -56,9 +56,8 @@
  *                                            (reserved for future use)
  *              back                          Return to UART command prompt
  *
- *          -cal                             Measure two captured ADC frames;
- *                                           frame 1 is the reference and
- *                                           aligned frame 2 is analyzed
+ *          -cal [frames]                    Timing-only validation (default 10);
+ *                                           frame 1 is the fixed reference
  *
  *          -ref                             Display uploaded reference status
  *                                           and buffer information
@@ -90,7 +89,7 @@ void handle_dma_dbg_cmd(char *line);
 void handle_mem_cmd (char *line);
 void handle_adc_gain_cmd(void);
 void handle_adc_offset_cmd(void);
-void handle_adc_calibration_cmd(void);
+void handle_adc_calibration_cmd(uint32_t frame_count);
 void handle_adc_reference_status_cmd(void);
 
 /* Reusable ADC acquisition helpers. */
