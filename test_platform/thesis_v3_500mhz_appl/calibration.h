@@ -34,6 +34,23 @@ typedef enum {
     CALIBRATION_STAGE_FAILED
 } calibration_stage_t;
 
+#define CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS     20U
+#define CALIBRATION_OFFSET_MAX_REJECTED_FRAMES         10U
+#define CALIBRATION_OFFSET_TOLERANCE_CODES             1.0f
+#define CALIBRATION_OFFSET_REQUIRED_CONVERGED_FRAMES   3U
+#define CALIBRATION_OFFSET_UPDATE_STEP                 0.5f
+#define CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES    4096.0f
+#define CALIBRATION_ADC_MIN_CODE                       (-8192)
+#define CALIBRATION_ADC_MAX_CODE                       8191
+
+typedef enum {
+    CALIBRATION_OFFSET_LOOP_IDLE = 0,
+    CALIBRATION_OFFSET_LOOP_RUNNING,
+    CALIBRATION_OFFSET_LOOP_PASS,
+    CALIBRATION_OFFSET_LOOP_NOT_CONVERGED,
+    CALIBRATION_OFFSET_LOOP_FAILED
+} calibration_offset_loop_status_t;
+
 typedef struct {
     /* Maximum iterations allowed for each stage. */
     uint32_t max_offset_iterations;
@@ -113,6 +130,26 @@ typedef struct {
     uint8_t gain_converged;
 } calibration_state_t;
 
+typedef struct {
+    float offset_correction;
+    float gain_correction;
+
+    uint32_t accepted_frame_count;
+    uint32_t rejected_frame_count;
+    uint32_t convergence_count;
+
+    calibration_offset_loop_status_t final_status;
+
+    float latest_correlation;
+    float latest_fitted_offset;
+    float latest_fitted_gain;
+    float latest_rmse;
+    float latest_raw_mean;
+    float latest_corrected_mean;
+
+    int8_t calibration_channel;
+} calibration_offset_loop_state_t;
+
 /* Populate a conservative default configuration. */
 void calibration_default_config(calibration_config_t *config);
 
@@ -164,6 +201,13 @@ int calibration_is_complete(const calibration_state_t *state);
 
 /* Human-readable stage name for UART/debug output. */
 const char *calibration_stage_name(calibration_stage_t stage);
+
+/* Persistent software offset-loop state. */
+void calibration_offset_loop_reset(void);
+calibration_offset_loop_state_t *calibration_offset_loop_state(void);
+const char *calibration_offset_loop_status_name(
+    calibration_offset_loop_status_t status
+);
 
 #ifdef __cplusplus
 }

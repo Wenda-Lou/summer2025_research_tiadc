@@ -7,6 +7,8 @@
 #define CALIBRATION_MIN_SAMPLES 2U
 #define CALIBRATION_EPSILON     1.0e-20
 
+static calibration_offset_loop_state_t g_offset_loop_state;
+
 static float clamp_float(float value, float minimum, float maximum)
 {
     if (value < minimum) {
@@ -380,5 +382,42 @@ const char *calibration_stage_name(calibration_stage_t stage)
         return "failed";
     default:
         return "unknown";
+    }
+}
+
+void calibration_offset_loop_reset(void)
+{
+    memset(&g_offset_loop_state, 0, sizeof(g_offset_loop_state));
+    g_offset_loop_state.gain_correction = 1.0f;
+    g_offset_loop_state.calibration_channel = -1;
+    g_offset_loop_state.final_status = CALIBRATION_OFFSET_LOOP_IDLE;
+}
+
+calibration_offset_loop_state_t *calibration_offset_loop_state(void)
+{
+    if (g_offset_loop_state.gain_correction == 0.0f) {
+        calibration_offset_loop_reset();
+    }
+
+    return &g_offset_loop_state;
+}
+
+const char *calibration_offset_loop_status_name(
+    calibration_offset_loop_status_t status
+)
+{
+    switch (status) {
+    case CALIBRATION_OFFSET_LOOP_IDLE:
+        return "IDLE";
+    case CALIBRATION_OFFSET_LOOP_RUNNING:
+        return "RUNNING";
+    case CALIBRATION_OFFSET_LOOP_PASS:
+        return "PASS";
+    case CALIBRATION_OFFSET_LOOP_NOT_CONVERGED:
+        return "NOT CONVERGED";
+    case CALIBRATION_OFFSET_LOOP_FAILED:
+        return "FAILED";
+    default:
+        return "UNKNOWN";
     }
 }

@@ -60,6 +60,9 @@ typedef enum {
 #define AD9695_INPUT_FULL_SCALE_CTRL   0x1910
 #define AD9695_INPUT_FS_MASK           0x0F
 
+void ad9695_set_input_full_scale(const char *fs);
+void ad9695_print_input_full_scale_status(void);
+
 /** Enumerates ADC Input Buffer Currents */
 typedef enum {
 	AD9695_ADC_BUFF_CURR_400_UA = 0x4,   /**< Buffer Current set to 400 uA*/

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <limits.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -170,6 +171,8 @@ static void calibration_run_adc_reference_diagnostic(void);
 static void calibration_run_known_tone_diagnostic(double known_frequency_mhz);
 static void calibration_run_raw_mapping_diagnostic(
     const int16_t *even_reference, const int16_t *odd_reference);
+static void handle_adc_offset_calibration_loop_cmd(void);
+static void handle_adc_offset_calibration_status_cmd(void);
 void adc_timing_capture(uint32_t frame_count);
 
 static void print_float_value(const char *label, float value, const char *unit)
@@ -1279,6 +1282,7 @@ static int print_alignment_measurements(
 
 static int next_tok(char **ctx, char *out, size_t len) {
     char *t = strtok(NULL, " ");
+    (void)ctx;
     if (!t) return 0;
     strncpy(out, t, len - 1);
     out[len - 1] = '\0';
@@ -1287,6 +1291,7 @@ static int next_tok(char **ctx, char *out, size_t len) {
 
 static void parse_cmd_args(char *line, char *option, size_t opt_len, char *addr_str, size_t addr_len, char *data_str, size_t data_len, const char *cmd_name) {
     char *ctx = line;
+    (void)cmd_name;
     strtok(ctx, " "); // skip command name
     if (!next_tok(&ctx, option, opt_len)) { ERR("Missing option (-r / -w)"); return; }
     if (!next_tok(&ctx, addr_str, addr_len)) { ERR("Missing address"); return; }
@@ -1446,7 +1451,7 @@ void handle_dma_dbg_cmd(char* line) {
 
     parse_cmd_args(line, option, sizeof(option), addr_str, sizeof(addr_str), data_str, sizeof(data_str), "dbg");
     offset = (uint32_t)strtoul(addr_str, NULL, 0);
-    uint32_t addr = RxBufferPtr + offset;
+    UINTPTR addr = (UINTPTR)(RxBufferPtr + offset);
 
     if (strcmp(option, "-r") == 0) {
         reg_val = Xil_In32(addr);
@@ -1460,6 +1465,8 @@ void handle_dma_dbg_cmd(char* line) {
 
 void handle_udp_cmd(char *line)
 {
+    (void)line;
+
     if (adc_sweep_active)
     {
         ERR("UDP transmission is disabled while an ADC sweep is in progress.");
@@ -1488,6 +1495,7 @@ void handle_adc_cmd(char* line)
     if(strcmp(option, "-c") == 0){
         int timeout = 10;
         uint8_t pll_stat;
+        struct jesdphy_pll_status phy_pll_status;
 
         do {
             usleep(10000);
@@ -1495,7 +1503,8 @@ void handle_adc_cmd(char* line)
         } while (!(pll_stat & AD9695_JESD_PLL_LOCK_STAT) && timeout--);
 
         xil_printf("ad9695 PLL %s\r\n", (pll_stat & AD9695_JESD_PLL_LOCK_STAT) ? "LOCKED" : "UNLOCKED");
-        jesdphy_check_pll_status(&pll_stat);
+        jesdphy_get_pll_status(&phy_pll_status);
+        jesdphy_check_pll_status(&phy_pll_status);
     } else if (strcmp(token, "?") == 0 || strcmp(token, "status") == 0){
         uint8_t r701, r73b;
 
@@ -1545,6 +1554,37 @@ void handle_adc_cmd(char* line)
     } else if (strcmp(option, "-cal") == 0) {
         uint32_t frame_count = ADC_CAL_DEFAULT_FRAMES;
         token = strtok(NULL, " ");
+        if (token == NULL) {
+            handle_adc_calibration_cmd(frame_count);
+            return;
+        }
+        if (strcmp(token, "offset") == 0) {
+            if (strtok(NULL, " ") != NULL) {
+                ERR("Use adc -cal offset.");
+                return;
+            }
+            handle_adc_offset_calibration_loop_cmd();
+            return;
+        }
+        if (strcmp(token, "status") == 0) {
+            if (strtok(NULL, " ") != NULL) {
+                ERR("Use adc -cal status.");
+                return;
+            }
+            handle_adc_offset_calibration_status_cmd();
+            return;
+        }
+        if (strcmp(token, "reset") == 0) {
+            if (strtok(NULL, " ") != NULL) {
+                ERR("Use adc -cal reset.");
+                return;
+            }
+            calibration_offset_loop_reset();
+            xil_printf("ADC software offset calibration state reset.\r\n");
+            handle_adc_offset_calibration_status_cmd();
+            return;
+        }
+
         if (token != NULL)
         {
             char *endptr = NULL;
@@ -1595,7 +1635,7 @@ void handle_adc_cmd(char* line)
             ERR("Use adc -ref, adc -ref validate, adc -ref diagnose, or adc -ref diagnose-tone <MHz>.");
         }
     }else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames], -ref, -ref validate, or -ref diagnose)", option);
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames|offset|status|reset], -ref, -ref validate, or -ref diagnose)", option);
     }
 }
 
@@ -3599,6 +3639,457 @@ void handle_adc_reference_status_cmd(void)
     xil_printf("No correction coefficients were updated.\r\n");
 
 reference_done:
+    adc_sweep_active = 0U;
+}
+
+static const char *calibration_channel_name(int channel)
+{
+    switch (channel) {
+    case 0:
+        return "Channel A";
+    case 1:
+        return "Channel B";
+    case -1:
+        return "auto";
+    default:
+        return "invalid";
+    }
+}
+
+static void calibration_offset_loop_begin_run(
+    calibration_offset_loop_state_t *state
+)
+{
+    const float offset_correction = state->offset_correction;
+    const int8_t calibration_channel = state->calibration_channel;
+
+    memset(state, 0, sizeof(*state));
+    state->offset_correction = offset_correction;
+    state->gain_correction = 1.0f;
+    state->calibration_channel = calibration_channel;
+    state->final_status = CALIBRATION_OFFSET_LOOP_RUNNING;
+}
+
+static float calibration_mean_i16(const int16_t *samples, size_t sample_count)
+{
+    double sum = 0.0;
+
+    if ((samples == NULL) || (sample_count == 0U)) {
+        return 0.0f;
+    }
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        sum += (double)samples[i];
+    }
+
+    return (float)(sum / (double)sample_count);
+}
+
+static int calibration_samples_are_clipped(
+    const int16_t *samples,
+    size_t sample_count
+)
+{
+    if ((samples == NULL) || (sample_count == 0U)) {
+        return 1;
+    }
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        if ((samples[i] <= CALIBRATION_ADC_MIN_CODE) ||
+            (samples[i] >= CALIBRATION_ADC_MAX_CODE)) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int calibration_fit_metrics_are_valid(
+    const calibration_state_t *fit_state
+)
+{
+    const calibration_metrics_t *metrics;
+
+    if (fit_state == NULL) {
+        return 0;
+    }
+
+    metrics = &fit_state->metrics;
+    return isfinite(metrics->adc_mean) &&
+           isfinite(metrics->reference_mean) &&
+           isfinite(metrics->measured_gain) &&
+           isfinite(metrics->measured_offset) &&
+           isfinite(metrics->fitted_rmse_codes) &&
+           isfinite(metrics->correlation) &&
+           (fabsf(metrics->measured_gain) > FLT_EPSILON) &&
+           (metrics->fitted_rmse_codes >= 0.0f);
+}
+
+static void calibration_offset_loop_print_summary(
+    const calibration_offset_loop_state_t *state
+)
+{
+    xil_printf("\r\n========== Offset Calibration Summary ==========\r\n");
+    xil_printf("Accepted frames          : %lu\r\n",
+               (unsigned long)state->accepted_frame_count);
+    xil_printf("Rejected frames          : %lu\r\n",
+               (unsigned long)state->rejected_frame_count);
+    print_float_value("Final offset correction",
+                      state->offset_correction, " codes");
+    print_float_value("Final fitted offset",
+                      state->latest_fitted_offset, " codes");
+    print_float_value("Final correlation",
+                      state->latest_correlation, "");
+    print_float_value("Final fitted RMSE",
+                      state->latest_rmse, " codes");
+    xil_printf("Consecutive passes       : %lu\r\n",
+               (unsigned long)state->convergence_count);
+    xil_printf("Calibration status       : %s\r\n",
+               calibration_offset_loop_status_name(state->final_status));
+    xil_printf("===============================================\r\n");
+}
+
+static void calibration_offset_loop_reject_frame(
+    calibration_offset_loop_state_t *state,
+    const char *reason
+)
+{
+    ++state->rejected_frame_count;
+    state->convergence_count = 0U;
+    xil_printf("Status                  : REJECTED\r\n");
+    xil_printf("Rejection reason        : %s\r\n",
+               reason != NULL ? reason : "unknown");
+}
+
+static int calibration_offset_loop_analyze_fit(
+    calibration_offset_loop_state_t *loop_state,
+    const adc_reference_analysis_t *analysis,
+    const int16_t *fractional_reference,
+    const int16_t *fractional_measurement,
+    calibration_state_t *fit_state,
+    float *raw_mean
+)
+{
+    calibration_config_t config;
+    calibration_status_t status;
+    const size_t reference_start = analysis->fit_overlap.reference_start;
+    const size_t measurement_start = analysis->fit_overlap.measurement_start;
+    const size_t analysis_count = analysis->fit_overlap.analysis_count;
+
+    if ((loop_state == NULL) || (analysis == NULL) ||
+        (fractional_reference == NULL) || (fractional_measurement == NULL) ||
+        (fit_state == NULL) || (raw_mean == NULL) ||
+        (analysis_count < CAL_MIN_ANALYSIS_SAMPLES)) {
+        return -1;
+    }
+
+    calibration_default_config(&config);
+    config.offset_tolerance_codes = CALIBRATION_OFFSET_TOLERANCE_CODES;
+    config.offset_step = CALIBRATION_OFFSET_UPDATE_STEP;
+    config.min_offset_correction =
+        -CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES;
+    config.max_offset_correction =
+        CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES;
+
+    status = calibration_init(fit_state, &config);
+    if (status != CALIBRATION_OK) {
+        return -2;
+    }
+
+    fit_state->offset_correction = loop_state->offset_correction;
+    fit_state->gain_correction = 1.0f;
+
+    *raw_mean = calibration_mean_i16(
+        &fractional_measurement[measurement_start],
+        analysis_count
+    );
+
+    status = calibration_analyze_frame(
+        fit_state,
+        &fractional_measurement[measurement_start],
+        &fractional_reference[reference_start],
+        analysis_count
+    );
+
+    if (status != CALIBRATION_OK) {
+        return -3;
+    }
+
+    if (!calibration_fit_metrics_are_valid(fit_state)) {
+        return -4;
+    }
+
+    return 0;
+}
+
+static void handle_adc_offset_calibration_status_cmd(void)
+{
+    const calibration_offset_loop_state_t *state =
+        calibration_offset_loop_state();
+
+    xil_printf("\r\n========== ADC Offset Calibration Status ==========\r\n");
+    print_float_value("Offset correction",
+                      state->offset_correction, " codes");
+    print_float_value("Gain correction",
+                      state->gain_correction, "");
+    xil_printf("Accepted frames        : %lu\r\n",
+               (unsigned long)state->accepted_frame_count);
+    xil_printf("Rejected frames        : %lu\r\n",
+               (unsigned long)state->rejected_frame_count);
+    xil_printf("Consecutive passes     : %lu\r\n",
+               (unsigned long)state->convergence_count);
+    xil_printf("Calibration channel    : %s\r\n",
+               calibration_channel_name(state->calibration_channel));
+    print_float_value("Latest correlation",
+                      state->latest_correlation, "");
+    print_float_value("Latest fitted gain",
+                      state->latest_fitted_gain, "");
+    print_float_value("Latest fitted offset",
+                      state->latest_fitted_offset, " codes");
+    print_float_value("Latest fitted RMSE",
+                      state->latest_rmse, " codes");
+    xil_printf("Calibration status     : %s\r\n",
+               calibration_offset_loop_status_name(state->final_status));
+    xil_printf("==================================================\r\n");
+}
+
+static void handle_adc_offset_calibration_loop_cmd(void)
+{
+    static int16_t even_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t odd_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t channel_a[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t channel_b[ADC_CHANNEL_SAMPLE_COUNT];
+    static int16_t fractional_reference[ADC_VALID_SAMPLE_COUNT];
+    static int16_t fractional_measurement[ADC_VALID_SAMPLE_COUNT];
+
+    calibration_offset_loop_state_t *state =
+        calibration_offset_loop_state();
+    size_t reconstructed_count = 0U;
+    double even_variance;
+    double odd_variance;
+    int reconstruction_status;
+
+    if (adc_sweep_active) {
+        ERR("Another automatic ADC capture is already in progress.");
+        state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+        return;
+    }
+
+    calibration_offset_loop_begin_run(state);
+
+    if ((state->calibration_channel < -1) ||
+        (state->calibration_channel > 1)) {
+        ERR("Invalid calibration channel in offset calibration state.");
+        state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+        calibration_offset_loop_print_summary(state);
+        return;
+    }
+
+    if (RxBufferPtr == NULL) {
+        ERR("DMA receive buffer is not available.");
+        state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+        calibration_offset_loop_print_summary(state);
+        return;
+    }
+
+    print_adc_analysis_rate_header();
+    if (calibration_prepare_uploaded_dac_reference(
+            even_reference, odd_reference, &reconstructed_count,
+            &even_variance, &odd_variance, 1) != 0) {
+        state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+        calibration_offset_loop_print_summary(state);
+        return;
+    }
+
+    adc_sweep_active = 1U;
+
+    xil_printf("\r\n========== ADC Offset Calibration ==========\r\n");
+    xil_printf("Calibration channel     : %s\r\n",
+               calibration_channel_name(state->calibration_channel));
+    print_float_value("Gain correction",
+                      state->gain_correction, "");
+    print_float_value("Initial offset correction",
+                      state->offset_correction, " codes");
+    print_float_value("Offset tolerance",
+                      CALIBRATION_OFFSET_TOLERANCE_CODES, " codes");
+    xil_printf("Maximum accepted frames : %u\r\n",
+               CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS);
+    xil_printf("Maximum rejected frames : %u\r\n",
+               CALIBRATION_OFFSET_MAX_REJECTED_FRAMES);
+    print_float_value("Offset update step",
+                      CALIBRATION_OFFSET_UPDATE_STEP, "");
+
+    while ((state->accepted_frame_count <
+            CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS) &&
+           (state->rejected_frame_count <
+            CALIBRATION_OFFSET_MAX_REJECTED_FRAMES) &&
+           (state->convergence_count <
+            CALIBRATION_OFFSET_REQUIRED_CONVERGED_FRAMES)) {
+        adc_reference_analysis_t analysis;
+        calibration_state_t fit_state;
+        calibration_timing_frame_result_t *selected = &analysis.timing;
+        float raw_mean = 0.0f;
+        float coefficient_delta = 0.0f;
+        float next_offset_correction;
+        int fit_status;
+
+        xil_printf("\r\nIteration %lu\r\n",
+                   (unsigned long)(state->accepted_frame_count +
+                                   state->rejected_frame_count + 1U));
+
+        if (adc_capture_frame() != XST_SUCCESS) {
+            calibration_offset_loop_reject_frame(
+                state, "DMA capture failed");
+            continue;
+        }
+
+        reconstruction_status = adc_reconstruct_channels(
+            RxBufferPtr, DMA_CMD_BUF_SIZE, channel_a,
+            ADC_CHANNEL_SAMPLE_COUNT, channel_b,
+            ADC_CHANNEL_SAMPLE_COUNT, &reconstructed_count
+        );
+        if ((reconstruction_status != 0) ||
+            (reconstructed_count != ADC_CHANNEL_SAMPLE_COUNT)) {
+            calibration_offset_loop_reject_frame(
+                state, "sample reconstruction failed");
+            continue;
+        }
+
+        fit_status = calibration_analyze_reference_frame(even_reference,
+            odd_reference, channel_a, channel_b, reconstructed_count,
+            fractional_reference, fractional_measurement,
+            state->calibration_channel, &analysis);
+
+        xil_printf("Channel                 : %s\r\n",
+                   analysis.selected_channel_name != NULL ?
+                   analysis.selected_channel_name : "none");
+        xil_printf("Reference phase         : %s\r\n",
+                   analysis.selected_phase_name != NULL ?
+                   analysis.selected_phase_name : "none");
+
+        if (fit_status != 0) {
+            calibration_offset_loop_reject_frame(
+                state,
+                analysis.failure_reason != NULL ?
+                analysis.failure_reason : "invalid alignment");
+            continue;
+        }
+
+        print_float_value("Correlation",
+                          selected->correlation, "");
+        if (!selected->accepted ||
+            (selected->correlation < CAL_DAC_REF_MIN_CORRELATION)) {
+            calibration_offset_loop_reject_frame(
+                state,
+                selected->correlation < CAL_DAC_REF_MIN_CORRELATION ?
+                "DAC-reference correlation below 0.970000" :
+                cal_timing_reject_reason_text(selected->reject_reason));
+            continue;
+        }
+
+        if (calibration_samples_are_clipped(
+                analysis.selected_adc, analysis.sample_count)) {
+            calibration_offset_loop_reject_frame(
+                state, "ADC clipping detected");
+            continue;
+        }
+
+        fit_status = calibration_offset_loop_analyze_fit(
+            state, &analysis, fractional_reference, fractional_measurement,
+            &fit_state, &raw_mean
+        );
+        if (fit_status != 0) {
+            calibration_offset_loop_reject_frame(
+                state, "invalid corrected fit");
+            continue;
+        }
+
+        state->latest_correlation = selected->correlation;
+        state->latest_fitted_offset =
+            fit_state.metrics.measured_offset;
+        state->latest_fitted_gain =
+            fit_state.metrics.measured_gain;
+        state->latest_rmse =
+            fit_state.metrics.fitted_rmse_codes;
+        state->latest_raw_mean = raw_mean;
+        state->latest_corrected_mean =
+            fit_state.metrics.adc_mean;
+
+        if (state->calibration_channel < 0) {
+            state->calibration_channel =
+                analysis.selected_adc == channel_b ? 1 : 0;
+        }
+
+        print_float_value("Raw mean",
+                          state->latest_raw_mean, " codes");
+        print_float_value("Corrected mean",
+                          state->latest_corrected_mean, " codes");
+        print_float_value("Fitted gain",
+                          state->latest_fitted_gain, "");
+        print_float_value("Fitted offset before",
+                          state->latest_fitted_offset, " codes");
+
+        if (fabsf(state->latest_fitted_offset) <=
+            CALIBRATION_OFFSET_TOLERANCE_CODES) {
+            ++state->convergence_count;
+        } else {
+            state->convergence_count = 0U;
+            coefficient_delta =
+                -CALIBRATION_OFFSET_UPDATE_STEP *
+                state->latest_fitted_offset;
+        }
+
+        next_offset_correction =
+            state->offset_correction + coefficient_delta;
+
+        if (!isfinite(next_offset_correction) ||
+            (fabsf(next_offset_correction) >
+             CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES)) {
+            ++state->accepted_frame_count;
+            print_float_value("Offset update",
+                              coefficient_delta, " codes");
+            print_float_value("Offset correction",
+                              state->offset_correction, " codes");
+            print_float_value("RMSE",
+                              state->latest_rmse, " codes");
+            xil_printf("Status                  : FAILED\r\n");
+            xil_printf("Failure reason          : coefficient limit reached\r\n");
+            state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+            break;
+        }
+
+        state->offset_correction = next_offset_correction;
+        ++state->accepted_frame_count;
+
+        print_float_value("Offset update",
+                          coefficient_delta, " codes");
+        print_float_value("Offset correction",
+                          state->offset_correction, " codes");
+        print_float_value("RMSE",
+                          state->latest_rmse, " codes");
+        xil_printf("Consecutive passes      : %lu\r\n",
+                   (unsigned long)state->convergence_count);
+        xil_printf("Status                  : ACCEPTED\r\n");
+
+        if (state->accepted_frame_count <
+            CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS) {
+            usleep(ADC_TIMING_INTERFRAME_DELAY_US);
+        }
+    }
+
+    if (state->final_status == CALIBRATION_OFFSET_LOOP_RUNNING) {
+        if (state->convergence_count >=
+            CALIBRATION_OFFSET_REQUIRED_CONVERGED_FRAMES) {
+            state->final_status = CALIBRATION_OFFSET_LOOP_PASS;
+        } else if (state->rejected_frame_count >=
+                   CALIBRATION_OFFSET_MAX_REJECTED_FRAMES) {
+            state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+        } else {
+            state->final_status = CALIBRATION_OFFSET_LOOP_NOT_CONVERGED;
+        }
+    }
+
+    calibration_offset_loop_print_summary(state);
     adc_sweep_active = 0U;
 }
 

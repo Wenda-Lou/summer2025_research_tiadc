@@ -59,6 +59,11 @@ void recv_callback(
     uint8_t receive_buf[512];
     uint16_t copied_length;
 
+    (void)arg;
+    (void)pcb;
+    (void)addr;
+    (void)port;
+
     if (p == NULL)
     {
         return;
