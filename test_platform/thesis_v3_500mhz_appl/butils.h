@@ -52,8 +52,6 @@
  *                  back                      Return to gain menu
  *                  quit                      Exit gain setting menu
  *
- *              DDC                           Digital downconverter gain mode
- *                                            (reserved for future use)
  *              back                          Return to UART command prompt
  *
  *          -cal [frames]                    Measurement-only calibration against
@@ -67,12 +65,8 @@
  *
  *          -ref                             Display uploaded reference status
  *                                           and buffer information
- *          -ref validate                    Validate raw DAC 2:1 reconstruction,
- *                                           tone, and synthetic alignment tests
  *          -ref diagnose                    Capture one ADC DMA frame and test
  *                                           spectrum/sample-order hypotheses
- *          -ref diagnose-tone <MHz>         Diagnose a known external/DPG tone
- *                                           without uploaded-reference checks
  * --------------------------------------------------------------------------  
  *  © 2025 Your Project Name — MIT License                                      
  * ==========================================================================*/

@@ -99,22 +99,13 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_TIMING_MIN_ACCEPTED_FRAMES       5U
 #define CAL_TIMING_MIN_ACCEPTANCE_RATE       0.70f
 #define CAL_DAC_REF_MIN_CORRELATION           0.970f
-#define CAL_REF_DEBUG_SAMPLE_COUNT             5U
 #define CAL_REF_FREQ_TOLERANCE_HZ               2000000.0
 #define CAL_REF_VARIANCE_EPSILON                1.0e-6
-#define CAL_REF_TEST_GAIN_TOLERANCE             0.005f
-#define CAL_REF_TEST_OFFSET_TOLERANCE           1.0f
-#define CAL_REF_TEST_CORR_MIN                   0.999f
-#define CAL_REF_TEST_LAG_TOLERANCE              1.0f
 #define CAL_REF_PHASE_EQUIVALENT_CORR_DELTA     0.001f
 #define CAL_REF_SPECTRAL_PEAK_COUNT              10U
 #define CAL_ADC_FULL_SCALE_CODES                 8192.0f
 #define CAL_DAC_FULL_SCALE_CODES                32768.0f
 #define CAL_REF_ADC_DEBUG_SAMPLE_COUNT           32U
-#define KNOWN_TONE_PRINT_SAMPLE_COUNT             64U
-#define KNOWN_TONE_FRAC_SCAN_RADIUS_BINS          32.0
-#define KNOWN_TONE_FRAC_SCAN_STEP_BIN              0.01
-#define KNOWN_TONE_HILBERT_HALF_TAPS              31U
 
 _Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
                "ADC test configuration sample count mismatch");
@@ -166,9 +157,7 @@ static int16_t calibration_convert_reference_to_adc_units(int16_t dac_code)
 
 int adc_capture_frame(void);
 static void adc_ifc_sweep(void);
-static int calibration_validate_uploaded_reference(int print_diagnostics);
 static void calibration_run_adc_reference_diagnostic(void);
-static void calibration_run_known_tone_diagnostic(double known_frequency_mhz);
 static void calibration_run_raw_mapping_diagnostic(
     const int16_t *even_reference, const int16_t *odd_reference);
 static void handle_adc_offset_calibration_loop_cmd(void);
@@ -204,220 +193,6 @@ static void print_float_value(const char *label, float value, const char *unit)
 static void print_double_value(const char *label, double value, const char *unit);
 static void print_double_inline(double value);
 
-typedef struct {
-    size_t dominant_bin;
-    double dominant_frequency_hz;
-} known_tone_spectrum_t;
-
-typedef struct {
-    double expected_fractional_bin;
-    double strongest_fractional_bin;
-    double strongest_frequency_hz;
-    double magnitude_at_expected;
-    double magnitude_at_strongest;
-    double zero_crossing_frequency_hz;
-    size_t positive_crossing_count;
-    double analytic_phase_frequency_hz;
-    size_t analytic_phase_sample_count;
-} known_tone_fractional_result_t;
-
-static double known_tone_mean(const int16_t *samples, size_t count)
-{
-    double mean = 0.0;
-    for (size_t i = 0U; i < count; ++i) mean += (double)samples[i];
-    return count != 0U ? mean / (double)count : 0.0;
-}
-
-/* Direct complex DFT at an arbitrary angular frequency in radians/sample. */
-static double known_tone_exact_dft_magnitude(
-    const int16_t *samples, size_t count, double mean, double omega)
-{
-    const double step_real = cos(omega);
-    const double step_imag = -sin(omega);
-    double oscillator_real = 1.0;
-    double oscillator_imag = 0.0;
-    double real = 0.0;
-    double imaginary = 0.0;
-
-    for (size_t i = 0U; i < count; ++i) {
-        const double value = (double)samples[i] - mean;
-        const double next_real = oscillator_real * step_real -
-                                 oscillator_imag * step_imag;
-        const double next_imag = oscillator_real * step_imag +
-                                 oscillator_imag * step_real;
-        real += value * oscillator_real;
-        imaginary += value * oscillator_imag;
-        oscillator_real = next_real;
-        oscillator_imag = next_imag;
-    }
-    return sqrt(real * real + imaginary * imaginary) / (double)count;
-}
-
-static double known_tone_positive_zero_crossing_frequency(
-    const int16_t *samples, size_t count, double mean, double sample_rate_hz,
-    size_t *crossing_count)
-{
-    double first_crossing = 0.0;
-    double last_crossing = 0.0;
-    size_t crossings = 0U;
-
-    for (size_t i = 1U; i < count; ++i) {
-        const double previous = (double)samples[i - 1U] - mean;
-        const double current = (double)samples[i] - mean;
-        if ((previous <= 0.0) && (current > 0.0)) {
-            const double denominator = current - previous;
-            const double position = (double)(i - 1U) +
-                (denominator != 0.0 ? -previous / denominator : 0.0);
-            if (crossings == 0U) first_crossing = position;
-            last_crossing = position;
-            ++crossings;
-        }
-    }
-    if (crossing_count != NULL) *crossing_count = crossings;
-    if ((crossings < 2U) || (last_crossing <= first_crossing)) return 0.0;
-    return (double)(crossings - 1U) * sample_rate_hz /
-           (last_crossing - first_crossing);
-}
-
-/*
- * Estimate average unwrapped phase increment using a finite odd-symmetric
- * Hilbert transformer.  The real component is delayed to the FIR center and
- * the imaginary component is the corresponding analytic-signal quadrature.
- */
-static double known_tone_analytic_phase_frequency(
-    const int16_t *samples, size_t count, double mean, double sample_rate_hz,
-    size_t *phase_count)
-{
-    const double pi = 3.14159265358979323846;
-    const size_t half = KNOWN_TONE_HILBERT_HALF_TAPS;
-    double previous_phase = 0.0;
-    double unwrapped_phase = 0.0;
-    double first_unwrapped_phase = 0.0;
-    size_t used = 0U;
-
-    if (count <= 2U * half) {
-        if (phase_count != NULL) *phase_count = 0U;
-        return 0.0;
-    }
-    for (size_t n = half; n < count - half; ++n) {
-        const double real = (double)samples[n] - mean;
-        double imaginary = 0.0;
-        for (int k = -(int)half; k <= (int)half; ++k) {
-            if ((k != 0) && ((abs(k) & 1) != 0)) {
-                imaginary += (2.0 / (pi * (double)k)) *
-                    ((double)samples[(size_t)((int)n - k)] - mean);
-            }
-        }
-        {
-            const double phase = atan2(imaginary, real);
-            if (used == 0U) {
-                previous_phase = phase;
-                first_unwrapped_phase = phase;
-                unwrapped_phase = phase;
-            } else {
-                double increment = phase - previous_phase;
-                while (increment > pi) increment -= 2.0 * pi;
-                while (increment < -pi) increment += 2.0 * pi;
-                unwrapped_phase += increment;
-                previous_phase = phase;
-            }
-            ++used;
-        }
-    }
-    if (phase_count != NULL) *phase_count = used;
-    if (used < 2U) return 0.0;
-    return fabs((unwrapped_phase - first_unwrapped_phase) /
-        (double)(used - 1U)) * sample_rate_hz / (2.0 * pi);
-}
-
-static int known_tone_fractional_analysis(
-    const int16_t *samples, size_t count, double known_frequency_hz,
-    double sample_rate_hz,
-    known_tone_fractional_result_t *result)
-{
-    const double two_pi = 6.28318530717958647692;
-    const double mean = known_tone_mean(samples, count);
-    double first_bin;
-    double last_bin;
-
-    if ((samples == NULL) || (result == NULL) || (count < 4U) ||
-        !(known_frequency_hz > 0.0) || !(sample_rate_hz > 0.0)) return -1;
-    memset(result, 0, sizeof(*result));
-    result->expected_fractional_bin = known_frequency_hz * (double)count /
-                                      sample_rate_hz;
-    result->magnitude_at_expected = known_tone_exact_dft_magnitude(
-        samples, count, mean, two_pi * known_frequency_hz / sample_rate_hz);
-
-    first_bin = result->expected_fractional_bin -
-                KNOWN_TONE_FRAC_SCAN_RADIUS_BINS;
-    last_bin = result->expected_fractional_bin +
-               KNOWN_TONE_FRAC_SCAN_RADIUS_BINS;
-    if (first_bin < 0.01) first_bin = 0.01;
-    if (last_bin > (double)count / 2.0 - 0.01)
-        last_bin = (double)count / 2.0 - 0.01;
-
-    result->magnitude_at_strongest = -1.0;
-    for (double bin = first_bin; bin <= last_bin + 0.000001;
-         bin += KNOWN_TONE_FRAC_SCAN_STEP_BIN) {
-        const double magnitude = known_tone_exact_dft_magnitude(
-            samples, count, mean, two_pi * bin / (double)count);
-        if (magnitude > result->magnitude_at_strongest) {
-            result->magnitude_at_strongest = magnitude;
-            result->strongest_fractional_bin = bin;
-        }
-    }
-    result->strongest_frequency_hz = result->strongest_fractional_bin *
-        sample_rate_hz / (double)count;
-    result->zero_crossing_frequency_hz =
-        known_tone_positive_zero_crossing_frequency(samples, count, mean,
-            sample_rate_hz,
-            &result->positive_crossing_count);
-    result->analytic_phase_frequency_hz =
-        known_tone_analytic_phase_frequency(samples, count, mean,
-            sample_rate_hz,
-            &result->analytic_phase_sample_count);
-    return 0;
-}
-
-static void known_tone_print_fractional_result(
-    const char *channel_name, const known_tone_fractional_result_t *result)
-{
-    xil_printf("\r\n---------- %s Fractional Frequency ----------\r\n",
-               channel_name);
-    print_double_value("Expected fractional bin",
-        result->expected_fractional_bin, "");
-    print_double_value("Strongest fractional bin",
-        result->strongest_fractional_bin, "");
-    print_double_value("Fractional measured freq",
-        result->strongest_frequency_hz / 1.0e6, " MHz");
-    print_double_value("Magnitude at expected freq",
-        result->magnitude_at_expected, "");
-    print_double_value("Magnitude at strongest",
-        result->magnitude_at_strongest, "");
-    print_double_value("Zero-crossing frequency",
-        result->zero_crossing_frequency_hz / 1.0e6, " MHz");
-    xil_printf("Positive zero crossings : %lu\r\n",
-        (unsigned long)result->positive_crossing_count);
-    print_double_value("Analytic-phase frequency",
-        result->analytic_phase_frequency_hz / 1.0e6, " MHz");
-    xil_printf("Analytic phase samples  : %lu\r\n",
-        (unsigned long)result->analytic_phase_sample_count);
-}
-
-static void known_tone_print_first_samples(
-    const char *channel_name, const int16_t *samples, size_t count)
-{
-    const size_t print_count = count < KNOWN_TONE_PRINT_SAMPLE_COUNT ?
-                               count : KNOWN_TONE_PRINT_SAMPLE_COUNT;
-    xil_printf("\r\nFirst %lu reconstructed samples of %s:\r\n",
-        (unsigned long)print_count, channel_name);
-    for (size_t i = 0U; i < print_count; ++i) {
-        xil_printf("%6d%s", (int)samples[i],
-            ((i + 1U) % 8U) == 0U ? "\r\n" : " ");
-    }
-    if ((print_count % 8U) != 0U) xil_printf("\r\n");
-}
-
 static void print_adc_sample_rate_state(void)
 {
     print_double_value("Configured sample rate",
@@ -444,306 +219,6 @@ static void print_adc_analysis_rate_header(void)
         "known-tone measurement" : "configured value");
     print_double_value("DAC/ADC rate ratio",
         DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz(), "");
-}
-
-static int calibration_known_tone_spectrum(
-    const int16_t *samples, size_t count, known_tone_spectrum_t *result)
-{
-    double mean = 0.0, best_magnitude = -1.0;
-    if ((samples == NULL) || (result == NULL) || (count < 4U)) return -1;
-    for (size_t i = 0U; i < count; ++i) mean += samples[i];
-    mean /= (double)count;
-    result->dominant_bin = 0U;
-    for (size_t bin = 1U; bin < count / 2U; ++bin) {
-        const double coefficient = 2.0 * cos(
-            6.28318530717958647692 * (double)bin / (double)count);
-        double previous = 0.0, previous2 = 0.0;
-        for (size_t i = 0U; i < count; ++i) {
-            const double current = ((double)samples[i] - mean) +
-                coefficient * previous - previous2;
-            previous2 = previous; previous = current;
-        }
-        {
-            const double power = previous2 * previous2 + previous * previous -
-                                 coefficient * previous * previous2;
-            if (power > best_magnitude) {
-                best_magnitude = power; result->dominant_bin = bin;
-            }
-        }
-    }
-    result->dominant_frequency_hz = (double)result->dominant_bin *
-        adc_get_effective_sample_rate_hz() / (double)count;
-    return result->dominant_bin == 0U ? -2 : 0;
-}
-
-static unsigned int calibration_decode_chip_decimation(uint8_t value)
-{
-    switch (value & 0x0FU) {
-    case AD9695_DCM2_EN: return 2U;
-    case AD9695_DCM4_EN: return 4U;
-    case AD9695_DCM16_EN: return 16U;
-    case AD9695_DCM3_EN: return 3U;
-    case AD9695_DCM_NONE:
-    default: return 1U;
-    }
-}
-
-static unsigned int calibration_decode_ddc_decimation(uint8_t selector)
-{
-    /* AD9695 DDC filter selector encoding: bypass, 2, 4, 8, 16, 32. */
-    static const uint8_t ratios[] = {1U, 2U, 4U, 8U, 16U, 32U};
-    return selector < sizeof(ratios) ? ratios[selector] : 0U;
-}
-
-static void calibration_print_ad9695_register_diagnostics(void)
-{
-    uint8_t adc_mode = 0U, chip_dcm = 0U;
-    uint8_t test_a = 0U, test_b = 0U;
-    uint8_t ddc_sync = 0U;
-    struct jesd_param_t jesd;
-
-    memset(&jesd, 0, sizeof(jesd));
-    ad9695_read_register(&spi_inst, AD9695_ADC_MODE_REG, &adc_mode);
-    ad9695_read_register(&spi_inst, AD9695_ADC_DCM_REG, &chip_dcm);
-    ad9695_read_register(&spi_inst, AD9695_DDC_SYNC_CTRL_REG, &ddc_sync);
-    ad9695_adc_set_channel_select(0U);
-    ad9695_read_register(&spi_inst, AD9695_REG_TEST_MODE, &test_a);
-    ad9695_adc_set_channel_select(1U);
-    ad9695_read_register(&spi_inst, AD9695_REG_TEST_MODE, &test_b);
-    ad9695_adc_set_channel_select(2U);
-    ad9695_jesd_get_cfg_param(&jesd);
-
-    xil_printf("\r\n========== AD9695 Decoded Register State ==========\r\n");
-    xil_printf("ADC operating mode      : %s (code %u)\r\n",
-        (adc_mode & 0x03U) == 0U ? "full-bandwidth/DDC bypass" : "DDC path",
-        adc_mode & 0x03U);
-    xil_printf("DDC enable              : %s\r\n",
-        (adc_mode & 0x03U) == 0U ? "NO" : "YES");
-    xil_printf("DDC bypass              : %s\r\n",
-        (adc_mode & 0x03U) == 0U ? "YES" : "NO");
-    xil_printf("Chip decimation ratio  : %u\r\n",
-        calibration_decode_chip_decimation(chip_dcm));
-    xil_printf("DDC/NCO sync mode       : update=%s soft-reset=%s sysref-sync=%s\r\n",
-        (ddc_sync & AD9695_DDC_UPDATE_MODE) ? "YES" : "NO",
-        (ddc_sync & AD9695_NCO_SOFT_RESET) ? "ACTIVE" : "inactive",
-        (ddc_sync & AD9695_NCO_SYSREF_SYNC_EN) ? "enabled" : "disabled");
-
-    for (unsigned int ddc = 0U; ddc < 4U; ++ddc) {
-        const uint16_t base = (uint16_t)(ddc * AD9695_DDCX_REG_OFFSET);
-        uint8_t ctrl = 0U, data_sel = 0U, ftw_bytes[6] = {0U};
-        uint64_t ftw_unsigned = 0U;
-        int64_t ftw_signed;
-        uint8_t selector;
-        char nco_label[24];
-        ad9695_read_register(&spi_inst, AD9695_DDCX_CTRL0_REG + base, &ctrl);
-        ad9695_read_register(&spi_inst, AD9695_DDCX_DATA_SEL_REG + base, &data_sel);
-        for (unsigned int byte = 0U; byte < 6U; ++byte) {
-            ad9695_read_register(&spi_inst,
-                AD9695_DDCX_FTW0_REG + base + byte, &ftw_bytes[byte]);
-            ftw_unsigned |= (uint64_t)ftw_bytes[byte] << (8U * byte);
-        }
-        ftw_signed = (ftw_unsigned & (1ULL << 47U)) ?
-            (int64_t)(ftw_unsigned | 0xFFFF000000000000ULL) :
-            (int64_t)ftw_unsigned;
-        selector = (uint8_t)((ctrl & 0x07U) | ((data_sel >> 1U) & 0x08U));
-        xil_printf("DDC%u mixer mode        : %s\r\n", ddc,
-            (ctrl & AD9695_DDCX_MIXER_SEL) ? "mixer selected" : "bypass/no mixer");
-        xil_printf("DDC%u NCO mode          : %u (%s)\r\n", ddc,
-            (ctrl >> 4U) & 0x03U,
-            (((ctrl >> 4U) & 0x03U) == 0U) ? "variable IF" :
-            (((ctrl >> 4U) & 0x03U) == 1U) ? "zero IF" : "test/reserved");
-        xil_printf("DDC%u NCO enable        : %s\r\n", ddc,
-            (ctrl & AD9695_DDCX_MIXER_SEL) ? "YES" : "NO");
-        snprintf(nco_label, sizeof(nco_label), "DDC%u NCO frequency", ddc);
-        print_double_value(nco_label, (double)ftw_signed * ADC_SAMPLE_RATE_HZ /
-            281474976710656.0 / 1.0e6, " MHz");
-        xil_printf("DDC%u decimation        : selector %u, ratio %u\r\n",
-            ddc, selector, calibration_decode_ddc_decimation(selector));
-        xil_printf("DDC%u output format     : %s\r\n", ddc,
-            (ctrl & AD9695_DDCX_COMPLEX_TO_REAL) ? "real" : "complex/IQ");
-    }
-    xil_printf("Test mode Channel A    : %u (%s)\r\n", test_a,
-        test_a == AD9695_TESTMODE_OFF ? "OFF" : "ACTIVE");
-    xil_printf("Test mode Channel B    : %u (%s)\r\n", test_b,
-        test_b == AD9695_TESTMODE_OFF ? "OFF" : "ACTIVE");
-    xil_printf("Output data rate       : ");
-    print_double_inline(ADC_SAMPLE_RATE_HZ /
-        calibration_decode_chip_decimation(chip_dcm) / 1.0e6);
-    xil_printf(" MSPS before any enabled DDC decimation\r\n");
-    xil_printf("JESD transport         : M=%u L=%u F=%u S=%u N=%u NP=%u CS=%u HD=%u\r\n",
-        jesd.jesd_M, jesd.jesd_L, jesd.jesd_F, jesd.jesd_S,
-        jesd.jesd_N, jesd.jesd_NP, jesd.jesd_CS, jesd.jesd_HD);
-    xil_printf("===================================================\r\n");
-    xil_printf("\r\n========== Current Analysis Configuration ==========\r\n");
-    print_double_value("Configured sample rate",
-        adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
-    print_double_value("Analysis sample rate",
-        adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
-    xil_printf("Frequency calculations use the analysis sample rate: YES\r\n");
-    xil_printf("Hardware configuration remains unchanged          : YES\r\n");
-    xil_printf("====================================================\r\n");
-}
-
-static void calibration_run_known_tone_diagnostic(double known_frequency_mhz)
-{
-    static int16_t channel_a[ADC_CHANNEL_SAMPLE_COUNT];
-    static int16_t channel_b[ADC_CHANNEL_SAMPLE_COUNT];
-    known_tone_spectrum_t spectrum_a, spectrum_b;
-    known_tone_fractional_result_t fractional_a, fractional_b;
-    size_t sample_count = 0U;
-    double implied_a, implied_b;
-    double fractional_rate_a, fractional_rate_b;
-    double analytic_rate_a, analytic_rate_b;
-    double fractional_rate;
-    double analytic_rate;
-    double fractional_frequency_average;
-    double analytic_frequency_average;
-    double zero_crossing_frequency_average;
-    double analytic_frequency_error_hz;
-    double analytic_frequency_error_percent;
-    const double known_frequency_hz = known_frequency_mhz * 1.0e6;
-
-    if (adc_sweep_active) {
-        ERR("Another automatic ADC capture is already in progress.");
-        return;
-    }
-    adc_sweep_active = 1U;
-    if (adc_capture_frame() != XST_SUCCESS ||
-        adc_reconstruct_channels(RxBufferPtr, DMA_CMD_BUF_SIZE,
-            channel_a, ADC_CHANNEL_SAMPLE_COUNT,
-            channel_b, ADC_CHANNEL_SAMPLE_COUNT, &sample_count) != 0) {
-        xil_printf("ERROR: Known-tone DMA capture/reconstruction failed.\r\n");
-        goto known_tone_done;
-    }
-    if ((known_tone_fractional_analysis(channel_a, sample_count,
-             known_frequency_hz, adc_get_effective_sample_rate_hz(),
-             &fractional_a) != 0) ||
-        (known_tone_fractional_analysis(channel_b, sample_count,
-             known_frequency_hz, adc_get_effective_sample_rate_hz(),
-             &fractional_b) != 0)) {
-        xil_printf("ERROR: Fractional-frequency analysis failed.\r\n");
-        goto known_tone_done;
-    }
-
-    fractional_rate_a = fractional_a.strongest_fractional_bin > 0.0 ?
-        known_frequency_hz * (double)sample_count /
-        fractional_a.strongest_fractional_bin : 0.0;
-    fractional_rate_b = fractional_b.strongest_fractional_bin > 0.0 ?
-        known_frequency_hz * (double)sample_count /
-        fractional_b.strongest_fractional_bin : 0.0;
-    analytic_rate_a = fractional_a.analytic_phase_frequency_hz > 0.0 ?
-        known_frequency_hz * adc_get_effective_sample_rate_hz() /
-        fractional_a.analytic_phase_frequency_hz : 0.0;
-    analytic_rate_b = fractional_b.analytic_phase_frequency_hz > 0.0 ?
-        known_frequency_hz * adc_get_effective_sample_rate_hz() /
-        fractional_b.analytic_phase_frequency_hz : 0.0;
-    fractional_rate = 0.5 * (fractional_rate_a + fractional_rate_b);
-    analytic_rate = 0.5 * (analytic_rate_a + analytic_rate_b);
-    if (!isfinite(fractional_rate) || !isfinite(analytic_rate) ||
-        (fractional_rate <= 0.0) || (analytic_rate <= 0.0)) {
-        xil_printf("ERROR: Effective sample-rate estimates are invalid.\r\n");
-        goto known_tone_done;
-    }
-    if (!adc_set_effective_sample_rate_hz(0.5 *
-            (fractional_rate + analytic_rate))) {
-        xil_printf("ERROR: Effective sample-rate estimate is outside the allowed hardware range.\r\n");
-        goto known_tone_done;
-    }
-    xil_printf("Analysis sample rate updated from known-tone measurement.\r\n");
-    print_adc_sample_rate_state();
-
-    /* Recalculate all displayed frequency-domain values on the new time axis. */
-    (void)calibration_known_tone_spectrum(channel_a, sample_count, &spectrum_a);
-    (void)calibration_known_tone_spectrum(channel_b, sample_count, &spectrum_b);
-    (void)known_tone_fractional_analysis(channel_a, sample_count,
-        known_frequency_hz, adc_get_effective_sample_rate_hz(), &fractional_a);
-    (void)known_tone_fractional_analysis(channel_b, sample_count,
-        known_frequency_hz, adc_get_effective_sample_rate_hz(), &fractional_b);
-    implied_a = spectrum_a.dominant_bin > 0U ?
-        known_frequency_mhz * 1.0e6 * sample_count /
-        (double)spectrum_a.dominant_bin : 0.0;
-    implied_b = spectrum_b.dominant_bin > 0U ?
-        known_frequency_mhz * 1.0e6 * sample_count /
-        (double)spectrum_b.dominant_bin : 0.0;
-    fractional_frequency_average = 0.5 *
-        (fractional_a.strongest_frequency_hz +
-         fractional_b.strongest_frequency_hz);
-    analytic_frequency_average = 0.5 *
-        (fractional_a.analytic_phase_frequency_hz +
-         fractional_b.analytic_phase_frequency_hz);
-    zero_crossing_frequency_average = 0.5 *
-        (fractional_a.zero_crossing_frequency_hz +
-         fractional_b.zero_crossing_frequency_hz);
-    analytic_frequency_error_hz = analytic_frequency_average -
-                                  known_frequency_hz;
-    analytic_frequency_error_percent = 100.0 *
-        analytic_frequency_error_hz / known_frequency_hz;
-
-    xil_printf("\r\n========== Known Tone Diagnostic ==========\r\n");
-    print_double_value("Known input frequency", known_frequency_mhz, " MHz");
-    xil_printf("ADC sample count        : %lu\r\n", (unsigned long)sample_count);
-    xil_printf("Dominant FFT bin        : %lu\r\n",
-               (unsigned long)spectrum_a.dominant_bin);
-    print_double_value("Integer-bin frequency",
-        spectrum_a.dominant_frequency_hz / 1.0e6, " MHz");
-    xil_printf("Channel A dominant bin  : %lu\r\n",
-               (unsigned long)spectrum_a.dominant_bin);
-    xil_printf("Channel B dominant bin  : %lu\r\n",
-               (unsigned long)spectrum_b.dominant_bin);
-    xil_printf("Difference between channels: %ld bins\r\n",
-        (long)spectrum_a.dominant_bin - (long)spectrum_b.dominant_bin);
-    print_double_value("Channel B integer-bin frequency",
-        spectrum_b.dominant_frequency_hz / 1.0e6, " MHz");
-    xil_printf("Reference comparison skipped.\r\n");
-    xil_printf("Reason: DPG internal tone generator is the waveform source.\r\n");
-    xil_printf("===========================================\r\n");
-
-    xil_printf("\r\n========== Frequency Estimation Summary ==========\r\n");
-    print_double_value("Known input frequency",
-        known_frequency_mhz, " MHz");
-    print_double_value("Integer-bin frequency",
-        spectrum_a.dominant_frequency_hz / 1.0e6, " MHz");
-    print_double_value("Fractional DFT frequency",
-        fractional_frequency_average / 1.0e6, " MHz");
-    print_double_value("Analytic-phase frequency",
-        analytic_frequency_average / 1.0e6, " MHz");
-    print_double_value("Zero-crossing frequency",
-        zero_crossing_frequency_average / 1.0e6, " MHz");
-    print_double_value("Analytic-phase frequency error",
-        analytic_frequency_error_hz / 1.0e6, " MHz");
-    print_double_value("Analytic-phase error",
-        analytic_frequency_error_percent, " %");
-    xil_printf("==================================================\r\n");
-
-    xil_printf("\r\n========== Sample Rate Calibration ==========\r\n");
-    print_double_value("Configured sample rate",
-        adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
-    print_double_value("Fractional DFT rate estimate",
-        fractional_rate / 1.0e6, " MSPS");
-    print_double_value("Analytic phase rate estimate",
-        analytic_rate / 1.0e6, " MSPS");
-    print_double_value("Analysis sample rate",
-        adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
-    print_double_value("Correction factor",
-        adc_get_sample_rate_correction_factor(), "");
-    print_double_value("Channel A integer-bin implied rate",
-        implied_a / 1.0e6, " MSPS");
-    print_double_value("Channel B integer-bin implied rate",
-        implied_b / 1.0e6, " MSPS");
-    xil_printf("=============================================\r\n");
-
-    xil_printf("\r\n========== Channel A Details ==========\r\n");
-    known_tone_print_fractional_result("Channel A", &fractional_a);
-    xil_printf("\r\n========== Channel B Details ==========\r\n");
-    known_tone_print_fractional_result("Channel B", &fractional_b);
-    xil_printf("\r\n========== Raw Sample Dump ==========\r\n");
-    known_tone_print_first_samples("Channel A", channel_a, sample_count);
-    known_tone_print_first_samples("Channel B", channel_b, sample_count);
-    calibration_print_ad9695_register_diagnostics();
-
-known_tone_done:
-    xil_printf("No calibration coefficients were updated.\r\n");
-    adc_sweep_active = 0U;
 }
 
 static void print_double_value(
@@ -1608,34 +1083,14 @@ void handle_adc_cmd(char* line)
         token = strtok(NULL, " ");
         if (token == NULL) {
             handle_adc_reference_status_cmd();
-        } else if ((strcmp(token, "validate") == 0) &&
-                   (strtok(NULL, " ") == NULL)) {
-            (void)calibration_validate_uploaded_reference(1);
         } else if ((strcmp(token, "diagnose") == 0) &&
                    (strtok(NULL, " ") == NULL)) {
             calibration_run_adc_reference_diagnostic();
-        } else if (strcmp(token, "diagnose-tone") == 0) {
-            char *frequency_token = strtok(NULL, " ");
-            char *endptr = NULL;
-            double frequency_mhz;
-            if ((frequency_token == NULL) ||
-                (strtok(NULL, " ") != NULL)) {
-                ERR("Use adc -ref diagnose-tone <frequency_MHz>.");
-                return;
-            }
-            frequency_mhz = strtod(frequency_token, &endptr);
-            if ((endptr == frequency_token) || (*endptr != '\0') ||
-                !isfinite(frequency_mhz) || (frequency_mhz <= 0.0) ||
-                (frequency_mhz >= adc_get_effective_sample_rate_hz() / 2.0e6)) {
-                ERR("Known tone must be above 0 and below 650 MHz.");
-                return;
-            }
-            calibration_run_known_tone_diagnostic(frequency_mhz);
         } else {
-            ERR("Use adc -ref, adc -ref validate, adc -ref diagnose, or adc -ref diagnose-tone <MHz>.");
+            ERR("Use adc -ref or adc -ref diagnose.");
         }
     }else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames|offset|status|reset], -ref, -ref validate, or -ref diagnose)", option);
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames|offset|status|reset], -ref, or -ref diagnose)", option);
     }
 }
 
@@ -1675,7 +1130,6 @@ void handle_adc_gain_cmd(void)
     xil_printf("\r\nEntering ADC Gain setting menu\r\n");
     xil_printf("Available commands:\r\n");
     xil_printf("  IFC   Input full-scale mode\r\n");
-    xil_printf("  DDC   Digital downconverter gain mode, not for full-bandwidth capture\r\n");
     xil_printf("  help  Print this menu\r\n");
     xil_printf("  back  Quit gain setting menu\r\n");
 
@@ -1703,7 +1157,6 @@ void handle_adc_gain_cmd(void)
             xil_printf("\r\nADC Gain setting menu\r\n");
             xil_printf("Available commands:\r\n");
             xil_printf("  IFC   Input full-scale mode\r\n");
-            xil_printf("  DDC   Digital downconverter gain mode, not used for current full-bandwidth capture\r\n");
             xil_printf("  back  Quit gain setting menu\r\n");
         }
 
@@ -1790,17 +1243,9 @@ void handle_adc_gain_cmd(void)
             }
         }
 
-        else if (strcmp(token, "DDC") == 0 || strcmp(token, "ddc") == 0)
-        {
-            xil_printf("\r\nGain setting DDC mode\r\n");
-            xil_printf("DDC gain controls digital downconverter gain.\r\n");
-            xil_printf("It is not used for the current full-bandwidth ADC capture path.\r\n");
-            xil_printf("Use IFC mode for now.\r\n");
-        }
-
         else
         {
-            xil_printf("Invalid gain command. Use IFC, DDC, back, or help.\r\n");
+            xil_printf("Invalid gain command. Use IFC, back, or help.\r\n");
         }
     }
 }
@@ -2045,7 +1490,7 @@ void adc_timing_capture(uint32_t frame_count)
     print_adc_test_configuration(ADC_VALID_SAMPLE_COUNT);
 
     /*
-     * Frame 1 becomes the fixed reference, exactly as in receive_data.py.
+     * Frame 1 becomes the fixed on-board timing reference.
      */
     if (adc_capture_frame() != XST_SUCCESS)
     {
@@ -2085,8 +1530,8 @@ void adc_timing_capture(uint32_t frame_count)
     print_frequency_validation(timing_reference, reference_count);
 
     /*
-     * Analyze frame 1 against itself so the output matches the Python
-     * timing summary.
+     * Analyze frame 1 against itself to include the reference frame in the
+     * same on-board timing summary format.
      */
     timing_status = timing_analyze_frame(
         timing_reference,
@@ -2370,8 +1815,8 @@ static void adc_ifc_sweep(void)
         );
 
         /*
-         * Small separation between complete frames so the Python
-         * receiver can finish storing the current frame.
+         * Small separation between complete frames so the host receiver can
+         * finish storing the current frame.
          */
         usleep(100000);  /* 100 ms */
     }
@@ -2453,60 +1898,6 @@ static int calibration_build_adc_reference_from_raw_dac(
     }
     *reconstructed_count = output_capacity;
     return 0;
-}
-
-static double calibration_dft_magnitude(
-    const int16_t *samples,
-    size_t sample_count,
-    size_t bin
-)
-{
-    const double two_pi = 6.28318530717958647692;
-    double real = 0.0;
-    double imaginary = 0.0;
-    double mean = 0.0;
-
-    if ((samples == NULL) || (sample_count == 0U) ||
-        (bin > sample_count / 2U)) return 0.0;
-    for (size_t i = 0U; i < sample_count; ++i) mean += samples[i];
-    mean /= (double)sample_count;
-    for (size_t i = 0U; i < sample_count; ++i) {
-        const double angle = two_pi * (double)bin * (double)i /
-                             (double)sample_count;
-        const double value = (double)samples[i] - mean;
-        real += value * cos(angle);
-        imaginary -= value * sin(angle);
-    }
-    return sqrt(real * real + imaginary * imaginary) /
-           (double)sample_count;
-}
-
-static int calibration_find_dominant_tone(
-    const int16_t *samples,
-    size_t sample_count,
-    double sample_rate_hz,
-    double *frequency_hz,
-    double *dominant_magnitude
-)
-{
-    size_t best_bin = 1U;
-    double best_magnitude = -1.0;
-
-    if ((samples == NULL) || (frequency_hz == NULL) ||
-        (dominant_magnitude == NULL) || (sample_count < 4U) ||
-        !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0) return -1;
-    for (size_t bin = 1U; bin < sample_count / 2U; ++bin) {
-        const double magnitude = calibration_dft_magnitude(
-            samples, sample_count, bin);
-        if (magnitude > best_magnitude) {
-            best_magnitude = magnitude;
-            best_bin = bin;
-        }
-    }
-    *frequency_hz = (double)best_bin * sample_rate_hz /
-                    (double)sample_count;
-    *dominant_magnitude = best_magnitude;
-    return isfinite(*frequency_hz) ? 0 : -2;
 }
 
 typedef struct {
@@ -3007,153 +2398,6 @@ static int calibration_analyze_reference_frame(
     analysis->failure_reason = "none";
     analysis->status = 0;
     return 0;
-}
-
-static int calibration_run_synthetic_test(
-    const char *phase_name,
-    const int16_t *injected_reference,
-    const int16_t *even_reference,
-    const int16_t *odd_reference,
-    size_t sample_count,
-    float injected_gain,
-    float injected_offset,
-    int32_t injected_lag
-)
-{
-    static int16_t simulated_adc[ADC_VALID_SAMPLE_COUNT];
-    static int16_t work_reference[ADC_VALID_SAMPLE_COUNT];
-    static int16_t work_measurement[ADC_VALID_SAMPLE_COUNT];
-    calibration_timing_frame_result_t even_result;
-    calibration_timing_frame_result_t odd_result;
-    const calibration_timing_frame_result_t *selected;
-    const int16_t *selected_reference;
-    calibration_state_t fit_state;
-    adc_cal_overlap_t fit_overlap;
-    int fit_status;
-    int pass;
-
-    for (size_t i = 0U; i < sample_count; ++i) {
-        int64_t source = (int64_t)i - (int64_t)injected_lag;
-        long value;
-        source %= (int64_t)sample_count;
-        if (source < 0) source += (int64_t)sample_count;
-        value = lround((double)injected_gain * injected_reference[source] +
-                       (double)injected_offset);
-        if (value > INT16_MAX) value = INT16_MAX;
-        if (value < INT16_MIN) value = INT16_MIN;
-        simulated_adc[i] = (int16_t)value;
-    }
-
-    (void)adc_measure_timing_frame(even_reference, simulated_adc, sample_count,
-        work_reference, work_measurement, &even_result);
-    (void)adc_measure_timing_frame(odd_reference, simulated_adc, sample_count,
-        work_reference, work_measurement, &odd_result);
-    selected = calibration_select_phase(&even_result, &odd_result);
-    selected_reference = selected == &odd_result ? odd_reference : even_reference;
-    fit_status = adc_analyze_fractional_overlap(
-        selected_reference, simulated_adc, sample_count, selected->total_lag,
-        work_reference, work_measurement, &fit_state, &fit_overlap);
-
-    pass = selected_reference == injected_reference && fit_status == 0 &&
-           fabsf(selected->total_lag - (float)injected_lag) <=
-               CAL_REF_TEST_LAG_TOLERANCE &&
-           fabsf(fit_state.metrics.measured_gain - injected_gain) <=
-               CAL_REF_TEST_GAIN_TOLERANCE &&
-           fabsf(fit_state.metrics.measured_offset - injected_offset) <=
-               CAL_REF_TEST_OFFSET_TOLERANCE &&
-           fit_state.metrics.correlation >= CAL_REF_TEST_CORR_MIN;
-
-    xil_printf("\r\n---------- Synthetic %s Test ----------\r\n", phase_name);
-    xil_printf("Injected phase          : %s\r\n", phase_name);
-    xil_printf("Selected phase          : %s\r\n",
-               selected_reference == odd_reference ? "ODD" : "EVEN");
-    xil_printf("Injected lag            : %ld\r\n", (long)injected_lag);
-    print_float_value("Recovered lag", selected->total_lag, " samples");
-    print_float_value("Injected gain", injected_gain, "");
-    print_float_value("Recovered gain", fit_status == 0 ?
-                      fit_state.metrics.measured_gain : 0.0f, "");
-    print_float_value("Injected offset", injected_offset, " codes");
-    print_float_value("Recovered offset", fit_status == 0 ?
-                      fit_state.metrics.measured_offset : 0.0f, " codes");
-    print_float_value("Correlation", fit_status == 0 ?
-                      fit_state.metrics.correlation : 0.0f, "");
-    xil_printf("Test status             : %s\r\n", pass ? "PASS" : "FAIL");
-    return pass ? 0 : -1;
-}
-
-static int calibration_validate_uploaded_reference(int print_diagnostics)
-{
-    static int16_t even_reference[ADC_VALID_SAMPLE_COUNT];
-    static int16_t odd_reference[ADC_VALID_SAMPLE_COUNT];
-    const int16_t *raw_reference = reference_buffer_data();
-    const size_t raw_count = reference_buffer_length();
-    size_t reconstructed_count = 0U;
-    double even_variance = 0.0;
-    double odd_variance = 0.0;
-    double raw_frequency = 0.0, even_frequency = 0.0, odd_frequency = 0.0;
-    double raw_magnitude = 0.0, even_magnitude = 0.0, odd_magnitude = 0.0;
-    int status = calibration_prepare_uploaded_dac_reference(
-        even_reference, odd_reference, &reconstructed_count,
-        &even_variance, &odd_variance, 1);
-    int frequency_ok;
-    int even_test;
-    int odd_test;
-
-    if (status != 0) return status;
-    frequency_ok =
-        calibration_find_dominant_tone(raw_reference, raw_count,
-            DAC_SAMPLE_RATE_HZ, &raw_frequency, &raw_magnitude) == 0 &&
-        calibration_find_dominant_tone(even_reference, reconstructed_count,
-            adc_get_effective_sample_rate_hz(),
-            &even_frequency, &even_magnitude) == 0 &&
-        calibration_find_dominant_tone(odd_reference, reconstructed_count,
-            adc_get_effective_sample_rate_hz(),
-            &odd_frequency, &odd_magnitude) == 0;
-
-    if (print_diagnostics) {
-        xil_printf("\r\n========== DAC Reference Reconstruction ==========\r\n");
-        xil_printf("Reference uploaded       : YES\r\n");
-        print_double_value("Raw DAC sample rate", DAC_SAMPLE_RATE_HZ / 1.0e9, " GSPS");
-        print_double_value("ADC sample rate", adc_get_effective_sample_rate_hz() / 1.0e9, " GSPS");
-        print_adc_sample_rate_state();
-        print_double_value("DAC/ADC rate ratio",
-            DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz(), "");
-        xil_printf("Raw DAC samples          : %lu\r\n", (unsigned long)raw_count);
-        xil_printf("Reconstructed samples    : %lu\r\n", (unsigned long)reconstructed_count);
-        xil_printf("Required ADC samples     : %u\r\n", ADC_CHANNEL_SAMPLE_COUNT);
-        print_double_value("EVEN reference variance", even_variance, "");
-        print_double_value("ODD reference variance", odd_variance, "");
-        xil_printf("\r\nFirst reconstructed samples:\r\n");
-        xil_printf("ADC index   resampled EVEN value   resampled ODD value\r\n");
-        for (size_t i = 0U; i < CAL_REF_DEBUG_SAMPLE_COUNT &&
-             i < reconstructed_count; ++i) {
-            xil_printf("%-11lu %-22d %d\r\n",
-                (unsigned long)i, (int)even_reference[i],
-                (int)odd_reference[i]);
-        }
-        if (frequency_ok) {
-            print_double_value("Raw DAC dominant freq", raw_frequency / 1.0e6, " MHz");
-            print_double_value("EVEN dominant freq", even_frequency / 1.0e6, " MHz");
-            print_double_value("ODD dominant freq", odd_frequency / 1.0e6, " MHz");
-            print_double_value("Raw expected magnitude", raw_magnitude, "");
-            print_double_value("EVEN expected magnitude", even_magnitude, "");
-            print_double_value("ODD expected magnitude", odd_magnitude, "");
-        }
-    }
-
-    if (!frequency_ok)
-        xil_printf("WARNING: Reconstructed dominant frequency could not be measured.\r\n");
-    even_test = calibration_run_synthetic_test("EVEN", even_reference,
-        even_reference, odd_reference, reconstructed_count, 0.95f, 25.0f, 37);
-    odd_test = calibration_run_synthetic_test("ODD", odd_reference,
-        even_reference, odd_reference, reconstructed_count, 1.02f, -15.0f, -21);
-    status = (even_test == 0 && odd_test == 0) ? 0 : -10;
-    if (print_diagnostics) {
-        xil_printf("Reconstruction status    : %s\r\n", status == 0 ? "PASS" : "FAIL");
-        xil_printf("==================================================\r\n");
-        xil_printf("No correction coefficients were updated.\r\n");
-    }
-    return status;
 }
 
 static void calibration_run_adc_reference_diagnostic(void)

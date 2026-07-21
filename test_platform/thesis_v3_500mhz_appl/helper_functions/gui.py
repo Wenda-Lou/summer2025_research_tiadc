@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from .plot import plot_adc_csv, plot_ifc_sweep_capture
-from .receive_data import SAVE_DIR, receive_adc_data, receive_timing_captures
+from .receive_data import SAVE_DIR, receive_adc_data
 from .sweep_test import receive_ifc_sweep
 from .reference_upload import (
     FPGA_IP,
@@ -527,73 +527,6 @@ def gui_open_ifc_sweep_folder():
 
 
 
-def gui_receive_timing_captures():
-    """Run the frame-to-frame timing repeatability receiver."""
-    dialog = tk.Toplevel(root)
-    dialog.title("ADC Timing Repeatability Test")
-    dialog.geometry("520x260")
-    dialog.transient(root)
-    dialog.grab_set()
-
-    tk.Label(
-        dialog,
-        text=(
-            "Start this receiver first, then run on UART:\n"
-            "adc -timing <frame count>\n\n"
-            "This test aligns every capture to frame 1.\n"
-            "A DAC TXT file is not required."
-        ),
-        justify="center",
-    ).pack(pady=12)
-
-    form = tk.Frame(dialog)
-    form.pack(pady=5)
-
-    tk.Label(form, text="Frame count:").grid(
-        row=0, column=0, padx=5, pady=5, sticky="e"
-    )
-    frame_entry = tk.Entry(form, width=12)
-    frame_entry.insert(0, "20")
-    frame_entry.grid(row=0, column=1, padx=5, pady=5)
-
-    tk.Label(form, text="Timeout per packet (s):").grid(
-        row=1, column=0, padx=5, pady=5, sticky="e"
-    )
-    timeout_entry = tk.Entry(form, width=12)
-    timeout_entry.insert(0, "20")
-    timeout_entry.grid(row=1, column=1, padx=5, pady=5)
-
-    def start_receive():
-        try:
-            frame_count = int(frame_entry.get())
-            timeout = float(timeout_entry.get())
-            if frame_count <= 0:
-                raise ValueError("Frame count must be positive.")
-            if timeout <= 0:
-                raise ValueError("Timeout must be positive.")
-
-            dialog.destroy()
-            timing_dir, summary_file, summary_df = receive_timing_captures(
-                frame_count=frame_count,
-                timeout=timeout,
-            )
-            messagebox.showinfo(
-                "Timing Test Complete",
-                f"Processed {len(summary_df)} complete frames.\n\n"
-                f"Results folder:\n{timing_dir}\n\n"
-                f"Summary:\n{summary_file}",
-            )
-        except Exception as exc:
-            messagebox.showerror("Timing Test Error", str(exc))
-
-    tk.Button(
-        dialog,
-        text="Start Receiver",
-        width=18,
-        command=start_receive,
-    ).pack(pady=12)
-
-
 def gui_upload_reference_txt():
     """
     Select a periodic AD9164 TXT waveform and upload one 4064-sample raw DAC
@@ -930,7 +863,7 @@ def create_root():
     global root
     root = tk.Tk()
     root.title('ADC UDP Receiver')
-    root.geometry('420x540')
+    root.geometry('420x480')
 
     title = tk.Label(root, text='ADC UDP Receiver Tool', font=('Arial', 14, 'bold'))
     title.pack(pady=15)
@@ -949,14 +882,6 @@ def create_root():
 
     btn_open_sweep = tk.Button(root, text='Open Existing IFC Sweep', width=28, command=gui_open_ifc_sweep_folder)
     btn_open_sweep.pack(pady=8)
-
-    btn_timing = tk.Button(
-        root,
-        text='Receive Timing Captures',
-        width=28,
-        command=gui_receive_timing_captures,
-    )
-    btn_timing.pack(pady=8)
 
     btn_reference = tk.Button(
         root,

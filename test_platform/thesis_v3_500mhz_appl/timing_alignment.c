@@ -71,7 +71,7 @@ int timing_find_circular_lag(
      *
      * corr = ifft(fft(signal) * conj(fft(reference))).real
      *
-     * and therefore matches frame.py.
+     * and provides the same circular lag convention used throughout firmware.
      */
     for (size_t lag = 0U; lag < sample_count; ++lag) {
         double score = 0.0;
@@ -259,10 +259,9 @@ int timing_analyze_frame(
     }
 
     /*
-     * Match receive_data.py exactly:
+     * Fit reference from the aligned signal:
      *
-     * design = np.column_stack((aligned, np.ones(n)))
-     * scale, offset = np.linalg.lstsq(design, reference)[0]
+     *     reference ~= scale * aligned + offset
      */
     for (size_t i = 0U; i < sample_count; ++i) {
         const double x = (double)aligned_output[i];
