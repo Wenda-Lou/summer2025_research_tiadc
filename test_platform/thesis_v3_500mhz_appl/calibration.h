@@ -48,9 +48,10 @@ typedef enum {
 #define CALIBRATION_GAIN_TOLERANCE                     0.005f
 #define CALIBRATION_GAIN_REQUIRED_CONVERGED_FRAMES     3U
 #define CALIBRATION_GAIN_UPDATE_STEP                   0.5f
+#define CALIBRATION_GAIN_RMSE_STOP_ABS_CODES           0.25f
+#define CALIBRATION_GAIN_RMSE_STOP_RELATIVE            0.01f
 #define CALIBRATION_GAIN_CORRECTION_MIN                0.5f
 #define CALIBRATION_GAIN_CORRECTION_MAX                2.0f
-#define CALIBRATION_GAIN_FITTED_MIN                    0.05f
 
 typedef enum {
     CALIBRATION_OFFSET_LOOP_IDLE = 0,
@@ -158,6 +159,7 @@ typedef struct {
     calibration_offset_loop_status_t final_status;
 
     float latest_correlation;
+    float latest_mean_residual;
     float latest_fitted_offset;
     float latest_fitted_gain;
     float latest_rmse;
@@ -179,6 +181,10 @@ typedef struct {
     float latest_fitted_offset;
     float latest_correlation;
     float latest_rmse;
+    float latest_waveform_rmse;
+    float latest_waveform_rmse_improvement;
+    float previous_waveform_rmse;
+    uint8_t have_previous_waveform_rmse;
     int8_t calibration_channel;
 } calibration_gain_loop_state_t;
 

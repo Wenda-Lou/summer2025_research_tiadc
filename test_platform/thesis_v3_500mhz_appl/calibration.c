@@ -389,6 +389,7 @@ void calibration_offset_loop_reset(void)
     g_offset_loop_state.calibration_channel = g_calibration_channel;
     g_offset_loop_state.final_status = CALIBRATION_OFFSET_LOOP_IDLE;
     g_offset_loop_state.latest_correlation = 0.0f;
+    g_offset_loop_state.latest_mean_residual = 0.0f;
     g_offset_loop_state.latest_fitted_offset = 0.0f;
     g_offset_loop_state.latest_fitted_gain = 0.0f;
     g_offset_loop_state.latest_rmse = 0.0f;
@@ -409,6 +410,10 @@ void calibration_gain_loop_reset(void)
     g_gain_loop_state.latest_fitted_offset = 0.0f;
     g_gain_loop_state.latest_correlation = 0.0f;
     g_gain_loop_state.latest_rmse = 0.0f;
+    g_gain_loop_state.latest_waveform_rmse = 0.0f;
+    g_gain_loop_state.latest_waveform_rmse_improvement = 0.0f;
+    g_gain_loop_state.previous_waveform_rmse = 0.0f;
+    g_gain_loop_state.have_previous_waveform_rmse = 0U;
 }
 
 calibration_offset_loop_state_t *calibration_offset_loop_state(void)

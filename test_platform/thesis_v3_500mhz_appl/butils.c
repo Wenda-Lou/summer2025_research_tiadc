@@ -183,6 +183,7 @@ typedef struct {
     int16_t fractional_reference[ADC_CHANNEL_SAMPLE_COUNT];
     int16_t fractional_measurement[ADC_CHANNEL_SAMPLE_COUNT];
     int16_t aligned_reference[ADC_CHANNEL_SAMPLE_COUNT];
+    int16_t aligned_raw_adc[ADC_CHANNEL_SAMPLE_COUNT];
     int16_t aligned_corrected_adc[ADC_CHANNEL_SAMPLE_COUNT];
 } calibration_frame_workspace_t;
 
@@ -200,6 +201,7 @@ typedef struct {
     float fractional_lag;
     float total_lag;
     const int16_t *aligned_reference_samples;
+    const int16_t *aligned_raw_adc_samples;
     const int16_t *aligned_corrected_adc_samples;
     size_t valid_analysis_sample_count;
     float raw_aligned_adc_mean;
@@ -231,6 +233,7 @@ typedef struct {
     double reference_frequency_hz;
     double adc_frequency_hz;
     int16_t aligned_reference[ADC_CHANNEL_SAMPLE_COUNT];
+    int16_t aligned_raw_adc[ADC_CHANNEL_SAMPLE_COUNT];
     int16_t aligned_corrected_adc[ADC_CHANNEL_SAMPLE_COUNT];
     uint32_t reference_generation;
     size_t reference_length;
@@ -2773,6 +2776,7 @@ static void calibration_offset_loop_begin_run(
     state->calibration_channel = calibration_channel_selection();
     state->final_status = CALIBRATION_OFFSET_LOOP_RUNNING;
     state->latest_correlation = 0.0f;
+    state->latest_mean_residual = 0.0f;
     state->latest_fitted_offset = 0.0f;
     state->latest_fitted_gain = 0.0f;
     state->latest_rmse = 0.0f;
@@ -2985,6 +2989,7 @@ static int calibration_capture_and_align(
 
         workspace->aligned_corrected_adc[i] = (int16_t)corrected_code;
         workspace->aligned_reference[i] = (int16_t)reference_code;
+        workspace->aligned_raw_adc[i] = raw_adc;
         raw_sum += (double)raw_adc;
     }
 
@@ -3007,6 +3012,7 @@ static int calibration_capture_and_align(
     }
 
     frame->aligned_reference_samples = workspace->aligned_reference;
+    frame->aligned_raw_adc_samples = workspace->aligned_raw_adc;
     frame->aligned_corrected_adc_samples =
         workspace->aligned_corrected_adc;
     frame->valid_analysis_sample_count = analysis_count;
@@ -3082,6 +3088,7 @@ static int calibration_pending_frame_copy(
 
     if ((destination == NULL) || (frame == NULL) || !frame->frame_valid ||
         (frame->aligned_reference_samples == NULL) ||
+        (frame->aligned_raw_adc_samples == NULL) ||
         (frame->aligned_corrected_adc_samples == NULL) ||
         (sample_count < CAL_MIN_ANALYSIS_SAMPLES) ||
         (sample_count > ADC_CHANNEL_SAMPLE_COUNT) ||
@@ -3114,6 +3121,9 @@ static int calibration_pending_frame_copy(
     memcpy(destination->aligned_reference,
            frame->aligned_reference_samples,
            sample_count * sizeof(destination->aligned_reference[0]));
+    memcpy(destination->aligned_raw_adc,
+           frame->aligned_raw_adc_samples,
+           sample_count * sizeof(destination->aligned_raw_adc[0]));
     memcpy(destination->aligned_corrected_adc,
            frame->aligned_corrected_adc_samples,
            sample_count * sizeof(destination->aligned_corrected_adc[0]));
@@ -3266,6 +3276,9 @@ static int calibration_restore_owned_frame(
     memcpy(workspace->aligned_reference,
            source->aligned_reference,
            sample_count * sizeof(workspace->aligned_reference[0]));
+    memcpy(workspace->aligned_raw_adc,
+           source->aligned_raw_adc,
+           sample_count * sizeof(workspace->aligned_raw_adc[0]));
     memcpy(workspace->aligned_corrected_adc,
            source->aligned_corrected_adc,
            sample_count * sizeof(workspace->aligned_corrected_adc[0]));
@@ -3284,6 +3297,7 @@ static int calibration_restore_owned_frame(
     frame->fractional_lag = source->fractional_lag;
     frame->total_lag = source->total_lag;
     frame->aligned_reference_samples = workspace->aligned_reference;
+    frame->aligned_raw_adc_samples = workspace->aligned_raw_adc;
     frame->aligned_corrected_adc_samples =
         workspace->aligned_corrected_adc;
     frame->valid_analysis_sample_count = sample_count;
@@ -3388,6 +3402,8 @@ static int calibration_capture_representative_batch(
 }
 
 static int calibration_pending_frame_consume(
+    float adc_gain_correction,
+    float adc_offset_correction,
     float reference_scale,
     calibration_frame_workspace_t *workspace,
     calibration_aligned_frame_t *frame,
@@ -3402,7 +3418,10 @@ static int calibration_pending_frame_consume(
     int status;
 
     if ((workspace == NULL) || (frame == NULL) ||
-        !isfinite(reference_scale) || (reference_scale <= 0.0f)) {
+        !isfinite(adc_gain_correction) ||
+        !isfinite(adc_offset_correction) ||
+        !isfinite(reference_scale) || (adc_gain_correction <= 0.0f) ||
+        (reference_scale <= 0.0f)) {
         if (reason != NULL) *reason = "Invalid pending-frame consumer.";
         return -1;
     }
@@ -3436,19 +3455,27 @@ static int calibration_pending_frame_consume(
     frame->raw_aligned_adc_mean = pending->raw_aligned_adc_mean;
 
     for (size_t i = 0U; i < sample_count; ++i) {
+        const int16_t raw_adc = pending->aligned_raw_adc[i];
+        const double corrected_adc =
+            (double)raw_adc * (double)adc_gain_correction +
+            (double)adc_offset_correction;
         const double scaled_reference =
             (double)pending->aligned_reference[i] *
             (double)reference_scale;
+        const long corrected_code = lround(corrected_adc);
         const long reference_code = lround(scaled_reference);
-        if (!isfinite(scaled_reference) ||
+        if (!isfinite(corrected_adc) || !isfinite(scaled_reference) ||
+            (corrected_code < CALIBRATION_ADC_MIN_CODE) ||
+            (corrected_code > CALIBRATION_ADC_MAX_CODE) ||
             (reference_code < INT16_MIN) ||
             (reference_code > INT16_MAX)) {
-            if (reason != NULL) *reason = "Pending reference scaling failed.";
+            if (reason != NULL) *reason =
+                "Pending aligned sample correction failed.";
             return -3;
         }
+        workspace->aligned_raw_adc[i] = raw_adc;
         workspace->aligned_reference[i] = (int16_t)reference_code;
-        workspace->aligned_corrected_adc[i] =
-            pending->aligned_corrected_adc[i];
+        workspace->aligned_corrected_adc[i] = (int16_t)corrected_code;
     }
 
     calibration_default_config(&fit_config);
@@ -3468,6 +3495,7 @@ static int calibration_pending_frame_consume(
     }
 
     frame->aligned_reference_samples = workspace->aligned_reference;
+    frame->aligned_raw_adc_samples = workspace->aligned_raw_adc;
     frame->aligned_corrected_adc_samples =
         workspace->aligned_corrected_adc;
     frame->valid_analysis_sample_count = sample_count;
@@ -3491,6 +3519,8 @@ static void calibration_offset_loop_print_summary(
                calibration_channel_name(state->calibration_channel));
     print_float_value("Final offset correction",
                       state->offset_correction, " codes");
+    print_float_value("Final mean aligned residual",
+                      state->latest_mean_residual, " codes");
     print_float_value("Final fitted offset (regression)",
                       state->latest_fitted_offset, " codes");
     print_float_value("Final fitted gain",
@@ -3538,6 +3568,8 @@ static void handle_adc_offset_calibration_status_cmd(void)
                calibration_channel_name(state->calibration_channel));
     print_float_value("Latest correlation",
                       state->latest_correlation, "");
+    print_float_value("Latest mean aligned residual",
+                      state->latest_mean_residual, " codes");
     print_float_value("Latest fitted gain",
                       state->latest_fitted_gain, "");
     print_float_value("Latest fitted offset",
@@ -3647,7 +3679,8 @@ static void handle_adc_offset_calibration_loop_cmd(void)
         if (use_pending_frame) {
             use_pending_frame = false;
             fit_status = calibration_pending_frame_consume(
-                1.0f, &frame_workspace, &aligned_frame, &pending_reason
+                1.0f, state->offset_correction, 1.0f,
+                &frame_workspace, &aligned_frame, &pending_reason
             );
             if (fit_status != 0) {
                 calibration_offset_loop_reject_frame(
@@ -3659,7 +3692,8 @@ static void handle_adc_offset_calibration_loop_cmd(void)
                        (unsigned long)aligned_frame.retained_frame_number);
         } else {
             frame_config.locked_channel = state->calibration_channel;
-            frame_config.adc_gain_correction = state->gain_correction;
+            /* Offset is estimated before applying any gain correction. */
+            frame_config.adc_gain_correction = 1.0f;
             frame_config.adc_offset_correction = state->offset_correction;
             frame_config.reference_scale = 1.0f;
             frame_config.reject_clipped_input = true;
@@ -3695,6 +3729,7 @@ static void handle_adc_offset_calibration_loop_cmd(void)
 
         if (!isfinite(aligned_frame.metrics.measured_offset) ||
             !isfinite(aligned_frame.metrics.measured_gain) ||
+            !isfinite(aligned_frame.metrics.offset_error_codes) ||
             !isfinite(aligned_frame.metrics.fitted_rmse_codes) ||
             !isfinite(aligned_frame.metrics.adc_mean) ||
             !isfinite(aligned_frame.raw_aligned_adc_mean) ||
@@ -3706,6 +3741,9 @@ static void handle_adc_offset_calibration_loop_cmd(void)
         }
 
         state->latest_correlation = aligned_frame.correlation;
+        /* Mean(corrected ADC - reference) over the guarded aligned overlap. */
+        state->latest_mean_residual =
+            aligned_frame.metrics.offset_error_codes;
         state->latest_fitted_offset =
             aligned_frame.metrics.measured_offset;
         state->latest_fitted_gain =
@@ -3731,26 +3769,21 @@ static void handle_adc_offset_calibration_loop_cmd(void)
                           aligned_frame.metrics.reference_mean, " codes");
         print_float_value("Corrected ADC mean",
                           state->latest_corrected_mean, " codes");
-        {
-            const float raw_mean_difference =
-                state->latest_corrected_mean -
-                aligned_frame.metrics.reference_mean;
-        print_float_value("Raw mean difference",
-                              raw_mean_difference, " codes");
-        }
+        print_float_value("Mean aligned residual",
+                          state->latest_mean_residual, " codes");
         print_float_value("Fitted gain (regression)",
                           state->latest_fitted_gain, "");
         print_float_value("Fitted offset (regression)",
                           state->latest_fitted_offset, " codes");
 
-        if (fabsf(state->latest_fitted_offset) <=
+        if (fabsf(state->latest_mean_residual) <=
             CALIBRATION_OFFSET_TOLERANCE_CODES) {
             ++state->convergence_count;
         } else {
             state->convergence_count = 0U;
             coefficient_delta =
                 -CALIBRATION_OFFSET_UPDATE_STEP *
-                state->latest_fitted_offset;
+                state->latest_mean_residual;
 
         }
 
@@ -3839,6 +3872,75 @@ static void calibration_gain_loop_begin_run(
     state->latest_fitted_offset = 0.0f;
     state->latest_correlation = 0.0f;
     state->latest_rmse = 0.0f;
+    state->latest_waveform_rmse = 0.0f;
+    state->latest_waveform_rmse_improvement = 0.0f;
+    state->previous_waveform_rmse = 0.0f;
+    state->have_previous_waveform_rmse = 0U;
+}
+
+static int calibration_measure_centered_gain_residual(
+    const calibration_aligned_frame_t *frame,
+    float fixed_offset_correction,
+    float gain_correction,
+    float *gain_residual,
+    float *waveform_rmse)
+{
+    double offset_corrected_sum = 0.0;
+    double reference_sum = 0.0;
+    double projection_numerator = 0.0;
+    double projection_denominator = 0.0;
+    double error_square_sum = 0.0;
+    double offset_corrected_mean;
+    double reference_mean;
+    const size_t sample_count = frame != NULL ?
+        frame->valid_analysis_sample_count : 0U;
+
+    if ((frame == NULL) || !frame->frame_valid ||
+        (frame->aligned_raw_adc_samples == NULL) ||
+        (frame->aligned_reference_samples == NULL) ||
+        (gain_residual == NULL) || (waveform_rmse == NULL) ||
+        (sample_count < CAL_MIN_ANALYSIS_SAMPLES) ||
+        !isfinite(fixed_offset_correction) ||
+        !isfinite(gain_correction) || (gain_correction <= 0.0f)) {
+        return -1;
+    }
+
+    /* Firmware stores C = -O_final, so x_o = raw + C. */
+    for (size_t i = 0U; i < sample_count; ++i) {
+        offset_corrected_sum +=
+            (double)frame->aligned_raw_adc_samples[i] +
+            (double)fixed_offset_correction;
+        reference_sum += (double)frame->aligned_reference_samples[i];
+    }
+    offset_corrected_mean = offset_corrected_sum / (double)sample_count;
+    reference_mean = reference_sum / (double)sample_count;
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double centered_adc =
+            ((double)frame->aligned_raw_adc_samples[i] +
+             (double)fixed_offset_correction) - offset_corrected_mean;
+        const double centered_reference =
+            (double)frame->aligned_reference_samples[i] - reference_mean;
+        const double error =
+            (double)gain_correction * centered_adc - centered_reference;
+
+        projection_numerator += centered_adc * error;
+        projection_denominator += centered_adc * centered_adc;
+        error_square_sum += error * error;
+    }
+
+    if (!isfinite(projection_numerator) ||
+        !isfinite(projection_denominator) ||
+        !isfinite(error_square_sum) ||
+        (projection_denominator <= CAL_REF_VARIANCE_EPSILON)) {
+        return -2;
+    }
+
+    *gain_residual = (float)(projection_numerator /
+                             projection_denominator);
+    *waveform_rmse = (float)sqrt(error_square_sum /
+                                 (double)sample_count);
+    return (isfinite(*gain_residual) && isfinite(*waveform_rmse)) ? 0 : -3;
 }
 
 static void calibration_gain_loop_reject_frame(
@@ -3867,8 +3969,10 @@ static void calibration_gain_loop_print_summary(
                       state->gain_correction, "");
     print_float_value("Final fitted gain (regression)",
                       state->latest_fitted_gain, "");
-    print_float_value("Final gain error from unity",
+    print_float_value("Final normalized gain residual",
                       state->latest_gain_error, "");
+    print_float_value("Final centered waveform RMSE",
+                      state->latest_waveform_rmse, " codes");
     print_float_value("Final fitted offset (regression)",
                       state->latest_fitted_offset, " codes");
     print_float_value("Final correlation",
@@ -3899,7 +4003,12 @@ static void handle_adc_gain_calibration_status_cmd(void)
     xil_printf("Calibration channel    : %s\r\n",
                calibration_channel_name(state->calibration_channel));
     print_float_value("Latest fitted gain", state->latest_fitted_gain, "");
-    print_float_value("Latest gain error", state->latest_gain_error, "");
+    print_float_value("Latest normalized gain residual",
+                      state->latest_gain_error, "");
+    print_float_value("Latest centered waveform RMSE",
+                      state->latest_waveform_rmse, " codes");
+    print_float_value("Latest waveform RMSE improvement",
+                      state->latest_waveform_rmse_improvement, " codes");
     print_float_value("Latest fitted offset",
                       state->latest_fitted_offset, " codes");
     print_float_value("Latest correlation", state->latest_correlation, "");
@@ -3963,8 +4072,13 @@ static void handle_adc_gain_calibration_loop_cmd(void)
                       state->fixed_offset_correction, " codes");
     print_float_value("Initial gain correction",
                       state->gain_correction, "");
-    print_float_value("Gain tolerance", CALIBRATION_GAIN_TOLERANCE, "");
+    print_float_value("Gain update tolerance",
+                      CALIBRATION_GAIN_TOLERANCE, "");
     print_float_value("Gain update step", CALIBRATION_GAIN_UPDATE_STEP, "");
+    print_float_value("Waveform stop abs. tolerance",
+                      CALIBRATION_GAIN_RMSE_STOP_ABS_CODES, " codes");
+    print_float_value("Waveform stop relative tolerance",
+                      CALIBRATION_GAIN_RMSE_STOP_RELATIVE, "");
     xil_printf("Maximum accepted frames : %u\r\n",
                CALIBRATION_GAIN_MAX_ACCEPTED_ITERATIONS);
     xil_printf("Maximum rejected frames : %u\r\n",
@@ -3978,7 +4092,12 @@ static void handle_adc_gain_calibration_loop_cmd(void)
                CALIBRATION_GAIN_REQUIRED_CONVERGED_FRAMES) {
         calibration_frame_config_t frame_config;
         calibration_aligned_frame_t aligned_frame;
-        float update_factor = 1.0f;
+        float gain_delta;
+        float gain_residual;
+        float waveform_rmse;
+        float waveform_rmse_improvement = 0.0f;
+        float waveform_stop_tolerance = 0.0f;
+        bool waveform_stopped_improving = false;
         float next_gain;
         uint32_t batch_accepted_frames = 0U;
         const char *frame_reason = NULL;
@@ -3991,6 +4110,8 @@ static void handle_adc_gain_calibration_loop_cmd(void)
         if (use_pending_frame) {
             use_pending_frame = false;
             status = calibration_pending_frame_consume(
+                state->gain_correction,
+                state->gain_correction * state->fixed_offset_correction,
                 CAL_ADC_FULL_SCALE_CODES / CAL_DAC_FULL_SCALE_CODES,
                 &frame_workspace, &aligned_frame, &pending_reason
             );
@@ -4005,7 +4126,7 @@ static void handle_adc_gain_calibration_loop_cmd(void)
             frame_config.locked_channel = state->calibration_channel;
             frame_config.adc_gain_correction = state->gain_correction;
             frame_config.adc_offset_correction =
-                state->fixed_offset_correction;
+                state->gain_correction * state->fixed_offset_correction;
             frame_config.reference_scale =
                 CAL_ADC_FULL_SCALE_CODES / CAL_DAC_FULL_SCALE_CODES;
             frame_config.reject_clipped_input = true;
@@ -4037,24 +4158,21 @@ static void handle_adc_gain_calibration_loop_cmd(void)
         {
             const float fitted_gain =
             aligned_frame.metrics.measured_gain;
-            const float gain_error = fitted_gain - 1.0f;
             const float fitted_offset =
             aligned_frame.metrics.measured_offset;
             const float correlation = aligned_frame.correlation;
             const float fitted_rmse =
             aligned_frame.metrics.fitted_rmse_codes;
-        if (!isfinite(fitted_gain) || !isfinite(gain_error) ||
+        if (!isfinite(fitted_gain) ||
                 !isfinite(fitted_offset) || !isfinite(correlation) ||
-                !isfinite(fitted_rmse) ||
-                fitted_gain < CALIBRATION_GAIN_FITTED_MIN) {
+                !isfinite(fitted_rmse)) {
             calibration_gain_loop_reject_frame(
-                state, "fitted gain outside valid range");
+                state, "invalid aligned regression result");
             state->final_status = CALIBRATION_GAIN_LOOP_FAILED;
             break;
         }
 
             state->latest_fitted_gain = fitted_gain;
-            state->latest_gain_error = gain_error;
             state->latest_fitted_offset = fitted_offset;
             state->latest_correlation = correlation;
             state->latest_rmse = fitted_rmse;
@@ -4072,35 +4190,64 @@ static void handle_adc_gain_calibration_loop_cmd(void)
             state->calibration_channel = selected_channel;
         }
 
-        if (fabsf(state->latest_gain_error) <=
-            CALIBRATION_GAIN_TOLERANCE) {
+        if (calibration_measure_centered_gain_residual(
+                &aligned_frame, state->fixed_offset_correction,
+                state->gain_correction, &gain_residual,
+                &waveform_rmse) != 0) {
+            calibration_gain_loop_reject_frame(
+                state, "centered gain-residual calculation failed");
+            continue;
+        }
+
+        gain_delta = -CALIBRATION_GAIN_UPDATE_STEP * gain_residual;
+        next_gain = state->gain_correction + gain_delta;
+        state->latest_gain_error = gain_residual;
+        state->latest_waveform_rmse = waveform_rmse;
+
+        if (state->have_previous_waveform_rmse != 0U) {
+            waveform_rmse_improvement =
+                state->previous_waveform_rmse - waveform_rmse;
+            waveform_stop_tolerance = fmaxf(
+                CALIBRATION_GAIN_RMSE_STOP_ABS_CODES,
+                fabsf(state->previous_waveform_rmse) *
+                    CALIBRATION_GAIN_RMSE_STOP_RELATIVE);
+            waveform_stopped_improving =
+                fabsf(waveform_rmse_improvement) <= waveform_stop_tolerance;
+        }
+        state->latest_waveform_rmse_improvement =
+            waveform_rmse_improvement;
+
+        if ((fabsf(gain_delta) < CALIBRATION_GAIN_TOLERANCE) &&
+            waveform_stopped_improving) {
             ++state->convergence_count;
         } else {
             state->convergence_count = 0U;
-            update_factor = 1.0f - CALIBRATION_GAIN_UPDATE_STEP *
-                                      state->latest_gain_error;
-
-            if (!isfinite(update_factor))
-            {
-                calibration_gain_loop_reject_frame(
-                    state, "nonfinite gain update factor");
-                continue;
-            }
         }
-        next_gain = state->gain_correction * update_factor;
 
         print_float_value("Correlation", state->latest_correlation, "");
         print_float_value("Fitted gain (regression)",
                           state->latest_fitted_gain, "");
-        print_float_value("Gain error from unity", state->latest_gain_error, "");
-        print_float_value("Gain update factor", update_factor, "");
+        print_float_value("Normalized gain residual",
+                          state->latest_gain_error, "");
+        print_float_value("Gain coefficient update", gain_delta, "");
+        print_float_value("Centered waveform RMSE", waveform_rmse, " codes");
+        if (state->have_previous_waveform_rmse != 0U) {
+            print_float_value("Waveform RMSE improvement",
+                              waveform_rmse_improvement, " codes");
+            print_float_value("Waveform stop tolerance",
+                              waveform_stop_tolerance, " codes");
+            xil_printf("Waveform stopped improving: %s\r\n",
+                       waveform_stopped_improving ? "YES" : "NO");
+        } else {
+            xil_printf("Waveform stopped improving: not yet evaluated\r\n");
+        }
         print_float_value("Fixed offset correction",
                           state->fixed_offset_correction, " codes");
         print_float_value("Fitted offset (regression)",
                           state->latest_fitted_offset, " codes");
         print_float_value("Fitted RMSE", state->latest_rmse, " codes");
 
-        if (!isfinite(update_factor) || !isfinite(next_gain) ||
+        if (!isfinite(gain_delta) || !isfinite(next_gain) ||
             next_gain < CALIBRATION_GAIN_CORRECTION_MIN ||
             next_gain > CALIBRATION_GAIN_CORRECTION_MAX ||
             calibration_set_software_gain_correction(next_gain) != 0) {
@@ -4113,6 +4260,8 @@ static void handle_adc_gain_calibration_loop_cmd(void)
         }
 
         state->gain_correction = next_gain;
+        state->previous_waveform_rmse = waveform_rmse;
+        state->have_previous_waveform_rmse = 1U;
         ++state->accepted_frame_count;
         print_float_value("New gain correction", state->gain_correction, "");
         xil_printf("Consecutive passes      : %lu\r\n",
