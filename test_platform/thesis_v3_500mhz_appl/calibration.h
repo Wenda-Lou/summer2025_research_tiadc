@@ -241,6 +241,7 @@ const char *calibration_offset_loop_status_name(
     calibration_offset_loop_status_t status
 );
 
+void calibration_gain_loop_reset(void);
 calibration_gain_loop_state_t *calibration_gain_loop_state(void);
 const char *calibration_gain_loop_status_name(
     calibration_gain_loop_status_t status
@@ -249,6 +250,8 @@ float calibration_software_gain_correction(void);
 float calibration_software_offset_correction(void);
 int calibration_set_software_gain_correction(float value);
 int calibration_set_software_offset_correction(float value);
+int8_t calibration_channel_selection(void);
+int calibration_set_channel_selection(int8_t channel);
 void calibration_all_loops_reset(void);
 
 #ifdef __cplusplus

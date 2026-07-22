@@ -11,6 +11,7 @@ static calibration_offset_loop_state_t g_offset_loop_state;
 static calibration_gain_loop_state_t g_gain_loop_state;
 static float g_software_gain_correction = 1.0f;
 static float g_software_offset_correction = 0.0f;
+static int8_t g_calibration_channel = -1;
 
 static float clamp_float(float value, float minimum, float maximum)
 {
@@ -384,8 +385,29 @@ void calibration_offset_loop_reset(void)
     memset(&g_offset_loop_state, 0, sizeof(g_offset_loop_state));
     g_offset_loop_state.offset_correction = g_software_offset_correction;
     g_offset_loop_state.gain_correction = g_software_gain_correction;
-    g_offset_loop_state.calibration_channel = -1;
+    g_offset_loop_state.calibration_channel = g_calibration_channel;
     g_offset_loop_state.final_status = CALIBRATION_OFFSET_LOOP_IDLE;
+    g_offset_loop_state.latest_correlation = 0.0f;
+    g_offset_loop_state.latest_fitted_offset = 0.0f;
+    g_offset_loop_state.latest_fitted_gain = 0.0f;
+    g_offset_loop_state.latest_rmse = 0.0f;
+    g_offset_loop_state.latest_raw_mean = 0.0f;
+    g_offset_loop_state.latest_corrected_mean = 0.0f;
+}
+
+void calibration_gain_loop_reset(void)
+{
+    memset(&g_gain_loop_state, 0, sizeof(g_gain_loop_state));
+    g_gain_loop_state.gain_correction = g_software_gain_correction;
+    g_gain_loop_state.fixed_offset_correction =
+        g_software_offset_correction;
+    g_gain_loop_state.calibration_channel = g_calibration_channel;
+    g_gain_loop_state.final_status = CALIBRATION_GAIN_LOOP_IDLE;
+    g_gain_loop_state.latest_fitted_gain = 0.0f;
+    g_gain_loop_state.latest_gain_error = 0.0f;
+    g_gain_loop_state.latest_fitted_offset = 0.0f;
+    g_gain_loop_state.latest_correlation = 0.0f;
+    g_gain_loop_state.latest_rmse = 0.0f;
 }
 
 calibration_offset_loop_state_t *calibration_offset_loop_state(void)
@@ -420,12 +442,7 @@ const char *calibration_offset_loop_status_name(
 calibration_gain_loop_state_t *calibration_gain_loop_state(void)
 {
     if (g_gain_loop_state.gain_correction == 0.0f) {
-        memset(&g_gain_loop_state, 0, sizeof(g_gain_loop_state));
-        g_gain_loop_state.gain_correction = g_software_gain_correction;
-        g_gain_loop_state.fixed_offset_correction =
-            g_software_offset_correction;
-        g_gain_loop_state.calibration_channel = -1;
-        g_gain_loop_state.final_status = CALIBRATION_GAIN_LOOP_IDLE;
+        calibration_gain_loop_reset();
     }
     return &g_gain_loop_state;
 }
@@ -471,12 +488,27 @@ int calibration_set_software_offset_correction(float value)
     return 0;
 }
 
+int8_t calibration_channel_selection(void)
+{
+    return g_calibration_channel;
+}
+
+int calibration_set_channel_selection(int8_t channel)
+{
+    if (channel < -1 || channel > 1)
+        return -1;
+    g_calibration_channel = channel;
+    g_offset_loop_state.calibration_channel = channel;
+    g_gain_loop_state.calibration_channel = channel;
+    return 0;
+}
+
 void calibration_all_loops_reset(void)
 {
     g_software_gain_correction = 1.0f;
     g_software_offset_correction = 0.0f;
-    memset(&g_offset_loop_state, 0, sizeof(g_offset_loop_state));
-    memset(&g_gain_loop_state, 0, sizeof(g_gain_loop_state));
+    g_calibration_channel = -1;
+
     calibration_offset_loop_reset();
-    (void)calibration_gain_loop_state();
+    calibration_gain_loop_reset();
 }
