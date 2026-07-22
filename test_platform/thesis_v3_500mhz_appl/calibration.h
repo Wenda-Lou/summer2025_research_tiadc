@@ -43,6 +43,15 @@ typedef enum {
 #define CALIBRATION_ADC_MIN_CODE                       (-8192)
 #define CALIBRATION_ADC_MAX_CODE                       8191
 
+#define CALIBRATION_GAIN_MAX_ACCEPTED_ITERATIONS       20U
+#define CALIBRATION_GAIN_MAX_REJECTED_FRAMES           10U
+#define CALIBRATION_GAIN_TOLERANCE                     0.005f
+#define CALIBRATION_GAIN_REQUIRED_CONVERGED_FRAMES     3U
+#define CALIBRATION_GAIN_UPDATE_STEP                   0.5f
+#define CALIBRATION_GAIN_CORRECTION_MIN                0.5f
+#define CALIBRATION_GAIN_CORRECTION_MAX                2.0f
+#define CALIBRATION_GAIN_FITTED_MIN                    0.05f
+
 typedef enum {
     CALIBRATION_OFFSET_LOOP_IDLE = 0,
     CALIBRATION_OFFSET_LOOP_RUNNING,
@@ -50,6 +59,14 @@ typedef enum {
     CALIBRATION_OFFSET_LOOP_NOT_CONVERGED,
     CALIBRATION_OFFSET_LOOP_FAILED
 } calibration_offset_loop_status_t;
+
+typedef enum {
+    CALIBRATION_GAIN_LOOP_IDLE = 0,
+    CALIBRATION_GAIN_LOOP_RUNNING,
+    CALIBRATION_GAIN_LOOP_PASS,
+    CALIBRATION_GAIN_LOOP_NOT_CONVERGED,
+    CALIBRATION_GAIN_LOOP_FAILED
+} calibration_gain_loop_status_t;
 
 typedef struct {
     /* Maximum iterations allowed for each stage. */
@@ -116,7 +133,7 @@ typedef struct {
 
     /*
      * Correction model applied to raw ADC samples:
-     *     corrected = (raw + offset_correction) * gain_correction
+     *     corrected = raw * gain_correction + offset_correction
      */
     float offset_correction;
     float gain_correction;
@@ -149,6 +166,21 @@ typedef struct {
 
     int8_t calibration_channel;
 } calibration_offset_loop_state_t;
+
+typedef struct {
+    float gain_correction;
+    float fixed_offset_correction;
+    uint32_t accepted_frame_count;
+    uint32_t rejected_frame_count;
+    uint32_t convergence_count;
+    calibration_gain_loop_status_t final_status;
+    float latest_fitted_gain;
+    float latest_gain_error;
+    float latest_fitted_offset;
+    float latest_correlation;
+    float latest_rmse;
+    int8_t calibration_channel;
+} calibration_gain_loop_state_t;
 
 /* Populate a conservative default configuration. */
 void calibration_default_config(calibration_config_t *config);
@@ -208,6 +240,16 @@ calibration_offset_loop_state_t *calibration_offset_loop_state(void);
 const char *calibration_offset_loop_status_name(
     calibration_offset_loop_status_t status
 );
+
+calibration_gain_loop_state_t *calibration_gain_loop_state(void);
+const char *calibration_gain_loop_status_name(
+    calibration_gain_loop_status_t status
+);
+float calibration_software_gain_correction(void);
+float calibration_software_offset_correction(void);
+int calibration_set_software_gain_correction(float value);
+int calibration_set_software_offset_correction(float value);
+void calibration_all_loops_reset(void);
 
 #ifdef __cplusplus
 }

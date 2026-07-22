@@ -8,6 +8,9 @@
 #define CALIBRATION_EPSILON     1.0e-20
 
 static calibration_offset_loop_state_t g_offset_loop_state;
+static calibration_gain_loop_state_t g_gain_loop_state;
+static float g_software_gain_correction = 1.0f;
+static float g_software_offset_correction = 0.0f;
 
 static float clamp_float(float value, float minimum, float maximum)
 {
@@ -135,8 +138,8 @@ calibration_status_t calibration_analyze_frame(
      */
     for (i = 0U; i < sample_count; ++i) {
         const double corrected_adc =
-            ((double)adc_samples[i] + (double)state->offset_correction) *
-            (double)state->gain_correction;
+            (double)adc_samples[i] * (double)state->gain_correction +
+            (double)state->offset_correction;
 
         sum_adc += corrected_adc;
         sum_ref += (double)reference_samples[i];
@@ -150,8 +153,8 @@ calibration_status_t calibration_analyze_frame(
      */
     for (i = 0U; i < sample_count; ++i) {
         const double corrected_adc =
-            ((double)adc_samples[i] + (double)state->offset_correction) *
-            (double)state->gain_correction;
+            (double)adc_samples[i] * (double)state->gain_correction +
+            (double)state->offset_correction;
         const double reference = (double)reference_samples[i];
 
         const double adc_ac = corrected_adc - mean_adc;
@@ -186,8 +189,8 @@ calibration_status_t calibration_analyze_frame(
      */
     for (i = 0U; i < sample_count; ++i) {
         const double corrected_adc =
-            ((double)adc_samples[i] + (double)state->offset_correction) *
-            (double)state->gain_correction;
+            (double)adc_samples[i] * (double)state->gain_correction +
+            (double)state->offset_correction;
         const double fitted_adc =
             measured_gain * (double)reference_samples[i] + measured_offset;
         const double fitted_error = corrected_adc - fitted_adc;
@@ -255,15 +258,12 @@ calibration_status_t calibration_update(calibration_state_t *state)
         }
 
         /*
-         * corrected = (raw + offset_correction) * gain_correction
+         * corrected = raw * gain_correction + offset_correction
          *
          * To reduce a positive output mean error, decrease offset_correction.
-         * Divide by gain so the requested output-code change is expressed at
-         * the adder input.
          */
         update = state->config.offset_step *
-                 state->metrics.offset_error_codes /
-                 state->gain_correction;
+                 state->metrics.offset_error_codes;
 
         state->offset_correction = clamp_float(
             state->offset_correction - update,
@@ -289,22 +289,16 @@ calibration_status_t calibration_update(calibration_state_t *state)
 
         /*
          * measured_gain is the residual slope after applying the existing
-         * correction. The exact next multiplier would be:
-         *
-         *     gain_correction /= measured_gain
-         *
-         * Blend toward that value using gain_step to reduce oscillation.
+         * correction. Apply a damped multiplicative residual-gain update.
          */
         if (fabsf(state->metrics.measured_gain) <= FLT_EPSILON) {
             state->stage = CALIBRATION_STAGE_FAILED;
             return CALIBRATION_ERR_ZERO_REFERENCE_POWER;
         }
 
-        update = state->gain_correction /
-                 state->metrics.measured_gain;
-
-        state->gain_correction += state->config.gain_step *
-                                  (update - state->gain_correction);
+        update = 1.0f + state->config.gain_step *
+                          (1.0f - state->metrics.measured_gain);
+        state->gain_correction *= update;
 
         state->gain_correction = clamp_float(
             state->gain_correction,
@@ -359,8 +353,8 @@ float calibration_apply_sample(
         return (float)raw_adc_sample;
     }
 
-    return ((float)raw_adc_sample + state->offset_correction) *
-           state->gain_correction;
+    return (float)raw_adc_sample * state->gain_correction +
+           state->offset_correction;
 }
 
 int calibration_is_complete(const calibration_state_t *state)
@@ -388,7 +382,8 @@ const char *calibration_stage_name(calibration_stage_t stage)
 void calibration_offset_loop_reset(void)
 {
     memset(&g_offset_loop_state, 0, sizeof(g_offset_loop_state));
-    g_offset_loop_state.gain_correction = 1.0f;
+    g_offset_loop_state.offset_correction = g_software_offset_correction;
+    g_offset_loop_state.gain_correction = g_software_gain_correction;
     g_offset_loop_state.calibration_channel = -1;
     g_offset_loop_state.final_status = CALIBRATION_OFFSET_LOOP_IDLE;
 }
@@ -420,4 +415,68 @@ const char *calibration_offset_loop_status_name(
     default:
         return "UNKNOWN";
     }
+}
+
+calibration_gain_loop_state_t *calibration_gain_loop_state(void)
+{
+    if (g_gain_loop_state.gain_correction == 0.0f) {
+        memset(&g_gain_loop_state, 0, sizeof(g_gain_loop_state));
+        g_gain_loop_state.gain_correction = g_software_gain_correction;
+        g_gain_loop_state.fixed_offset_correction =
+            g_software_offset_correction;
+        g_gain_loop_state.calibration_channel = -1;
+        g_gain_loop_state.final_status = CALIBRATION_GAIN_LOOP_IDLE;
+    }
+    return &g_gain_loop_state;
+}
+
+const char *calibration_gain_loop_status_name(
+    calibration_gain_loop_status_t status)
+{
+    switch (status) {
+    case CALIBRATION_GAIN_LOOP_IDLE: return "IDLE";
+    case CALIBRATION_GAIN_LOOP_RUNNING: return "RUNNING";
+    case CALIBRATION_GAIN_LOOP_PASS: return "PASS";
+    case CALIBRATION_GAIN_LOOP_NOT_CONVERGED: return "NOT CONVERGED";
+    case CALIBRATION_GAIN_LOOP_FAILED: return "FAILED";
+    default: return "UNKNOWN";
+    }
+}
+
+float calibration_software_gain_correction(void)
+{
+    return g_software_gain_correction;
+}
+
+float calibration_software_offset_correction(void)
+{
+    return g_software_offset_correction;
+}
+
+int calibration_set_software_gain_correction(float value)
+{
+    if (!isfinite(value) || value < CALIBRATION_GAIN_CORRECTION_MIN ||
+        value > CALIBRATION_GAIN_CORRECTION_MAX)
+        return -1;
+    g_software_gain_correction = value;
+    return 0;
+}
+
+int calibration_set_software_offset_correction(float value)
+{
+    if (!isfinite(value) ||
+        fabsf(value) > CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES)
+        return -1;
+    g_software_offset_correction = value;
+    return 0;
+}
+
+void calibration_all_loops_reset(void)
+{
+    g_software_gain_correction = 1.0f;
+    g_software_offset_correction = 0.0f;
+    memset(&g_offset_loop_state, 0, sizeof(g_offset_loop_state));
+    memset(&g_gain_loop_state, 0, sizeof(g_gain_loop_state));
+    calibration_offset_loop_reset();
+    (void)calibration_gain_loop_state();
 }

@@ -57,11 +57,12 @@
  *          -cal [frames]                    Measurement-only calibration against
  *                                           the uploaded DAC TXT (default 10)
  *          -cal offset                      Run software ADC offset calibration
+ *          -cal gain                        Run standalone software gain calibration
  *                                           using uploaded DAC TXT alignment
- *          -cal status                      Display software offset calibration
- *                                           state and latest metrics
- *          -cal reset                       Reset software offset calibration
- *                                           coefficient and state
+ *          -cal status                      Display separate software gain and
+ *                                           offset states and latest metrics
+ *          -cal reset                       Reset both software coefficients
+ *                                           and both loop states
  *
  *          -ref                             Display uploaded reference status
  *                                           and buffer information
