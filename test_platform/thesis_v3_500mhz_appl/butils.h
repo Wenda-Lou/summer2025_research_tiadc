@@ -39,8 +39,8 @@
  *              status                        Display current calibration status
  *              back                          Return to UART command prompt
  *
- *          -timing [frames]                  Capture and transmit repeated ADC
- *                                            frames for on-board timing alignment
+ *          -timing [frames]                  Align repeated ADC captures against
+ *                                            the uploaded DAC TXT reference
  *                                            (default: 20 frames)
  *
  *          -gain                             Enter ADC gain setting menu
@@ -87,7 +87,6 @@ bool adc_set_effective_sample_rate_hz(double rate_hz);
 #define ADC_TIMING_DEFAULT_FRAMES       20U
 #define ADC_TIMING_MAX_FRAMES           1000U
 #define ADC_TIMING_INTERFRAME_DELAY_US  100000U
-#define ADC_TIMING_MIN_CORRELATION      0.90f
 
 extern volatile uint8_t adc_sweep_active;
 
