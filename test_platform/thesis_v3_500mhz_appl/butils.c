@@ -3506,6 +3506,81 @@ static int calibration_pending_frame_consume(
     return 0;
 }
 
+/*
+ * Publish a fresh representative capture measured with the final coefficient.
+ * The stored reference remains at its canonical adc -cal scale so a later
+ * calibration stage can apply its own stage-specific scaling exactly once.
+ */
+static int calibration_publish_final_capture(
+    const char *stage_name,
+    const int16_t *even_reference,
+    const int16_t *odd_reference,
+    size_t reference_count,
+    const calibration_frame_config_t *config,
+    calibration_frame_workspace_t *workspace)
+{
+    calibration_aligned_frame_t selected_frame;
+    uint32_t accepted_count = 0U;
+    const char *reason = NULL;
+    int status;
+
+    calibration_pending_frame_invalidate();
+    xil_printf("\r\n========== Calibrated Capture Output ==========\r\n");
+    xil_printf("Source stage             : %s\r\n",
+               stage_name != NULL ? stage_name : "unknown");
+    xil_printf("Capture timing           : after final coefficient update\r\n");
+
+    usleep(ADC_TIMING_INTERFRAME_DELAY_US);
+    status = calibration_capture_representative_batch(
+        even_reference, odd_reference, reference_count, config, workspace,
+        &selected_frame, &accepted_count, &reason
+    );
+    xil_printf("Accepted output frames   : %lu/%u\r\n",
+               (unsigned long)accepted_count,
+               CAL_UPDATE_FRAME_BATCH_SIZE);
+    if ((status != 0) || !selected_frame.frame_valid) {
+        xil_printf("Pending input frame      : none\r\n");
+        xil_printf("Capture output status    : NOT READY\r\n");
+        xil_printf("Reason                   : %s\r\n",
+                   reason != NULL ? reason : "final capture failed");
+        xil_printf("===============================================\r\n");
+        return -1;
+    }
+
+    status = calibration_pending_frame_copy(
+        &g_pending_calibration_frame, &selected_frame,
+        selected_frame.retained_frame_number,
+        reference_buffer_generation(), reference_buffer_length(),
+        reference_buffer_format()
+    );
+    if (status != 0) {
+        calibration_pending_frame_invalidate();
+        xil_printf("Pending input frame      : none\r\n");
+        xil_printf("Capture output status    : NOT READY\r\n");
+        xil_printf("Reason                   : pending-frame copy failed\r\n");
+        xil_printf("===============================================\r\n");
+        return -2;
+    }
+
+    xil_printf("Pending input frame      : Frame %lu\r\n",
+               (unsigned long)selected_frame.retained_frame_number);
+    xil_printf("Selection reason         : Closest to median calibration metrics\r\n");
+    xil_printf("Channel                  : %s\r\n",
+               selected_frame.selected_channel_name);
+    xil_printf("Reference phase          : %s\r\n",
+               selected_frame.selected_phase_name);
+    print_float_value("Correlation", selected_frame.correlation, "");
+    xil_printf("Integer lag              : %ld samples\r\n",
+               (long)selected_frame.integer_lag);
+    print_float_value("Fractional lag",
+                      selected_frame.fractional_lag, " samples");
+    xil_printf("Valid aligned samples    : %lu\r\n",
+               (unsigned long)selected_frame.valid_analysis_sample_count);
+    xil_printf("Capture output status    : READY\r\n");
+    xil_printf("===============================================\r\n");
+    return 0;
+}
+
 static void calibration_offset_loop_print_summary(
     const calibration_offset_loop_state_t *state
 )
@@ -3855,6 +3930,22 @@ static void handle_adc_offset_calibration_loop_cmd(void)
     }
 
     calibration_offset_loop_print_summary(state);
+    if (state->final_status == CALIBRATION_OFFSET_LOOP_PASS) {
+        calibration_frame_config_t output_config;
+
+        output_config.locked_channel = state->calibration_channel;
+        output_config.adc_gain_correction = 1.0f;
+        output_config.adc_offset_correction = state->offset_correction;
+        output_config.reference_scale = 1.0f;
+        output_config.reject_clipped_input = true;
+        (void)calibration_publish_final_capture(
+            "offset calibration", even_reference, odd_reference,
+            reconstructed_count, &output_config, &frame_workspace);
+    } else {
+        calibration_pending_frame_invalidate();
+        xil_printf("\r\nCalibrated capture output: none "
+                   "(offset calibration did not pass).\r\n");
+    }
     adc_sweep_active = 0U;
 }
 
@@ -4283,6 +4374,23 @@ static void handle_adc_gain_calibration_loop_cmd(void)
             state->final_status = CALIBRATION_GAIN_LOOP_NOT_CONVERGED;
     }
     calibration_gain_loop_print_summary(state);
+    if (state->final_status == CALIBRATION_GAIN_LOOP_PASS) {
+        calibration_frame_config_t output_config;
+
+        output_config.locked_channel = state->calibration_channel;
+        output_config.adc_gain_correction = state->gain_correction;
+        output_config.adc_offset_correction =
+            state->gain_correction * state->fixed_offset_correction;
+        output_config.reference_scale = 1.0f;
+        output_config.reject_clipped_input = true;
+        (void)calibration_publish_final_capture(
+            "gain calibration", even_reference, odd_reference,
+            reconstructed_count, &output_config, &frame_workspace);
+    } else {
+        calibration_pending_frame_invalidate();
+        xil_printf("\r\nCalibrated capture output: none "
+                   "(gain calibration did not pass).\r\n");
+    }
     adc_sweep_active = 0U;
 }
 
