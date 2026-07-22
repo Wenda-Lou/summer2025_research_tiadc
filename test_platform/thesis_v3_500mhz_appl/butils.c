@@ -24,6 +24,7 @@
 #include "ad9695_registers.h"
 #include "ethernet.h"
 #include "calibration.h"
+#include "calibration_pending.h"
 #include "reference_buffer.h"
 #include "adc_frame.h"
 #include "timing_alignment.h"
@@ -45,13 +46,15 @@ typedef struct {
     double analysis_rate_hz;
     double correction_factor;
     bool measured_rate_valid;
+    uint32_t generation;
 } adc_sample_rate_state_t;
 
 static adc_sample_rate_state_t g_adc_sample_rate = {
     ADC_CONFIGURED_SAMPLE_RATE_HZ,
     ADC_CONFIGURED_SAMPLE_RATE_HZ,
     1.0,
-    false
+    false,
+    0U
 };
 
 double adc_get_configured_sample_rate_hz(void)
@@ -80,6 +83,10 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
     if (!isfinite(rate_hz) || rate_hz < 0.8 * configured_hz ||
         rate_hz > 1.2 * configured_hz)
         return false;
+    if (rate_hz != g_adc_sample_rate.analysis_rate_hz) {
+        calibration_pending_frame_invalidate();
+        ++g_adc_sample_rate.generation;
+    }
     g_adc_sample_rate.analysis_rate_hz = rate_hz;
     g_adc_sample_rate.correction_factor = rate_hz / configured_hz;
     g_adc_sample_rate.measured_rate_valid = true;
@@ -93,6 +100,7 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define ADC_CAL_DEFAULT_FRAMES              10U
 #define ADC_CAL_MIN_FRAMES                  2U
 #define ADC_CAL_MAX_FRAMES                  100U
+#define CAL_UPDATE_FRAME_BATCH_SIZE         ADC_CAL_DEFAULT_FRAMES
 #define CAL_TIMING_MIN_CORRELATION           0.970f
 #define CAL_TIMING_MIN_ANALYSIS_SAMPLES       800U
 #define CAL_TIMING_MAX_ABS_FRAC_LAG          0.5f
@@ -106,6 +114,7 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_ADC_FULL_SCALE_CODES                 8192.0f
 #define CAL_DAC_FULL_SCALE_CODES                32768.0f
 #define CAL_REF_ADC_DEBUG_SAMPLE_COUNT           32U
+#define CAL_REPRESENTATIVE_TIE_EPSILON            1.0e-6f
 
 _Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
                "ADC test configuration sample count mismatch");
@@ -179,6 +188,7 @@ typedef struct {
 
 typedef struct {
     uint32_t capture_sequence;
+    uint32_t retained_frame_number;
     bool capture_succeeded;
     bool reconstruction_succeeded;
     bool frame_valid;
@@ -201,6 +211,54 @@ typedef struct {
     double adc_frequency_hz;
     const char *rejection_reason;
 } calibration_aligned_frame_t;
+
+typedef struct {
+    bool valid;
+    bool consumed;
+    uint32_t capture_sequence;
+    uint32_t retained_frame_number;
+    int8_t selected_channel;
+    int8_t selected_reference_phase;
+    int32_t integer_lag;
+    float fractional_lag;
+    float total_lag;
+    size_t analysis_sample_count;
+    float raw_aligned_adc_mean;
+    float correlation;
+    calibration_metrics_t metrics;
+    calibration_timing_frame_result_t timing;
+    adc_cal_overlap_t overlap;
+    double reference_frequency_hz;
+    double adc_frequency_hz;
+    int16_t aligned_reference[ADC_CHANNEL_SAMPLE_COUNT];
+    int16_t aligned_corrected_adc[ADC_CHANNEL_SAMPLE_COUNT];
+    uint32_t reference_generation;
+    size_t reference_length;
+    reference_buffer_format_t reference_format;
+    uint32_t sample_rate_generation;
+    double configured_sample_rate_hz;
+    double effective_sample_rate_hz;
+    double dac_adc_rate_ratio;
+    int8_t channel_configuration;
+    float software_gain_correction;
+    float software_offset_correction;
+} calibration_pending_frame_t;
+
+typedef struct {
+    float median_fitted_offset;
+    float median_normalized_gain;
+    float median_fitted_rmse;
+} calibration_selection_medians_t;
+
+static calibration_pending_frame_t g_pending_calibration_frame;
+
+void calibration_pending_frame_invalidate(void)
+{
+    memset(&g_pending_calibration_frame, 0,
+           sizeof(g_pending_calibration_frame));
+    g_pending_calibration_frame.selected_channel = -1;
+    g_pending_calibration_frame.selected_reference_phase = -1;
+}
 
 static int16_t calibration_convert_reference_to_adc_units(int16_t dac_code)
 {
@@ -2961,6 +3019,465 @@ static int calibration_capture_and_align(
     return 0;
 }
 
+static int calibration_pending_frame_is_compatible(const char **reason)
+{
+    const calibration_pending_frame_t *pending =
+        &g_pending_calibration_frame;
+    const double current_ratio =
+        DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz();
+
+    if (reason != NULL) {
+        *reason = "No valid pending aligned frame.";
+    }
+    if (!pending->valid || pending->consumed) {
+        return 0;
+    }
+    if (!reference_buffer_is_ready() ||
+        (pending->reference_generation != reference_buffer_generation()) ||
+        (pending->reference_length != reference_buffer_length()) ||
+        (pending->reference_format != reference_buffer_format())) {
+        if (reason != NULL) *reason = "Uploaded DAC reference changed.";
+        return 0;
+    }
+    if ((pending->sample_rate_generation != g_adc_sample_rate.generation) ||
+        (pending->configured_sample_rate_hz !=
+             adc_get_configured_sample_rate_hz()) ||
+        (pending->effective_sample_rate_hz !=
+             adc_get_effective_sample_rate_hz()) ||
+        (pending->dac_adc_rate_ratio != current_ratio)) {
+        if (reason != NULL) *reason = "ADC/DAC sample-rate configuration changed.";
+        return 0;
+    }
+    if (pending->channel_configuration !=
+        calibration_channel_selection()) {
+        if (reason != NULL) *reason = "Calibration channel setting changed.";
+        return 0;
+    }
+    if ((pending->software_gain_correction !=
+             calibration_software_gain_correction()) ||
+        (pending->software_offset_correction !=
+             calibration_software_offset_correction())) {
+        if (reason != NULL) *reason = "Software calibration coefficients changed.";
+        return 0;
+    }
+    if ((pending->analysis_sample_count < CAL_MIN_ANALYSIS_SAMPLES) ||
+        (pending->analysis_sample_count > ADC_CHANNEL_SAMPLE_COUNT)) {
+        if (reason != NULL) *reason = "Pending aligned sample count is invalid.";
+        return 0;
+    }
+    return 1;
+}
+
+static int calibration_pending_frame_copy(
+    calibration_pending_frame_t *destination,
+    const calibration_aligned_frame_t *frame,
+    uint32_t frame_number,
+    uint32_t reference_generation,
+    size_t reference_length,
+    reference_buffer_format_t reference_format
+)
+{
+    const size_t sample_count = frame != NULL ?
+        frame->valid_analysis_sample_count : 0U;
+
+    if ((destination == NULL) || (frame == NULL) || !frame->frame_valid ||
+        (frame->aligned_reference_samples == NULL) ||
+        (frame->aligned_corrected_adc_samples == NULL) ||
+        (sample_count < CAL_MIN_ANALYSIS_SAMPLES) ||
+        (sample_count > ADC_CHANNEL_SAMPLE_COUNT) ||
+        !reference_buffer_is_ready() ||
+        (reference_generation != reference_buffer_generation()) ||
+        (reference_length != reference_buffer_length()) ||
+        (reference_format != reference_buffer_format())) {
+        return -1;
+    }
+
+    memset(destination, 0, sizeof(*destination));
+    destination->selected_channel = -1;
+    destination->selected_reference_phase = -1;
+
+    destination->capture_sequence = frame->capture_sequence;
+    destination->retained_frame_number = frame_number;
+    destination->selected_channel = frame->selected_channel;
+    destination->selected_reference_phase = frame->selected_reference_phase;
+    destination->integer_lag = frame->integer_lag;
+    destination->fractional_lag = frame->fractional_lag;
+    destination->total_lag = frame->total_lag;
+    destination->analysis_sample_count = sample_count;
+    destination->raw_aligned_adc_mean = frame->raw_aligned_adc_mean;
+    destination->correlation = frame->correlation;
+    destination->metrics = frame->metrics;
+    destination->timing = frame->timing;
+    destination->overlap = frame->overlap;
+    destination->reference_frequency_hz = frame->reference_frequency_hz;
+    destination->adc_frequency_hz = frame->adc_frequency_hz;
+    memcpy(destination->aligned_reference,
+           frame->aligned_reference_samples,
+           sample_count * sizeof(destination->aligned_reference[0]));
+    memcpy(destination->aligned_corrected_adc,
+           frame->aligned_corrected_adc_samples,
+           sample_count * sizeof(destination->aligned_corrected_adc[0]));
+    destination->reference_generation = reference_generation;
+    destination->reference_length = reference_length;
+    destination->reference_format = reference_format;
+    destination->sample_rate_generation = g_adc_sample_rate.generation;
+    destination->configured_sample_rate_hz =
+        adc_get_configured_sample_rate_hz();
+    destination->effective_sample_rate_hz =
+        adc_get_effective_sample_rate_hz();
+    destination->dac_adc_rate_ratio =
+        DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz();
+    destination->channel_configuration = calibration_channel_selection();
+    destination->software_gain_correction =
+        calibration_software_gain_correction();
+    destination->software_offset_correction =
+        calibration_software_offset_correction();
+    destination->consumed = false;
+    destination->valid = true;
+    return 0;
+}
+
+/*
+ * Select a typical accepted frame, not the final frame or the frame with the
+ * best correlation.  Ranking is lexicographic and therefore deterministic.
+ */
+static int calibration_select_representative_frame(
+    const calibration_pending_frame_t *candidates,
+    size_t candidate_count,
+    size_t *selected_index,
+    calibration_selection_medians_t *medians
+)
+{
+    float offsets[ADC_CAL_MAX_FRAMES];
+    float normalized_gains[ADC_CAL_MAX_FRAMES];
+    float fitted_rmse[ADC_CAL_MAX_FRAMES];
+    size_t best_index = 0U;
+
+    if ((candidates == NULL) || (selected_index == NULL) ||
+        (medians == NULL) || (candidate_count == 0U) ||
+        (candidate_count > ADC_CAL_MAX_FRAMES)) {
+        return -1;
+    }
+
+    for (size_t i = 0U; i < candidate_count; ++i) {
+        if (!candidates[i].valid || candidates[i].consumed ||
+            !isfinite(candidates[i].metrics.measured_offset) ||
+            !isfinite(candidates[i].metrics.measured_gain) ||
+            !isfinite(candidates[i].metrics.fitted_rmse_codes) ||
+            !isfinite(candidates[i].correlation)) {
+            return -2;
+        }
+        offsets[i] = candidates[i].metrics.measured_offset;
+        normalized_gains[i] = candidates[i].metrics.measured_gain *
+            (CAL_DAC_FULL_SCALE_CODES / CAL_ADC_FULL_SCALE_CODES);
+        fitted_rmse[i] = candidates[i].metrics.fitted_rmse_codes;
+    }
+
+    medians->median_fitted_offset =
+        median_float(offsets, candidate_count);
+    medians->median_normalized_gain =
+        median_float(normalized_gains, candidate_count);
+    medians->median_fitted_rmse =
+        median_float(fitted_rmse, candidate_count);
+    if (!isfinite(medians->median_fitted_offset) ||
+        !isfinite(medians->median_normalized_gain) ||
+        !isfinite(medians->median_fitted_rmse)) {
+        return -3;
+    }
+
+    for (size_t i = 1U; i < candidate_count; ++i) {
+        const float candidate_offset_distance = fabsf(
+            candidates[i].metrics.measured_offset -
+            medians->median_fitted_offset);
+        const float best_offset_distance = fabsf(
+            candidates[best_index].metrics.measured_offset -
+            medians->median_fitted_offset);
+        const float candidate_normalized_gain =
+            candidates[i].metrics.measured_gain *
+            (CAL_DAC_FULL_SCALE_CODES / CAL_ADC_FULL_SCALE_CODES);
+        const float best_normalized_gain =
+            candidates[best_index].metrics.measured_gain *
+            (CAL_DAC_FULL_SCALE_CODES / CAL_ADC_FULL_SCALE_CODES);
+        const float candidate_gain_distance = fabsf(
+            candidate_normalized_gain - medians->median_normalized_gain);
+        const float best_gain_distance = fabsf(
+            best_normalized_gain - medians->median_normalized_gain);
+        int choose_candidate = 0;
+
+        if (candidate_offset_distance <
+            best_offset_distance - CAL_REPRESENTATIVE_TIE_EPSILON) {
+            choose_candidate = 1;
+        } else if (fabsf(candidate_offset_distance - best_offset_distance) <=
+                   CAL_REPRESENTATIVE_TIE_EPSILON) {
+            if (candidate_gain_distance <
+                best_gain_distance - CAL_REPRESENTATIVE_TIE_EPSILON) {
+                choose_candidate = 1;
+            } else if (fabsf(candidate_gain_distance - best_gain_distance) <=
+                       CAL_REPRESENTATIVE_TIE_EPSILON) {
+                if (candidates[i].metrics.fitted_rmse_codes <
+                    candidates[best_index].metrics.fitted_rmse_codes -
+                        CAL_REPRESENTATIVE_TIE_EPSILON) {
+                    choose_candidate = 1;
+                } else if (fabsf(
+                        candidates[i].metrics.fitted_rmse_codes -
+                        candidates[best_index].metrics.fitted_rmse_codes) <=
+                           CAL_REPRESENTATIVE_TIE_EPSILON) {
+                    if (candidates[i].correlation >
+                        candidates[best_index].correlation +
+                            CAL_REPRESENTATIVE_TIE_EPSILON) {
+                        choose_candidate = 1;
+                    } else if (fabsf(candidates[i].correlation -
+                                     candidates[best_index].correlation) <=
+                                   CAL_REPRESENTATIVE_TIE_EPSILON &&
+                               candidates[i].retained_frame_number <
+                                   candidates[best_index].retained_frame_number) {
+                        choose_candidate = 1;
+                    }
+                }
+            }
+        }
+
+        if (choose_candidate) {
+            best_index = i;
+        }
+    }
+
+    *selected_index = best_index;
+    return 0;
+}
+
+static int calibration_restore_owned_frame(
+    const calibration_pending_frame_t *source,
+    calibration_frame_workspace_t *workspace,
+    calibration_aligned_frame_t *frame
+)
+{
+    const size_t sample_count = source != NULL ?
+        source->analysis_sample_count : 0U;
+
+    if ((source == NULL) || !source->valid || source->consumed ||
+        (workspace == NULL) || (frame == NULL) ||
+        (sample_count < CAL_MIN_ANALYSIS_SAMPLES) ||
+        (sample_count > ADC_CHANNEL_SAMPLE_COUNT)) {
+        return -1;
+    }
+
+    memset(frame, 0, sizeof(*frame));
+    memcpy(workspace->aligned_reference,
+           source->aligned_reference,
+           sample_count * sizeof(workspace->aligned_reference[0]));
+    memcpy(workspace->aligned_corrected_adc,
+           source->aligned_corrected_adc,
+           sample_count * sizeof(workspace->aligned_corrected_adc[0]));
+    frame->capture_sequence = source->capture_sequence;
+    frame->retained_frame_number = source->retained_frame_number;
+    frame->capture_succeeded = true;
+    frame->reconstruction_succeeded = true;
+    frame->frame_valid = true;
+    frame->selected_channel = source->selected_channel;
+    frame->selected_reference_phase = source->selected_reference_phase;
+    frame->selected_channel_name = source->selected_channel == 0 ?
+        "Channel A" : "Channel B";
+    frame->selected_phase_name = source->selected_reference_phase == 0 ?
+        "EVEN" : "ODD";
+    frame->integer_lag = source->integer_lag;
+    frame->fractional_lag = source->fractional_lag;
+    frame->total_lag = source->total_lag;
+    frame->aligned_reference_samples = workspace->aligned_reference;
+    frame->aligned_corrected_adc_samples =
+        workspace->aligned_corrected_adc;
+    frame->valid_analysis_sample_count = sample_count;
+    frame->raw_aligned_adc_mean = source->raw_aligned_adc_mean;
+    frame->correlation = source->correlation;
+    frame->metrics = source->metrics;
+    frame->timing = source->timing;
+    frame->overlap = source->overlap;
+    frame->reference_frequency_hz = source->reference_frequency_hz;
+    frame->adc_frequency_hz = source->adc_frequency_hz;
+    frame->rejection_reason = "none";
+    return 0;
+}
+
+/* Capture a fresh batch and apply the same representative selector as adc -cal. */
+static int calibration_capture_representative_batch(
+    const int16_t *even_reference,
+    const int16_t *odd_reference,
+    size_t reference_count,
+    const calibration_frame_config_t *config,
+    calibration_frame_workspace_t *workspace,
+    calibration_aligned_frame_t *selected_frame,
+    uint32_t *accepted_count,
+    const char **reason
+)
+{
+    static calibration_pending_frame_t
+        candidates[CAL_UPDATE_FRAME_BATCH_SIZE];
+    calibration_selection_medians_t medians;
+    size_t candidate_count = 0U;
+    size_t selected_index = 0U;
+    const uint32_t reference_generation = reference_buffer_generation();
+    const size_t reference_length = reference_buffer_length();
+    const reference_buffer_format_t reference_format =
+        reference_buffer_format();
+    const uint32_t required =
+        CAL_UPDATE_FRAME_BATCH_SIZE < CAL_TIMING_MIN_ACCEPTED_FRAMES ?
+        CAL_UPDATE_FRAME_BATCH_SIZE : CAL_TIMING_MIN_ACCEPTED_FRAMES;
+
+    if (accepted_count != NULL) *accepted_count = 0U;
+    if (reason != NULL) *reason = "fresh frame batch is invalid";
+    if ((even_reference == NULL) || (odd_reference == NULL) ||
+        (config == NULL) || (workspace == NULL) ||
+        (selected_frame == NULL)) {
+        return -1;
+    }
+
+    for (uint32_t frame_number = 1U;
+         frame_number <= CAL_UPDATE_FRAME_BATCH_SIZE;
+         ++frame_number) {
+        calibration_aligned_frame_t captured_frame;
+        const int status = calibration_capture_and_align(
+            even_reference, odd_reference, reference_count,
+            config, workspace, &captured_frame
+        );
+
+        if ((status == 0) && captured_frame.frame_valid &&
+            (calibration_pending_frame_copy(
+                &candidates[candidate_count], &captured_frame,
+                frame_number, reference_generation, reference_length,
+                reference_format) == 0)) {
+            ++candidate_count;
+        }
+        if (frame_number < CAL_UPDATE_FRAME_BATCH_SIZE) {
+            usleep(ADC_TIMING_INTERFRAME_DELAY_US);
+        }
+    }
+
+    if (accepted_count != NULL) {
+        *accepted_count = (uint32_t)candidate_count;
+    }
+    if (!reference_buffer_is_ready() ||
+        (reference_generation != reference_buffer_generation()) ||
+        (reference_length != reference_buffer_length()) ||
+        (reference_format != reference_buffer_format())) {
+        if (reason != NULL) *reason =
+            "uploaded reference changed during fresh selection batch";
+        return -2;
+    }
+    if ((candidate_count < required) ||
+        ((float)candidate_count / (float)CAL_UPDATE_FRAME_BATCH_SIZE <
+         CAL_TIMING_MIN_ACCEPTANCE_RATE)) {
+        if (reason != NULL) *reason =
+            "insufficient accepted frames in fresh selection batch";
+        return -3;
+    }
+    if (calibration_select_representative_frame(
+            candidates, candidate_count, &selected_index, &medians) != 0) {
+        if (reason != NULL) *reason =
+            "representative frame selection failed";
+        return -4;
+    }
+    if (calibration_restore_owned_frame(
+            &candidates[selected_index], workspace, selected_frame) != 0) {
+        if (reason != NULL) *reason =
+            "selected frame restoration failed";
+        return -5;
+    }
+
+    if (reason != NULL) *reason = "none";
+    return 0;
+}
+
+static int calibration_pending_frame_consume(
+    float reference_scale,
+    calibration_frame_workspace_t *workspace,
+    calibration_aligned_frame_t *frame,
+    const char **reason
+)
+{
+    calibration_pending_frame_t *pending =
+        &g_pending_calibration_frame;
+    calibration_state_t fit_state;
+    calibration_config_t fit_config;
+    const size_t sample_count = pending->analysis_sample_count;
+    int status;
+
+    if ((workspace == NULL) || (frame == NULL) ||
+        !isfinite(reference_scale) || (reference_scale <= 0.0f)) {
+        if (reason != NULL) *reason = "Invalid pending-frame consumer.";
+        return -1;
+    }
+    if (!calibration_pending_frame_is_compatible(reason)) {
+        calibration_pending_frame_invalidate();
+        return -2;
+    }
+
+    /* Claim the pending frame before copying it into the loop workspace. */
+    pending->consumed = true;
+    pending->valid = false;
+    memset(frame, 0, sizeof(*frame));
+    frame->capture_sequence = pending->capture_sequence;
+    frame->retained_frame_number = pending->retained_frame_number;
+    frame->capture_succeeded = true;
+    frame->reconstruction_succeeded = true;
+    frame->selected_channel = pending->selected_channel;
+    frame->selected_reference_phase = pending->selected_reference_phase;
+    frame->selected_channel_name = pending->selected_channel == 0 ?
+        "Channel A" : "Channel B";
+    frame->selected_phase_name = pending->selected_reference_phase == 0 ?
+        "EVEN" : "ODD";
+    frame->integer_lag = pending->integer_lag;
+    frame->fractional_lag = pending->fractional_lag;
+    frame->total_lag = pending->total_lag;
+    frame->correlation = pending->correlation;
+    frame->timing = pending->timing;
+    frame->overlap = pending->overlap;
+    frame->reference_frequency_hz = pending->reference_frequency_hz;
+    frame->adc_frequency_hz = pending->adc_frequency_hz;
+    frame->raw_aligned_adc_mean = pending->raw_aligned_adc_mean;
+
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double scaled_reference =
+            (double)pending->aligned_reference[i] *
+            (double)reference_scale;
+        const long reference_code = lround(scaled_reference);
+        if (!isfinite(scaled_reference) ||
+            (reference_code < INT16_MIN) ||
+            (reference_code > INT16_MAX)) {
+            if (reason != NULL) *reason = "Pending reference scaling failed.";
+            return -3;
+        }
+        workspace->aligned_reference[i] = (int16_t)reference_code;
+        workspace->aligned_corrected_adc[i] =
+            pending->aligned_corrected_adc[i];
+    }
+
+    calibration_default_config(&fit_config);
+    status = calibration_init(&fit_state, &fit_config);
+    if (status == CALIBRATION_OK) {
+        status = calibration_analyze_frame(
+            &fit_state,
+            workspace->aligned_corrected_adc,
+            workspace->aligned_reference,
+            sample_count
+        );
+    }
+    if ((status != CALIBRATION_OK) ||
+        !calibration_fit_metrics_are_valid(&fit_state)) {
+        if (reason != NULL) *reason = "Pending-frame regression failed.";
+        return -4;
+    }
+
+    frame->aligned_reference_samples = workspace->aligned_reference;
+    frame->aligned_corrected_adc_samples =
+        workspace->aligned_corrected_adc;
+    frame->valid_analysis_sample_count = sample_count;
+    frame->metrics = fit_state.metrics;
+    frame->frame_valid = true;
+    frame->rejection_reason = "none";
+    if (reason != NULL) *reason = "none";
+    return 0;
+}
+
 static void calibration_offset_loop_print_summary(
     const calibration_offset_loop_state_t *state
 )
@@ -3043,6 +3560,8 @@ static void handle_adc_offset_calibration_loop_cmd(void)
     size_t reconstructed_count = 0U;
     double even_variance;
     double odd_variance;
+    const char *pending_reason = NULL;
+    bool use_pending_frame = true;
 
     if (adc_sweep_active) {
         ERR("Another automatic ADC capture is already in progress.");
@@ -3062,6 +3581,18 @@ static void handle_adc_offset_calibration_loop_cmd(void)
 
     if (RxBufferPtr == NULL) {
         ERR("DMA receive buffer is not available.");
+        state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+        calibration_offset_loop_print_summary(state);
+        return;
+    }
+
+    if (!calibration_pending_frame_is_compatible(&pending_reason)) {
+        xil_printf("No valid pending aligned frame.\r\n");
+        if (pending_reason != NULL) {
+            xil_printf("Reason: %s\r\n", pending_reason);
+        }
+        xil_printf("Run 'adc -cal' immediately before this command.\r\n");
+        calibration_pending_frame_invalidate();
         state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
         calibration_offset_loop_print_summary(state);
         return;
@@ -3104,32 +3635,60 @@ static void handle_adc_offset_calibration_loop_cmd(void)
         calibration_aligned_frame_t aligned_frame;
         float coefficient_delta = 0.0f;
         float next_offset_correction;
+        uint32_t batch_accepted_frames = 0U;
+        const char *frame_reason = NULL;
+        const bool using_pending = use_pending_frame;
         int fit_status;
 
         xil_printf("\r\nIteration %lu\r\n",
                    (unsigned long)(state->accepted_frame_count +
                                    state->rejected_frame_count + 1U));
 
-        frame_config.locked_channel = state->calibration_channel;
-        frame_config.adc_gain_correction = state->gain_correction;
-        frame_config.adc_offset_correction = state->offset_correction;
-        frame_config.reference_scale = 1.0f;
-        frame_config.reject_clipped_input = true;
-        fit_status = calibration_capture_and_align(
-            even_reference, odd_reference, reconstructed_count,
-            &frame_config, &frame_workspace, &aligned_frame
-        );
+        if (use_pending_frame) {
+            use_pending_frame = false;
+            fit_status = calibration_pending_frame_consume(
+                1.0f, &frame_workspace, &aligned_frame, &pending_reason
+            );
+            if (fit_status != 0) {
+                calibration_offset_loop_reject_frame(
+                    state, pending_reason);
+                state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
+                break;
+            }
+            xil_printf("Input source            : pending adc -cal frame %lu\r\n",
+                       (unsigned long)aligned_frame.retained_frame_number);
+        } else {
+            frame_config.locked_channel = state->calibration_channel;
+            frame_config.adc_gain_correction = state->gain_correction;
+            frame_config.adc_offset_correction = state->offset_correction;
+            frame_config.reference_scale = 1.0f;
+            frame_config.reject_clipped_input = true;
+            fit_status = calibration_capture_representative_batch(
+                even_reference, odd_reference, reconstructed_count,
+                &frame_config, &frame_workspace, &aligned_frame,
+                &batch_accepted_frames, &frame_reason
+            );
+            xil_printf("Input source            : fresh representative batch\r\n");
+            xil_printf("Batch accepted frames   : %lu/%u\r\n",
+                       (unsigned long)batch_accepted_frames,
+                       CAL_UPDATE_FRAME_BATCH_SIZE);
+        }
 
+        if ((fit_status != 0) || !aligned_frame.frame_valid) {
+            calibration_offset_loop_reject_frame(
+                state, frame_reason != NULL ?
+                frame_reason : aligned_frame.rejection_reason);
+            continue;
+        }
+
+        if (!using_pending) {
+            xil_printf("Selected batch frame    : %lu\r\n",
+                       (unsigned long)aligned_frame.retained_frame_number);
+        }
         xil_printf("Channel                 : %s\r\n",
                    aligned_frame.selected_channel_name);
         xil_printf("Reference phase         : %s\r\n",
                    aligned_frame.selected_phase_name);
-
-        if ((fit_status != 0) || !aligned_frame.frame_valid) {
-            calibration_offset_loop_reject_frame(
-                state, aligned_frame.rejection_reason);
-            continue;
-        }
 
         print_float_value("Correlation",
                           aligned_frame.correlation, "");
@@ -3358,6 +3917,8 @@ static void handle_adc_gain_calibration_loop_cmd(void)
     calibration_gain_loop_state_t *state = calibration_gain_loop_state();
     size_t reconstructed_count = 0U;
     double even_variance, odd_variance;
+    const char *pending_reason = NULL;
+    bool use_pending_frame = true;
 
     if (adc_sweep_active || RxBufferPtr == NULL) {
         ERR("ADC capture is unavailable for gain calibration.");
@@ -3369,6 +3930,17 @@ static void handle_adc_gain_calibration_loop_cmd(void)
         state->calibration_channel > 1)
     {
         ERR("Invalid shared calibration channel selection.");
+        state->final_status = CALIBRATION_GAIN_LOOP_FAILED;
+        calibration_gain_loop_print_summary(state);
+        return;
+    }
+    if (!calibration_pending_frame_is_compatible(&pending_reason)) {
+        xil_printf("No valid pending aligned frame.\r\n");
+        if (pending_reason != NULL) {
+            xil_printf("Reason: %s\r\n", pending_reason);
+        }
+        xil_printf("Run 'adc -cal' immediately before this command.\r\n");
+        calibration_pending_frame_invalidate();
         state->final_status = CALIBRATION_GAIN_LOOP_FAILED;
         calibration_gain_loop_print_summary(state);
         return;
@@ -3408,30 +3980,59 @@ static void handle_adc_gain_calibration_loop_cmd(void)
         calibration_aligned_frame_t aligned_frame;
         float update_factor = 1.0f;
         float next_gain;
+        uint32_t batch_accepted_frames = 0U;
+        const char *frame_reason = NULL;
+        const bool using_pending = use_pending_frame;
         int status;
 
         xil_printf("\r\nIteration %lu\r\n",
             (unsigned long)(state->accepted_frame_count +
                             state->rejected_frame_count + 1U));
-        frame_config.locked_channel = state->calibration_channel;
-        frame_config.adc_gain_correction = state->gain_correction;
-        frame_config.adc_offset_correction = state->fixed_offset_correction;
-        frame_config.reference_scale =
-            CAL_ADC_FULL_SCALE_CODES / CAL_DAC_FULL_SCALE_CODES;
-        frame_config.reject_clipped_input = true;
-        status = calibration_capture_and_align(
-            even_reference, odd_reference, reconstructed_count,
-            &frame_config, &frame_workspace, &aligned_frame
-        );
+        if (use_pending_frame) {
+            use_pending_frame = false;
+            status = calibration_pending_frame_consume(
+                CAL_ADC_FULL_SCALE_CODES / CAL_DAC_FULL_SCALE_CODES,
+                &frame_workspace, &aligned_frame, &pending_reason
+            );
+            if (status != 0) {
+                calibration_gain_loop_reject_frame(state, pending_reason);
+                state->final_status = CALIBRATION_GAIN_LOOP_FAILED;
+                break;
+            }
+            xil_printf("Input source            : pending adc -cal frame %lu\r\n",
+                       (unsigned long)aligned_frame.retained_frame_number);
+        } else {
+            frame_config.locked_channel = state->calibration_channel;
+            frame_config.adc_gain_correction = state->gain_correction;
+            frame_config.adc_offset_correction =
+                state->fixed_offset_correction;
+            frame_config.reference_scale =
+                CAL_ADC_FULL_SCALE_CODES / CAL_DAC_FULL_SCALE_CODES;
+            frame_config.reject_clipped_input = true;
+            status = calibration_capture_representative_batch(
+                even_reference, odd_reference, reconstructed_count,
+                &frame_config, &frame_workspace, &aligned_frame,
+                &batch_accepted_frames, &frame_reason
+            );
+            xil_printf("Input source            : fresh representative batch\r\n");
+            xil_printf("Batch accepted frames   : %lu/%u\r\n",
+                       (unsigned long)batch_accepted_frames,
+                       CAL_UPDATE_FRAME_BATCH_SIZE);
+        }
+        if ((status != 0) || !aligned_frame.frame_valid) {
+            calibration_gain_loop_reject_frame(state,
+                frame_reason != NULL ?
+                frame_reason : aligned_frame.rejection_reason);
+            continue;
+        }
+        if (!using_pending) {
+            xil_printf("Selected batch frame    : %lu\r\n",
+                       (unsigned long)aligned_frame.retained_frame_number);
+        }
         xil_printf("Channel                 : %s\r\n",
                    aligned_frame.selected_channel_name);
         xil_printf("Reference phase         : %s\r\n",
                    aligned_frame.selected_phase_name);
-        if ((status != 0) || !aligned_frame.frame_valid) {
-            calibration_gain_loop_reject_frame(state,
-                aligned_frame.rejection_reason);
-            continue;
-        }
 
         {
             const float fitted_gain =
@@ -3544,13 +4145,25 @@ void handle_adc_calibration_cmd(uint32_t frame_count)
     static float correlations[ADC_CAL_MAX_FRAMES];
     static float integer_lags[ADC_CAL_MAX_FRAMES];
     static float fractional_lags[ADC_CAL_MAX_FRAMES];
+    static calibration_pending_frame_t
+        accepted_candidates[ADC_CAL_MAX_FRAMES];
 
     size_t reconstructed_count = 0U;
     uint32_t accepted_frames = 0U;
-    int calibration_channel = -1;
+    size_t candidate_count = 0U;
+    size_t selected_candidate = 0U;
+    int calibration_channel = calibration_channel_selection();
+    int alignment_pass = 0;
+    int representative_selected = 0;
     double sum_correlation = 0.0;
     double even_variance;
     double odd_variance;
+    uint32_t reference_generation;
+    size_t uploaded_reference_length;
+    reference_buffer_format_t uploaded_reference_format;
+    calibration_selection_medians_t selection_medians;
+
+    calibration_pending_frame_invalidate();
 
     if ((frame_count < ADC_CAL_MIN_FRAMES) ||
         (frame_count > ADC_CAL_MAX_FRAMES)) {
@@ -3563,6 +4176,9 @@ void handle_adc_calibration_cmd(uint32_t frame_count)
     if (calibration_prepare_uploaded_dac_reference(
             even_reference, odd_reference, &reconstructed_count,
             &even_variance, &odd_variance, 1) != 0) return;
+    reference_generation = reference_buffer_generation();
+    uploaded_reference_length = reference_buffer_length();
+    uploaded_reference_format = reference_buffer_format();
 
     if (adc_sweep_active)
     {
@@ -3587,8 +4203,10 @@ void handle_adc_calibration_cmd(uint32_t frame_count)
                    (unsigned long)frame);
 
         frame_config.locked_channel = calibration_channel;
-        frame_config.adc_gain_correction = 1.0f;
-        frame_config.adc_offset_correction = 0.0f;
+        frame_config.adc_gain_correction =
+            calibration_software_gain_correction();
+        frame_config.adc_offset_correction =
+            calibration_software_offset_correction();
         frame_config.reference_scale = 1.0f;
         frame_config.reject_clipped_input = false;
         fit_status = calibration_capture_and_align(
@@ -3618,6 +4236,16 @@ void handle_adc_calibration_cmd(uint32_t frame_count)
         sum_correlation += (double)aligned_frame.correlation;
         if (calibration_channel < 0)
             calibration_channel = aligned_frame.selected_channel;
+        if (calibration_pending_frame_copy(
+                &accepted_candidates[candidate_count],
+                &aligned_frame, frame, reference_generation,
+                uploaded_reference_length,
+                uploaded_reference_format) != 0) {
+            memset(&accepted_candidates[candidate_count], 0,
+                   sizeof(accepted_candidates[candidate_count]));
+        } else {
+            ++candidate_count;
+        }
         ++accepted_frames;
 
         if (frame < frame_count) usleep(ADC_TIMING_INTERFRAME_DELAY_US);
@@ -3652,10 +4280,32 @@ void handle_adc_calibration_cmd(uint32_t frame_count)
         const uint32_t required =
             frame_count < CAL_TIMING_MIN_ACCEPTED_FRAMES ?
             frame_count : CAL_TIMING_MIN_ACCEPTED_FRAMES;
+        alignment_pass =
+            (accepted_frames >= required) &&
+            (acceptance_rate >= CAL_TIMING_MIN_ACCEPTANCE_RATE);
+        if (alignment_pass && (candidate_count >= required) &&
+            (candidate_count == accepted_frames) &&
+            (calibration_select_representative_frame(
+                accepted_candidates, candidate_count,
+                &selected_candidate, &selection_medians) == 0)) {
+            g_pending_calibration_frame =
+                accepted_candidates[selected_candidate];
+            g_pending_calibration_frame.valid = true;
+            g_pending_calibration_frame.consumed = false;
+            representative_selected = 1;
+        } else {
+            calibration_pending_frame_invalidate();
+        }
         xil_printf("\r\nAlignment status    : %s\r\n",
-                   ((accepted_frames >= required) &&
-                    (acceptance_rate >= CAL_TIMING_MIN_ACCEPTANCE_RATE)) ?
-                   "PASS" : "FAIL");
+                   alignment_pass ? "PASS" : "FAIL");
+    }
+    if (representative_selected && g_pending_calibration_frame.valid) {
+        xil_printf("Pending input frame : Frame %lu\r\n",
+                   (unsigned long)
+                       g_pending_calibration_frame.retained_frame_number);
+        xil_printf("Selection reason    : Closest to median calibration metrics\r\n");
+    } else {
+        xil_printf("Pending input frame : none\r\n");
     }
     xil_printf("==============================================\r\n");
     adc_sweep_active = 0;

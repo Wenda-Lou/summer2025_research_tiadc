@@ -1,4 +1,5 @@
 #include "calibration.h"
+#include "calibration_pending.h"
 
 #include <float.h>
 #include <math.h>
@@ -475,6 +476,7 @@ int calibration_set_software_gain_correction(float value)
     if (!isfinite(value) || value < CALIBRATION_GAIN_CORRECTION_MIN ||
         value > CALIBRATION_GAIN_CORRECTION_MAX)
         return -1;
+    calibration_pending_frame_invalidate();
     g_software_gain_correction = value;
     return 0;
 }
@@ -484,6 +486,7 @@ int calibration_set_software_offset_correction(float value)
     if (!isfinite(value) ||
         fabsf(value) > CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES)
         return -1;
+    calibration_pending_frame_invalidate();
     g_software_offset_correction = value;
     return 0;
 }
@@ -497,6 +500,7 @@ int calibration_set_channel_selection(int8_t channel)
 {
     if (channel < -1 || channel > 1)
         return -1;
+    calibration_pending_frame_invalidate();
     g_calibration_channel = channel;
     g_offset_loop_state.calibration_channel = channel;
     g_gain_loop_state.calibration_channel = channel;
@@ -505,6 +509,7 @@ int calibration_set_channel_selection(int8_t channel)
 
 void calibration_all_loops_reset(void)
 {
+    calibration_pending_frame_invalidate();
     g_software_gain_correction = 1.0f;
     g_software_offset_correction = 0.0f;
     g_calibration_channel = -1;

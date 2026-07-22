@@ -1,4 +1,5 @@
 #include "reference_buffer.h"
+#include "calibration_pending.h"
 
 #include <string.h>
 
@@ -10,6 +11,7 @@ static size_t written_sample_count = 0U;
 
 static uint8_t reference_ready = 0U;
 static reference_buffer_format_t reference_format = REFERENCE_FORMAT_ADC_RATE;
+static uint32_t reference_generation = 0U;
 
 /*
  * A byte-per-sample written map is simple and reliable for the current
@@ -20,6 +22,12 @@ static uint8_t written_map[REFERENCE_MAX_SAMPLES];
 
 void reference_buffer_clear(void)
 {
+    calibration_pending_frame_invalidate();
+    ++reference_generation;
+    if (reference_generation == 0U) {
+        ++reference_generation;
+    }
+
     memset(reference_samples, 0, sizeof(reference_samples));
     memset(written_map, 0, sizeof(written_map));
 
@@ -184,4 +192,9 @@ int reference_buffer_is_ready(void)
 reference_buffer_format_t reference_buffer_format(void)
 {
     return reference_format;
+}
+
+uint32_t reference_buffer_generation(void)
+{
+    return reference_generation;
 }

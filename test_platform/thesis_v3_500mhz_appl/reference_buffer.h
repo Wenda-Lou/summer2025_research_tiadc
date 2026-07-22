@@ -81,6 +81,7 @@ size_t reference_buffer_length(void);
 size_t reference_buffer_expected_length(void);
 int reference_buffer_is_ready(void);
 reference_buffer_format_t reference_buffer_format(void);
+uint32_t reference_buffer_generation(void);
 
 #ifdef __cplusplus
 }
