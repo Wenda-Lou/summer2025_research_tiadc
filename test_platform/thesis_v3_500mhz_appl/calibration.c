@@ -434,8 +434,14 @@ const char *calibration_offset_loop_status_name(
         return "IDLE";
     case CALIBRATION_OFFSET_LOOP_RUNNING:
         return "RUNNING";
+    case CALIBRATION_OFFSET_LOOP_CONTROLLER_CONVERGED:
+        return "CONTROLLER CONVERGED";
+    case CALIBRATION_OFFSET_LOOP_VERIFYING:
+        return "VERIFYING";
     case CALIBRATION_OFFSET_LOOP_PASS:
-        return "PASS";
+        return "CONVERGED";
+    case CALIBRATION_OFFSET_LOOP_BEST_AVAILABLE:
+        return "BEST AVAILABLE SOLUTION";
     case CALIBRATION_OFFSET_LOOP_NOT_CONVERGED:
         return "NOT CONVERGED";
     case CALIBRATION_OFFSET_LOOP_FAILED:
@@ -460,6 +466,7 @@ const char *calibration_gain_loop_status_name(
     case CALIBRATION_GAIN_LOOP_IDLE: return "IDLE";
     case CALIBRATION_GAIN_LOOP_RUNNING: return "RUNNING";
     case CALIBRATION_GAIN_LOOP_PASS: return "PASS";
+    case CALIBRATION_GAIN_LOOP_BEST_AVAILABLE: return "BEST AVAILABLE SOLUTION";
     case CALIBRATION_GAIN_LOOP_NOT_CONVERGED: return "NOT CONVERGED";
     case CALIBRATION_GAIN_LOOP_FAILED: return "FAILED";
     default: return "UNKNOWN";
@@ -481,7 +488,7 @@ int calibration_set_software_gain_correction(float value)
     if (!isfinite(value) || value < CALIBRATION_GAIN_CORRECTION_MIN ||
         value > CALIBRATION_GAIN_CORRECTION_MAX)
         return -1;
-    calibration_pending_frame_invalidate();
+    calibration_gain_input_frame_invalidate();
     g_software_gain_correction = value;
     return 0;
 }
@@ -491,7 +498,7 @@ int calibration_set_software_offset_correction(float value)
     if (!isfinite(value) ||
         fabsf(value) > CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES)
         return -1;
-    calibration_pending_frame_invalidate();
+    calibration_gain_input_frame_invalidate();
     g_software_offset_correction = value;
     return 0;
 }

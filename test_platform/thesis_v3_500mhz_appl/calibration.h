@@ -37,17 +37,40 @@ typedef enum {
 #define CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS     20U
 #define CALIBRATION_OFFSET_MAX_REJECTED_FRAMES         10U
 #define CALIBRATION_OFFSET_TOLERANCE_CODES             1.0f
-#define CALIBRATION_OFFSET_REQUIRED_CONVERGED_FRAMES   3U
-#define CALIBRATION_OFFSET_UPDATE_STEP                 0.5f
+#define CALIBRATION_OFFSET_REQUIRED_CONVERGED_FRAMES   2U
+#define CALIBRATION_OFFSET_BATCH_SIZE                  30U
+#define CALIBRATION_OFFSET_UPDATE_STEP                 0.25f
+#define CALIBRATION_OFFSET_NEAR_UPDATE_STEP            0.15f
+#define CALIBRATION_OFFSET_NEAR_RESIDUAL_CODES         5.0f
+#define CALIBRATION_OFFSET_FILTER_ALPHA                0.8f
+#define CALIBRATION_OFFSET_ENTER_TOLERANCE_CODES       1.0f
+#define CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES        1.5f
+#define CALIBRATION_OFFSET_MAX_STANDARD_ERROR_CODES    1.5f
+#define CALIBRATION_OFFSET_MAX_UPDATE_CODES            0.25f
+#define CALIBRATION_OFFSET_VERIFICATION_TARGET_CODES   2.0f
+#define CALIBRATION_OFFSET_VERIFICATION_HARD_LIMIT_CODES 3.0f
+#define CALIBRATION_OFFSET_VERIFICATION_MAX_BATCHES    3U
+#define CALIBRATION_OFFSET_MIN_ACCEPTED_FRAMES         21U
+#define CALIBRATION_OFFSET_SCORE_RMSE_WEIGHT           0.1f
+#define CALIBRATION_OFFSET_SCORE_STDERR_WEIGHT         0.5f
+#define CALIBRATION_OFFSET_MIN_IMPROVEMENT_CODES       0.1f
+#define CALIBRATION_OFFSET_NO_IMPROVEMENT_LIMIT        5U
 #define CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES    4096.0f
 #define CALIBRATION_ADC_MIN_CODE                       (-8192)
 #define CALIBRATION_ADC_MAX_CODE                       8191
 
 #define CALIBRATION_GAIN_MAX_ACCEPTED_ITERATIONS       20U
 #define CALIBRATION_GAIN_MAX_REJECTED_FRAMES           10U
+#define CALIBRATION_GAIN_BATCH_SIZE                    30U
 #define CALIBRATION_GAIN_TOLERANCE                     0.005f
+#define CALIBRATION_GAIN_MAX_STANDARD_ERROR            0.005f
 #define CALIBRATION_GAIN_REQUIRED_CONVERGED_FRAMES     3U
-#define CALIBRATION_GAIN_UPDATE_STEP                   0.5f
+#define CALIBRATION_GAIN_UPDATE_STEP                   0.25f
+#define CALIBRATION_GAIN_NEAR_UPDATE_STEP              0.15f
+#define CALIBRATION_GAIN_NEAR_ERROR                    0.02f
+#define CALIBRATION_GAIN_FILTER_ALPHA                  0.8f
+#define CALIBRATION_GAIN_NO_IMPROVEMENT_LIMIT          5U
+#define CALIBRATION_GAIN_MIN_IMPROVEMENT               0.001f
 #define CALIBRATION_GAIN_RMSE_STOP_ABS_CODES           0.25f
 #define CALIBRATION_GAIN_RMSE_STOP_RELATIVE            0.01f
 #define CALIBRATION_GAIN_CORRECTION_MIN                0.5f
@@ -56,7 +79,10 @@ typedef enum {
 typedef enum {
     CALIBRATION_OFFSET_LOOP_IDLE = 0,
     CALIBRATION_OFFSET_LOOP_RUNNING,
+    CALIBRATION_OFFSET_LOOP_CONTROLLER_CONVERGED,
+    CALIBRATION_OFFSET_LOOP_VERIFYING,
     CALIBRATION_OFFSET_LOOP_PASS,
+    CALIBRATION_OFFSET_LOOP_BEST_AVAILABLE,
     CALIBRATION_OFFSET_LOOP_NOT_CONVERGED,
     CALIBRATION_OFFSET_LOOP_FAILED
 } calibration_offset_loop_status_t;
@@ -65,6 +91,7 @@ typedef enum {
     CALIBRATION_GAIN_LOOP_IDLE = 0,
     CALIBRATION_GAIN_LOOP_RUNNING,
     CALIBRATION_GAIN_LOOP_PASS,
+    CALIBRATION_GAIN_LOOP_BEST_AVAILABLE,
     CALIBRATION_GAIN_LOOP_NOT_CONVERGED,
     CALIBRATION_GAIN_LOOP_FAILED
 } calibration_gain_loop_status_t;
@@ -155,6 +182,7 @@ typedef struct {
     uint32_t accepted_frame_count;
     uint32_t rejected_frame_count;
     uint32_t convergence_count;
+    uint32_t batch_iteration_count;
 
     calibration_offset_loop_status_t final_status;
 
@@ -165,6 +193,35 @@ typedef struct {
     float latest_rmse;
     float latest_raw_mean;
     float latest_corrected_mean;
+
+    float best_abs_residual;
+    float best_residual;
+    float best_offset_correction;
+    float latest_residual_stddev;
+    float latest_residual_min;
+    float latest_residual_max;
+    float latest_batch_rmse;
+    float best_rmse;
+    float best_filtered_residual;
+    float best_raw_residual;
+    float best_score;
+    float filtered_residual;
+    float latest_standard_error;
+    float latest_controller_gain;
+    uint32_t no_improvement_count;
+    uint8_t filtered_residual_valid;
+    uint8_t restored_best_solution;
+    uint8_t termination_reason;
+    float verification_residual;
+    float verification_correlation;
+    float verification_stddev;
+    float verification_standard_error;
+    float verification_rmse;
+    uint32_t verification_accepted_frames;
+    uint32_t verification_batch_count;
+    uint8_t verification_valid;
+    uint8_t verification_status;
+    uint8_t controller_converged;
 
     int8_t calibration_channel;
 } calibration_offset_loop_state_t;
@@ -185,6 +242,19 @@ typedef struct {
     float latest_waveform_rmse_improvement;
     float previous_waveform_rmse;
     uint8_t have_previous_waveform_rmse;
+    uint32_t batch_iteration_count;
+    uint32_t no_improvement_count;
+    float filtered_gain_error;
+    float latest_gain_stddev;
+    float latest_gain_standard_error;
+    float latest_controller_gain;
+    float best_gain_correction;
+    float best_gain_error;
+    float best_rmse;
+    float best_score;
+    uint8_t filtered_gain_error_valid;
+    uint8_t restored_best_solution;
+    uint8_t termination_reason;
     int8_t calibration_channel;
 } calibration_gain_loop_state_t;
 

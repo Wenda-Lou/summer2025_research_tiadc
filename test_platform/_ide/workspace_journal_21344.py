@@ -1,4 +1,4 @@
-# 2026-07-25T16:15:49.860456400
+# 2026-07-20T14:49:08.725437100
 import vitis
 
 client = vitis.create_client()
@@ -25,5 +25,32 @@ comp.build()
 
 comp.build()
 
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp.build()
+
+comp = client.get_component(name="thesis_v3_500mhz_appl")
 comp.build()
 

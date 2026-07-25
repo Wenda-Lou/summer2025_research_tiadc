@@ -7,4 +7,7 @@
  */
 void calibration_pending_frame_invalidate(void);
 
+/* Invalidate only the offset-to-gain handoff, preserving adc -cal reference. */
+void calibration_gain_input_frame_invalidate(void);
+
 #endif /* CALIBRATION_PENDING_H */

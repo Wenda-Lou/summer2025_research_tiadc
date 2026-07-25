@@ -43,19 +43,37 @@ void jesdlink_subclass_set(uint8_t subclass) {
     xil_printf("JESD204C subclass subclass = %d.\r\n", subclass);
 }
 
-void jesdlink_reset() {
-    xil_printf("JESD204C IP Reset Starting...");
+void jesdlink_reset(void)
+{
     uint32_t tmp_reg;
+
+    xil_printf("JESD204C IP Reset Starting...\r\n");
+
     jesdlink_read(JESDLINK_RESET_REG, &tmp_reg);
-    xil_printf("JESDLINK_RESET_REG = 0x%x.\r\n",tmp_reg);
-    tmp_reg = tmp_reg | SET_BIT(0);
+    xil_printf("Initial RESET_REG = 0x%08lx\r\n",
+               (unsigned long)tmp_reg);
+
+    /* Assert reset bit 0 */
+    tmp_reg |= (1U << 0);
     jesdlink_write(JESDLINK_RESET_REG, tmp_reg);
+
     usleep(1000);
+
     jesdlink_read(JESDLINK_RESET_REG, &tmp_reg);
-    tmp_reg = tmp_reg & CLEAR_BIT(0);
+    xil_printf("After assert RESET_REG = 0x%08lx\r\n",
+               (unsigned long)tmp_reg);
+
+    /* Release reset bit 0 */
+    tmp_reg &= ~(1U << 0);
     jesdlink_write(JESDLINK_RESET_REG, tmp_reg);
+
+    usleep(1000);
+
     jesdlink_read(JESDLINK_RESET_REG, &tmp_reg);
-    xil_printf("JESD204C IP Reset Finished. RESET_REG = 0x%x.\r\n",tmp_reg);
+    xil_printf("After release RESET_REG = 0x%08lx\r\n",
+               (unsigned long)tmp_reg);
+
+    xil_printf("JESD204C IP Reset Finished.\r\n");
 }
 
 void jesdlink_read(uint32_t addr, uint32_t* data_ptr) {
