@@ -19,3 +19,9 @@
 
 _ide/logs
 _ide/.wsdata
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Calibration loop run output
+calibration_out/
