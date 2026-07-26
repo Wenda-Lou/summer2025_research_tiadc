@@ -54,6 +54,8 @@ typedef enum {
 #define CALIBRATION_OFFSET_SCORE_RMSE_WEIGHT           0.1f
 #define CALIBRATION_OFFSET_SCORE_STDERR_WEIGHT         0.5f
 #define CALIBRATION_OFFSET_MIN_IMPROVEMENT_CODES       0.1f
+#define CALIBRATION_OFFSET_MIN_BATCHES_BEFORE_STALL    10U
+#define CALIBRATION_OFFSET_STALL_UPDATE_THRESHOLD_CODES 0.1f
 #define CALIBRATION_OFFSET_NO_IMPROVEMENT_LIMIT        5U
 #define CALIBRATION_OFFSET_MAX_ABS_CORRECTION_CODES    4096.0f
 #define CALIBRATION_ADC_MIN_CODE                       (-8192)
@@ -79,6 +81,7 @@ typedef enum {
 #define CALIBRATION_GAIN_CORRECTION_MAX                8.0f
 #define CALIBRATION_GAIN_UPDATE_TOLERANCE              0.01f
 #define CALIBRATION_GAIN_EFFECT_EPSILON                 0.002f
+#define CALIBRATION_GAIN_EFFECT_SIGMA_MULTIPLIER        2.0f
 #define CALIBRATION_GAIN_NO_EFFECT_LIMIT                3U
 #define CALIBRATION_GAIN_BASELINE_TOLERANCE             0.10f
 
@@ -284,6 +287,12 @@ typedef struct {
     uint8_t initial_measured_gain_valid;
     uint8_t previous_measured_gain_valid;
     uint8_t no_observable_effect_count;
+    float previous_gain_standard_error;
+    float post_gain_residual;
+    float post_gain_residual_stddev;
+    float post_gain_residual_standard_error;
+    uint32_t post_gain_residual_frames;
+    uint8_t post_gain_residual_valid;
     const char *failure_reason;
     int8_t calibration_channel;
 } calibration_gain_loop_state_t;
