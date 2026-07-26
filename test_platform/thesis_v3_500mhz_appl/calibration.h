@@ -48,7 +48,7 @@ typedef enum {
 #define CALIBRATION_OFFSET_MAX_STANDARD_ERROR_CODES    1.5f
 #define CALIBRATION_OFFSET_MAX_UPDATE_CODES            0.25f
 #define CALIBRATION_OFFSET_VERIFICATION_TARGET_CODES   2.0f
-#define CALIBRATION_OFFSET_VERIFICATION_HARD_LIMIT_CODES 3.0f
+#define CALIBRATION_OFFSET_VERIFICATION_PROVISIONAL_LIMIT_CODES 5.0f
 #define CALIBRATION_OFFSET_VERIFICATION_MAX_BATCHES    3U
 #define CALIBRATION_OFFSET_MIN_ACCEPTED_FRAMES         21U
 #define CALIBRATION_OFFSET_SCORE_RMSE_WEIGHT           0.1f
@@ -62,9 +62,9 @@ typedef enum {
 #define CALIBRATION_GAIN_MAX_ACCEPTED_ITERATIONS       20U
 #define CALIBRATION_GAIN_MAX_REJECTED_FRAMES           10U
 #define CALIBRATION_GAIN_BATCH_SIZE                    30U
-#define CALIBRATION_GAIN_TOLERANCE                     0.005f
+#define CALIBRATION_GAIN_TOLERANCE                     0.01f
 #define CALIBRATION_GAIN_MAX_STANDARD_ERROR            0.005f
-#define CALIBRATION_GAIN_REQUIRED_CONVERGED_FRAMES     3U
+#define CALIBRATION_GAIN_REQUIRED_CONVERGED_FRAMES     2U
 #define CALIBRATION_GAIN_UPDATE_STEP                   0.25f
 #define CALIBRATION_GAIN_NEAR_UPDATE_STEP              0.15f
 #define CALIBRATION_GAIN_NEAR_ERROR                    0.02f
@@ -74,7 +74,13 @@ typedef enum {
 #define CALIBRATION_GAIN_RMSE_STOP_ABS_CODES           0.25f
 #define CALIBRATION_GAIN_RMSE_STOP_RELATIVE            0.01f
 #define CALIBRATION_GAIN_CORRECTION_MIN                0.5f
-#define CALIBRATION_GAIN_CORRECTION_MAX                2.0f
+/* Firmware multiplier, not AD9695 register 0x1910.  Eight covers the
+ * observed ~6.14 correction while corrected-sample clipping remains guarded. */
+#define CALIBRATION_GAIN_CORRECTION_MAX                8.0f
+#define CALIBRATION_GAIN_UPDATE_TOLERANCE              0.01f
+#define CALIBRATION_GAIN_EFFECT_EPSILON                 0.002f
+#define CALIBRATION_GAIN_NO_EFFECT_LIMIT                3U
+#define CALIBRATION_GAIN_BASELINE_TOLERANCE             0.10f
 
 typedef enum {
     CALIBRATION_OFFSET_LOOP_IDLE = 0,
@@ -86,6 +92,13 @@ typedef enum {
     CALIBRATION_OFFSET_LOOP_NOT_CONVERGED,
     CALIBRATION_OFFSET_LOOP_FAILED
 } calibration_offset_loop_status_t;
+
+typedef enum {
+    CALIBRATION_OFFSET_RESULT_NONE = 0,
+    CALIBRATION_OFFSET_RESULT_CONVERGED,
+    CALIBRATION_OFFSET_RESULT_PROVISIONAL,
+    CALIBRATION_OFFSET_RESULT_FAILED
+} calibration_offset_result_t;
 
 typedef enum {
     CALIBRATION_GAIN_LOOP_IDLE = 0,
@@ -185,6 +198,7 @@ typedef struct {
     uint32_t batch_iteration_count;
 
     calibration_offset_loop_status_t final_status;
+    calibration_offset_result_t stage_result;
 
     float latest_correlation;
     float latest_mean_residual;
@@ -229,6 +243,16 @@ typedef struct {
 typedef struct {
     float gain_correction;
     float fixed_offset_correction;
+    float initial_gain_correction;
+    float final_requested_gain_correction;
+    float initial_measured_gain;
+    float previous_measured_gain;
+    float best_measured_gain;
+    float last_applied_gain_delta;
+    float nominal_system_gain;
+    float latest_raw_system_gain;
+    float initial_normalized_gain;
+    uint8_t nominal_system_gain_valid;
     uint32_t accepted_frame_count;
     uint32_t rejected_frame_count;
     uint32_t convergence_count;
@@ -255,6 +279,12 @@ typedef struct {
     uint8_t filtered_gain_error_valid;
     uint8_t restored_best_solution;
     uint8_t termination_reason;
+    uint8_t saturation_occurred;
+    uint8_t coefficient_changed;
+    uint8_t initial_measured_gain_valid;
+    uint8_t previous_measured_gain_valid;
+    uint8_t no_observable_effect_count;
+    const char *failure_reason;
     int8_t calibration_channel;
 } calibration_gain_loop_state_t;
 

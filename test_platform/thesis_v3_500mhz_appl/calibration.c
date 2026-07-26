@@ -71,7 +71,7 @@ void calibration_default_config(calibration_config_t *config)
     config->gain_step = 0.25f;
 
     config->min_gain_correction = 0.5f;
-    config->max_gain_correction = 2.0f;
+    config->max_gain_correction = CALIBRATION_GAIN_CORRECTION_MAX;
 
     config->min_offset_correction = -8192.0f;
     config->max_offset_correction = 8192.0f;
@@ -441,9 +441,9 @@ const char *calibration_offset_loop_status_name(
     case CALIBRATION_OFFSET_LOOP_PASS:
         return "CONVERGED";
     case CALIBRATION_OFFSET_LOOP_BEST_AVAILABLE:
-        return "BEST AVAILABLE SOLUTION";
+        return "PROVISIONAL";
     case CALIBRATION_OFFSET_LOOP_NOT_CONVERGED:
-        return "NOT CONVERGED";
+        return "FAILED";
     case CALIBRATION_OFFSET_LOOP_FAILED:
         return "FAILED";
     default:
@@ -465,9 +465,9 @@ const char *calibration_gain_loop_status_name(
     switch (status) {
     case CALIBRATION_GAIN_LOOP_IDLE: return "IDLE";
     case CALIBRATION_GAIN_LOOP_RUNNING: return "RUNNING";
-    case CALIBRATION_GAIN_LOOP_PASS: return "PASS";
-    case CALIBRATION_GAIN_LOOP_BEST_AVAILABLE: return "BEST AVAILABLE SOLUTION";
-    case CALIBRATION_GAIN_LOOP_NOT_CONVERGED: return "NOT CONVERGED";
+    case CALIBRATION_GAIN_LOOP_PASS: return "CONVERGED";
+    case CALIBRATION_GAIN_LOOP_BEST_AVAILABLE: return "PROVISIONAL";
+    case CALIBRATION_GAIN_LOOP_NOT_CONVERGED: return "FAILED";
     case CALIBRATION_GAIN_LOOP_FAILED: return "FAILED";
     default: return "UNKNOWN";
     }
