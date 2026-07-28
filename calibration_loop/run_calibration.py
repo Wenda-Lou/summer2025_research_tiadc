@@ -135,6 +135,138 @@ def cmd_sim(args) -> None:
           f"{avg('cal_offset_spur_dbc'):.1f} dBc")
 
 
+def cmd_probe(args) -> None:
+    """Measure without actuating.
+
+    Bring-up order matters: a closed loop that is fed a bad estimate will drive
+    the hardware somewhere useless and the log will show a converging-looking
+    trajectory around the wrong point.  This captures a few frames, prints what
+    the estimator saw, and touches nothing.  Run it, check the numbers below are
+    sane, and only then close the loop.
+    """
+    from .estimator import estimate_block, prepare_capture
+
+    cfg = _cfg_from_args(args)
+
+    if args.uart:
+        from .capture import HardwareBench
+        bench = HardwareBench(uart_port=args.uart, bind_ip=args.bind_ip)
+        label = f"hardware on {args.uart}"
+    else:
+        bench = BenchModel(cfg=cfg)
+        label = "bench model (no hardware)"
+
+    print(f"Probing {label}: {args.frames} frames, open loop, nothing is driven\n")
+    print(f"  expected main tone : {cfg.f_sig / 1e6:.4f} MHz")
+    print(f"  expected ADC rate  : {cfg.fs_adc / 1e6:.1f} MS/s "
+          f"(fs_dac {cfg.fs_dac / 1e6:.1f} / {cfg.adc_ratio})")
+    print(f"  dither events/loop : {cfg.n_events}, "
+          f"{cfg.slot_period} ADC samples apart\n")
+    print(f"  {'#':>3} {'rot':>4} {'swap':>5} {'margin':>7} {'events':>7} "
+          f"{'gainA':>9} {'gainB':>9} {'gB/gA':>9} {'offA':>8} {'offB':>8} {'dSkew ps':>9}")
+    print("  " + "-" * 96)
+
+    rows, sig, ests = [], None, []
+    try:
+        for i in range(args.frames):
+            raw = bench.capture()
+            if raw is None:
+                print(f"  {i:>3}  capture failed (no UDP frame)")
+                continue
+            prep = prepare_capture(raw, cfg, signature=sig)
+            if sig is None:
+                sig = prep["signature"]
+            est = estimate_block(prep["ch_a"], prep["ch_b"], cfg, n0=prep["n0"])
+            ests.append(est)
+            rows.append((prep, est))
+            print(f"  {i:>3} {prep['rotation']:>4} {str(prep['swapped']):>5} "
+                  f"{prep['align_margin']:>7.1f} {est.ch_a.n_events_used:>7} "
+                  f"{est.ch_a.gain_codes:>9.2f} {est.ch_b.gain_codes:>9.2f} "
+                  f"{est.gain_ratio:>9.5f} {est.ch_a.offset_codes:>8.2f} "
+                  f"{est.ch_b.offset_codes:>8.2f} {est.skew_mismatch_ps:>9.2f}")
+    finally:
+        if args.uart:
+            bench.close()
+
+    if not rows:
+        print("\nNo usable frames. See the troubleshooting table in README / BENCH_GUIDE_CN.")
+        return
+
+    def stat(vals):
+        vals = [v for v in vals if np.isfinite(v)]
+        return (np.mean(vals), np.std(vals)) if vals else (np.nan, np.nan)
+
+    gm, gs = stat([e.gain_ratio for e in ests])
+    om, os_ = stat([e.offset_mismatch_codes for e in ests])
+    sm, ss = stat([e.skew_mismatch_ps for e in ests])
+    mm = np.mean([p["align_margin"] for p, _ in rows])
+
+    print(f"\n  gain ratio      {gm:+.5f}  +/- {gs:.5f}")
+    print(f"  offset mismatch {om:+.3f}  +/- {os_:.3f} LSB")
+    print(f"  skew mismatch   {sm:+.3f}  +/- {ss:.3f} ps")
+    print(f"  align margin    {mm:.1f} (mean)")
+
+    print("\nSanity checks")
+    checks = [
+        (mm > 6.0, f"alignment margin {mm:.1f} > 6 -- the dither was found"),
+        (all(e.ch_a.n_events_used >= 8 for e in ests),
+         "at least 8 dither events per capture"),
+        (np.isfinite(gm) and 0.8 < gm < 1.25, f"gain ratio {gm:.4f} is physical"),
+        (np.isfinite(gs) and gs < 0.02, f"gain ratio scatter {gs:.5f} < 0.02"),
+        (all(e.ch_a.gain_codes > 0 for e in ests), "channel polarity resolved"),
+    ]
+    for ok, text in checks:
+        print(f"  [{'PASS' if ok else 'FAIL'}] {text}")
+    if all(ok for ok, _ in checks):
+        print("\nAll checks passed -- safe to close the loop with the bench command.")
+    else:
+        print("\nDo NOT close the loop yet. See the troubleshooting table in BENCH_GUIDE.md.")
+
+    if args.plot and rows:
+        _plot_probe(rows[-1][1], cfg, args.out, args.stem)
+
+
+def _plot_probe(est, cfg, out_dir, stem):
+    """Plot the averaged pulse replica -- the single most diagnostic figure.
+
+    V[m] must look like the injected pulse. If it is noise, the alignment or the
+    DPG vector is wrong; if it is the right shape at the wrong height, the gain
+    scale is off; if it is asymmetric, there is skew.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+
+    from .dither import adc_templates
+
+    if est.ch_a.v_profile is None:
+        return None
+    m, d, _ = adc_templates(cfg)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(1, 2, figsize=(12, 4.2))
+    for a, tag in ((est.ch_a, "A"), (est.ch_b, "B")):
+        ax[0].plot(m, a.v_profile, marker="o", ms=3, label=f"measured ch {tag}")
+        ax[1].plot(m, a.u_profile, marker="o", ms=3, label=f"ch {tag}")
+    ax[0].plot(m, est.ch_a.gain_codes * d, "k--", lw=1, label="ideal pulse x gain")
+    ax[0].set_title("V[m] — polarity-weighted average (gain + skew)")
+    ax[1].axhline(0, color="k", lw=1, ls="--")
+    ax[1].set_title("U[m] — plain average (offset)")
+    for a in ax:
+        a.set_xlabel("sample offset from pulse start")
+        a.set_ylabel("ADC codes")
+        a.grid(True, alpha=0.3)
+        a.legend()
+    fig.tight_layout()
+    path = out_dir / f"{stem}_probe.png"
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+    print(f"\nplot : {path}")
+    return path
+
+
 def cmd_bench(args) -> None:
     from .capture import HardwareBench  # imported late: needs pyserial
 
@@ -199,6 +331,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--skew-ps", dest="skew_ps", type=float, default=3.6)
     s.add_argument("--noise", type=float, default=3.0)
     s.set_defaults(func=cmd_sim)
+
+    pr = sub.add_parser("probe", help="measure once without driving anything (bring-up)")
+    add_common(pr)
+    pr.add_argument("--uart", help="e.g. COM3; omit to probe the bench model instead")
+    pr.add_argument("--bind-ip", dest="bind_ip", default="0.0.0.0")
+    pr.add_argument("--frames", type=int, default=10)
+    pr.add_argument("--plot", action="store_true", help="save the pulse-replica diagnostic plot")
+    pr.set_defaults(func=cmd_probe, stem="probe")
 
     b = sub.add_parser("bench", help="run the loop against the ZCU102")
     add_common(b)

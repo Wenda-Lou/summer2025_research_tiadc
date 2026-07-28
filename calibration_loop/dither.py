@@ -54,23 +54,24 @@ class DitherConfig:
     estimator works in are derived from ``adc_ratio``.
 
     ``adc_ratio`` must be an integer, and it is the one constraint worth
-    designing the experiment around.  With fs_dac = 2457.6 MS/s:
-
-        adc_ratio = 4  ->  fs_adc =  614.4 MS/s   (recommended)
-        adc_ratio = 2  ->  fs_adc = 1228.8 MS/s   (also fine, near the
-                                                   AD9695's 1300 MS/s limit)
-
-    An ADC clock of 500 MS/s gives a ratio of 4.9152 = 3072/625, so one DPG loop
-    would be 13333.33 ADC samples: the loop no longer closes on an ADC sample
+    designing the experiment around.  A non-integer ratio means one DPG loop is
+    not a whole number of ADC samples, so the loop stops closing on a sample
     boundary, every impulse lands on a different sub-sample phase, and the
-    averaged pulse replica smears out.  Gain would come out biased and skew would
-    not be recoverable at all.  Both clocks already come from the same reference
-    on this bench, so this is a clock-configuration change, not new hardware.
+    averaged pulse replica smears out.  Gain comes out biased and skew is not
+    recoverable at all.  Both converters already run off the same reference on
+    this bench, so satisfying it is a clock setting, not new hardware.
     """
 
     # --- DAC side (fixed by the DPG / AD9164 setup) -------------------------
-    fs_dac: float = 2457.6e6
-    """DAC sample rate [Hz]."""
+    fs_dac: float = 2000.0e6
+    """DAC sample rate [Hz].
+
+    Not the 2457.6 MS/s the bench currently runs at: that rate divided by the
+    500 MS/s ADC clock is 4.9152, and ``adc_ratio`` has to be an integer (see
+    below).  2000 MS/s is the cheapest way to satisfy that -- it is one setting
+    on the external clock source feeding J31, and it leaves the ADC side, the
+    JESD lane rate and the bitstream untouched.  Raising the ADC clock to
+    614.4 MS/s would work equally well and costs a great deal more."""
 
     n_dac_points: int = 65536
     """Samples in one DPG vector."""
@@ -79,9 +80,16 @@ class DitherConfig:
     """fs_dac / fs_adc.  Must be an integer -- see the class docstring."""
 
     # --- main tone ----------------------------------------------------------
-    sig_cycles: int = 6143
-    """Integer cycles of the main tone per vector -> the loop is seamless.
-    Any odd value is coprime with the power-of-two vector length."""
+    sig_cycles: int = 6079
+    """Integer cycles of the main tone per vector, so the loop is seamless.
+
+    The value is not free. What matters is how far the tone advances between one
+    dither impulse and the next: that phase step is what makes the tone average
+    away across events. A step close to a whole cycle means every impulse sees
+    the same phase and the tone survives the averaging, inflating the offset and
+    gain estimates. 6079 gives 0.746 cycles per slot at the default geometry;
+    6143 would give 0.996 and is a trap. :meth:`tone_phase_coherence` measures
+    this and :meth:`validate` rejects bad choices."""
 
     amp_dbfs: float = -6.0
     """Main tone amplitude [dBFS]."""
@@ -160,6 +168,22 @@ class DitherConfig:
     def f_sig(self) -> float:
         return self.sig_cycles * self.fs_dac / self.n_dac_points
 
+    def tone_phase_step(self) -> float:
+        """Tone phase advance from one dither impulse to the next, in cycles."""
+        return (self.sig_cycles * self.slot_period / self.n_adc_period) % 1.0
+
+    def tone_phase_coherence(self, n_events_visible: int = 15) -> float:
+        """How badly the main tone survives averaging over the visible events.
+
+        Returns the resultant length of the per-event tone phasors: 0 means the
+        phases are spread evenly and the tone cancels, 1 means every event sees
+        the same phase and the tone passes straight through into the estimates.
+        A capture holds only about 15 events, so the spread has to be good over
+        that few — not merely in the limit.
+        """
+        k = np.arange(max(1, n_events_visible))
+        return float(abs(np.mean(np.exp(2j * np.pi * k * self.tone_phase_step()))))
+
     def validate(self) -> None:
         if int(self.adc_ratio) != self.adc_ratio or self.adc_ratio < 1:
             raise ValueError("adc_ratio must be a positive integer")
@@ -196,6 +220,15 @@ class DitherConfig:
             )
         if self.a_sine + self.a_dither > 1.0:
             raise ValueError("main tone plus dither would clip the DAC")
+        coherence = self.tone_phase_coherence()
+        if coherence > 0.3:
+            raise ValueError(
+                f"sig_cycles={self.sig_cycles} advances the tone by "
+                f"{self.tone_phase_step():.4f} cycles per dither slot, so the visible "
+                f"events all see nearly the same tone phase (coherence {coherence:.3f} "
+                "> 0.3) and the tone will not average out of the estimates. "
+                "Pick sig_cycles so the step lands near the middle of a cycle."
+            )
 
 
 # ---------------------------------------------------------------------------

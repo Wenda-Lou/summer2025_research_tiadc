@@ -407,13 +407,34 @@ def estimate_channel(
         windows = resid[idx]
 
         p = signs[ks][:, None]
-        v = (p * windows).mean(axis=0)   # dither replica: offset and tone cancel
-        u = windows.mean(axis=0)         # offset: dither cancels exactly
+        v = (p * windows).mean(axis=0)
+        u = windows.mean(axis=0)
 
-        est.v_profile, est.u_profile = v, u
+        # The polarity sequence is balanced over the whole loop, but a capture
+        # only sees a short run of consecutive events and their partial sum is
+        # not zero -- over ~15 events it is typically +-4, i.e. a mean polarity
+        # near 0.25.  That fraction of the dither leaks straight into the plain
+        # average and would be read as offset.  Both statistics are therefore
+        # solved jointly instead of being treated as already separated:
+        #
+        #   u[m] = o        + pbar * (G d[m])
+        #   v[m] = pbar * o +        (G d[m])
+        #
+        # which inverts exactly, because pbar is known from the polarity of the
+        # events actually present.
+        pbar = float(signs[ks].mean())
+        denom = 1.0 - pbar * pbar
+        if denom < 1e-6:
+            return est
+        dither_profile = (v - pbar * u) / denom
+        offset_profile = (u - pbar * v) / denom
 
-        gain = float(v @ d) / dd if dd > 0 else np.nan
+        est.v_profile, est.u_profile = dither_profile, offset_profile
+
+        gain = float(dither_profile @ d) / dd if dd > 0 else np.nan
         est.gain_codes = gain
+        v = dither_profile
+        u = offset_profile
 
         if np.isfinite(gain) and abs(gain) > 1e-9 and dpdp > 0:
             est.skew_samples = skew_prior_samples + float(
