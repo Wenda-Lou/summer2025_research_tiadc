@@ -1,0 +1,237 @@
+=========================================
+       ADC AUTOMATIC CALIBRATION
+=========================================
+Sample rate           : 1450.000000 MSPS
+DAC/ADC rate ratio    : 1.793103
+
+Stage 1/4: Timing Alignment
+-----------------------------------------
+Frames accepted         : 10/10
+Channel                 : Channel A
+Mean correlation      : 0.979285
+Minimum correlation   : 0.979013
+Median lag            : -8.961753 samples
+Canonical phase         : ODD
+Fixed window            : 108 ... 907
+Status                  : PASS
+
+Stage 2/4: Offset Calibration
+-----------------------------------------
+Batch  1 | 30/30 | residual -8.250114 | filtered -8.250114 | correction +2.062528 | RUNNING
+Batch  2 | 30/30 | residual -6.434698 | filtered -7.887031 | correction +4.034286 | RUNNING
+Batch  3 | 30/30 | residual -6.970698 | filtered -7.703764 | correction +5.960227 | RUNNING
+Batch  4 | 30/30 | residual -1.633573 | filtered -6.489726 | correction +7.582659 | RUNNING
+Batch  5 | 30/30 | residual +0.020385 | filtered -5.187704 | correction +8.879586 | RUNNING
+Batch  6 | 30/30 | residual -1.330323 | filtered -4.416228 | correction +9.542020 | RUNNING
+Batch  7 | 30/30 | residual +0.310385 | filtered -3.470905 | correction +10.062656 | RUNNING
+Batch  8 | 30/30 | residual +0.723676 | filtered -2.631989 | correction +10.457454 | RUNNING
+Batch  9 | 30/30 | residual +0.561010 | filtered -1.993389 | correction +10.756463 | RUNNING
+Batch 10 | 30/30 | residual +3.035385 | filtered -0.987634 | correction +10.756463 | PASS 1/2
+Batch 11 | 30/30 | residual +2.092718 | filtered -0.371564 | correction +10.756463 | PASS 2/2
+Verify 1/3 | frames 30 | residual +2.572593 | RETRY
+Verify 2/3 | frames 60 | residual +2.705676 | RETRY
+Verify 3/3 | frames 90 | residual +2.440760 | COMPLETE
+
+Offset controller       : CONVERGED
+Verification            : MARGINAL
+Verification frames     : 90
+Verification residual : 2.440760 codes
+Verification standard error: 0.660931 codes
+Verification correlation: 0.991211
+Offset correction     : 10.756463 codes
+Status                  : PROVISIONAL
+
+WARNING: Controller converged successfully.
+Verification exceeded the preferred limit but remains usable.
+Continuing to gain calibration with provisional offset.
+Fixed offset correction: 10.756463 codes
+
+Stage 3/4: Gain Calibration
+-----------------------------------------
+Offset input status     : PROVISIONAL
+Fixed offset correction: 10.756463 codes
+Batch  1 | 30/30 | gain 1.009166 | error +0.009166 | correction 1.000000 | PASS 1/2
+Batch  2 | 30/30 | gain 1.007073 | error +0.007073 | correction 1.000000 | PASS 2/2
+
+Verification            : PASS
+Verification frames     : 30
+Normalized final gain : 0.999717
+Verification error    : -0.000282
+Verification correlation: 0.990473
+Gain correction       : 1.000000
+Status                  : CONVERGED
+
+Final calibrated capture: READY (800 samples)
+Post-gain residual check: +2.330049 codes
+
+Stage 4/4: Performance Evaluation
+-----------------------------------------
+Frames evaluated        : 30/30
+Mean residual offset  : +1.107132 codes
+Residual std dev      : 6.331752 codes
+Residual standard error: 1.156014 codes
+Residual minimum      : -18.901075 codes
+Residual maximum      : +10.256423 codes
+
+Mean RMSE             : 52.716239 codes
+RMSE std dev          : 1.097375 codes
+
+Mean correlation      : 0.990320
+Minimum correlation   : 0.990028
+
+Mean SNDR             : 25.26 dB
+SNDR std dev          : 0.19 dB
+Minimum SNDR          : 24.92 dB
+
+Mean ENOB             : 3.90 bits
+ENOB std dev          : 0.03 bits
+Minimum ENOB          : 3.85 bits
+
+Status                  : VALID
+
+=========================================
+       ADC CALIBRATION COMPLETE
+=========================================
+Channel                 : Channel A
+Timing correlation    : 0.979285
+Canonical phase         : ODD
+Analysis samples        : 800
+
+Offset correction     : 10.756463 codes
+Offset verification   : 2.440760 codes
+
+Gain correction       : 1.000000
+Normalized final gain : 0.999717
+Gain verification error: -0.000282
+
+Performance frames      : 30
+Mean residual offset  : +1.107132 codes
+Mean RMSE             : 52.716239 codes
+Mean correlation      : 0.990320
+Mean SNDR             : 25.26 dB
+Mean ENOB             : 3.90 bits
+
+Timing                  : PASS
+Offset                  : PROVISIONAL
+Gain                    : CONVERGED
+Performance             : VALID
+Overall calibration     : PROVISIONAL
+Output usable           : YES
+=========================================
+uart-cmd$: adc -cal
+
+=========================================
+       ADC AUTOMATIC CALIBRATION
+=========================================
+Sample rate           : 1450.000000 MSPS
+DAC/ADC rate ratio    : 1.793103
+
+Stage 1/4: Timing Alignment
+-----------------------------------------
+Frames accepted         : 10/10
+Channel                 : Channel B
+Mean correlation      : 0.988455
+Minimum correlation   : 0.988262
+Median lag            : -11.942974 samples
+Canonical phase         : ODD
+Fixed window            : 108 ... 907
+Status                  : PASS
+
+Stage 2/4: Offset Calibration
+-----------------------------------------
+Batch  1 | 30/30 | residual +3.950742 | filtered +3.950742 | correction -0.592611 | RUNNING
+Batch  2 | 30/30 | residual +3.042575 | filtered +3.769108 | correction -1.157977 | RUNNING
+Batch  3 | 30/30 | residual +3.986658 | filtered +3.812618 | correction -1.729870 | RUNNING
+Batch  4 | 30/30 | residual +1.572492 | filtered +3.364593 | correction -2.234559 | RUNNING
+Batch  5 | 30/30 | residual +2.459408 | filtered +3.183556 | correction -2.712093 | RUNNING
+Batch  6 | 30/30 | residual +0.111908 | filtered +2.569226 | correction -3.097477 | RUNNING
+Batch  7 | 30/30 | residual +0.832408 | filtered +2.221863 | correction -3.430756 | RUNNING
+Batch  8 | 30/30 | residual +1.083742 | filtered +1.994238 | correction -3.729892 | RUNNING
+Batch  9 | 30/30 | residual +0.740366 | filtered +1.743464 | correction -3.991412 | RUNNING
+Batch 10 | 30/30 | residual +1.152658 | filtered +1.625303 | correction -4.235207 | RUNNING
+Batch 11 | 30/30 | residual +0.965742 | filtered +1.493391 | correction -4.459216 | RUNNING
+Batch 12 | 30/30 | residual -1.151216 | filtered +0.964469 | correction -4.459216 | PASS 1/2
+Batch 13 | 30/30 | residual -1.749758 | filtered +0.421624 | correction -4.459216 | PASS 2/2
+Verify 1/3 | frames 30 | residual +0.253241 | PASS
+
+Offset controller       : CONVERGED
+Verification            : PASS
+Verification frames     : 30
+Verification residual : 0.253241 codes
+Verification standard error: 1.482781 codes
+Verification correlation: 0.988015
+Offset correction     : -4.459216 codes
+Status                  : CONVERGED
+
+Stage 3/4: Gain Calibration
+-----------------------------------------
+Offset input status     : CONVERGED
+Fixed offset correction: -4.459216 codes
+Batch  1 | 30/30 | gain 0.998215 | error -0.001784 | correction 1.000000 | PASS 1/2
+Batch  2 | 30/30 | gain 0.997113 | error -0.002886 | correction 1.000000 | PASS 2/2
+
+Verification            : PASS
+Verification frames     : 30
+Normalized final gain : 0.999663
+Verification error    : -0.000336
+Verification correlation: 0.987389
+Gain correction       : 1.000000
+Status                  : CONVERGED
+
+Final calibrated capture: READY (800 samples)
+Post-gain residual check: +1.318435 codes
+
+Stage 4/4: Performance Evaluation
+-----------------------------------------
+Frames evaluated        : 30/30
+Mean residual offset  : +0.695601 codes
+Residual std dev      : 4.972982 codes
+Residual standard error: 0.907938 codes
+Residual minimum      : -7.803398 codes
+Residual maximum      : +7.419101 codes
+
+Mean RMSE             : 60.987819 codes
+RMSE std dev          : 0.674856 codes
+
+Mean correlation      : 0.987313
+Minimum correlation   : 0.987087
+
+Mean SNDR             : 25.51 dB
+SNDR std dev          : 0.19 dB
+Minimum SNDR          : 25.03 dB
+
+Mean ENOB             : 3.95 bits
+ENOB std dev          : 0.03 bits
+Minimum ENOB          : 3.87 bits
+
+Status                  : VALID
+
+=========================================
+       ADC CALIBRATION COMPLETE
+=========================================
+Channel                 : Channel B
+Timing correlation    : 0.988455
+Canonical phase         : ODD
+Analysis samples        : 800
+
+Offset correction     : -4.459216 codes
+Offset verification   : 0.253241 codes
+
+Gain correction       : 1.000000
+Normalized final gain : 0.999663
+Gain verification error: -0.000336
+
+Performance frames      : 30
+Mean residual offset  : +0.695601 codes
+Mean RMSE             : 60.987819 codes
+Mean correlation      : 0.987313
+Mean SNDR             : 25.51 dB
+Mean ENOB             : 3.95 bits
+
+Timing                  : PASS
+Offset                  : CONVERGED
+Gain                    : CONVERGED
+Performance             : VALID
+Overall calibration     : PASS
+Output usable           : YES
+=========================================
