@@ -160,6 +160,27 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #ifndef CAL_EXISTING_DITHER_LAG_TOLERANCE_SAMPLES
 #define CAL_EXISTING_DITHER_LAG_TOLERANCE_SAMPLES   CAL_DITHER_CONSISTENCY_TOLERANCE_SAMPLES
 #endif
+#ifndef CAL_DITHER_OFFSET_MIN_COMPLETE_EVENTS
+#define CAL_DITHER_OFFSET_MIN_COMPLETE_EVENTS        2U
+#endif
+#ifndef CAL_DITHER_OFFSET_DENOMINATOR_FLOOR
+#define CAL_DITHER_OFFSET_DENOMINATOR_FLOOR          0.05
+#endif
+#ifndef CAL_DITHER_OFFSET_FLAT_TOP_DERIVATIVE_FRACTION
+#define CAL_DITHER_OFFSET_FLAT_TOP_DERIVATIVE_FRACTION 0.15
+#endif
+#ifndef CAL_DITHER_OFFSET_FLAT_TOP_AMPLITUDE_FRACTION
+#define CAL_DITHER_OFFSET_FLAT_TOP_AMPLITUDE_FRACTION 0.70
+#endif
+#ifndef CAL_DITHER_OFFSET_MIN_FLAT_TOP_SAMPLES
+#define CAL_DITHER_OFFSET_MIN_FLAT_TOP_SAMPLES       1U
+#endif
+#ifndef CAL_DITHER_OFFSET_AGREEMENT_TOLERANCE_CODES
+#define CAL_DITHER_OFFSET_AGREEMENT_TOLERANCE_CODES  5.0
+#endif
+#ifndef CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES
+#define CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES  128U
+#endif
 
 _Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
                "ADC test configuration sample count mismatch");
@@ -216,6 +237,58 @@ typedef struct {
     double tone_only_correlation;
     double frequency_error_hz;
 } calibration_tone_fit_result_t;
+
+typedef enum {
+    CAL_DITHER_OFFSET_STATUS_INVALID = 0,
+    CAL_DITHER_OFFSET_STATUS_PASS,
+    CAL_DITHER_OFFSET_STATUS_WARNING
+} calibration_dither_offset_status_t;
+
+typedef enum {
+    CAL_DITHER_OFFSET_REASON_NONE = 0,
+    CAL_DITHER_OFFSET_REASON_TIMING_CONTEXT,
+    CAL_DITHER_OFFSET_REASON_TONE_FIT,
+    CAL_DITHER_OFFSET_REASON_TOO_FEW_EVENTS,
+    CAL_DITHER_OFFSET_REASON_POLARITY_IMBALANCE,
+    CAL_DITHER_OFFSET_REASON_FLAT_TOP,
+    CAL_DITHER_OFFSET_REASON_INTERPOLATION,
+    CAL_DITHER_OFFSET_REASON_NUMERICAL,
+    CAL_DITHER_OFFSET_REASON_NO_DITHER,
+    CAL_DITHER_OFFSET_REASON_EVENT_PROFILE
+} calibration_dither_offset_reason_t;
+
+typedef struct {
+    uint8_t valid;
+    calibration_dither_offset_status_t status;
+    calibration_dither_offset_reason_t reason;
+    uint8_t timing_context_pass;
+    uint8_t tone_fit_pass;
+    uint8_t event_count_pass;
+    uint8_t polarity_balance_pass;
+    uint8_t flat_top_pass;
+    uint8_t numerical_pass;
+    uint8_t estimate_consistency_pass;
+    calibration_tone_fit_result_t tone;
+    double existing_offset_codes;
+    double dither_offset_codes;
+    double fitted_tone_dc_codes;
+    double existing_vs_dither_codes;
+    double dither_vs_fitted_dc_codes;
+    double offset_profile_std_codes;
+    double offset_profile_min_codes;
+    double offset_profile_max_codes;
+    uint32_t complete_event_count;
+    uint32_t discarded_boundary_event_count;
+    double mean_event_polarity;
+    double separation_denominator;
+    uint32_t flat_top_sample_count;
+    double fitted_tone_frequency_hz;
+    double fitted_tone_amplitude_codes;
+    double fitted_tone_phase_rad;
+    double tone_fit_rmse_codes;
+    double tone_only_correlation;
+    const char *units;
+} calibration_dither_offset_diagnostic_t;
 
 typedef struct {
     uint8_t valid;
@@ -423,6 +496,13 @@ typedef struct {
     float mean_fitted_rmse;
     uint32_t accepted;
     uint32_t rejected;
+    uint32_t dither_pass;
+    uint32_t dither_warning;
+    uint32_t dither_invalid;
+    uint32_t dither_valid_estimates;
+    double mean_dither_offset;
+    double mean_existing_dither_delta;
+    calibration_dither_offset_diagnostic_t dither_latest;
 } calibration_offset_batch_result_t;
 
 typedef struct {
@@ -741,6 +821,12 @@ static void calibration_print_timing_diagnostics_detail(
 static void calibration_validate_timing_alignment(
     const calibration_aligned_frame_t *frame,
     calibration_timing_diagnostics_t *diagnostics);
+static const char *calibration_dither_offset_status_name(
+    calibration_dither_offset_status_t status);
+static const char *calibration_dither_offset_reason_name(
+    calibration_dither_offset_reason_t reason);
+static void calibration_print_dither_offset_diagnostic(
+    const calibration_dither_offset_diagnostic_t *diagnostic);
 static int calibration_capture_against_owned_reference(
     const calibration_pending_frame_t *saved,
     bool use_saved_calibration_reference,

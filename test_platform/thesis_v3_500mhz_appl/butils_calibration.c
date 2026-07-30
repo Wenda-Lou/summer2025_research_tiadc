@@ -1404,6 +1404,16 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                             print_signed_float_inline(state->filtered_residual);
                                                             xil_printf(" | correction ");
                                                             print_signed_float_inline(state->offset_correction);
+                                                            if (batch->dither_valid_estimates > 0U) {
+                                                                xil_printf(" | dither ");
+                                                                print_signed_float_inline((float)batch->mean_dither_offset);
+                                                                xil_printf(" | delta ");
+                                                                print_signed_float_inline((float)batch->mean_existing_dither_delta);
+                                                                xil_printf(" | events %lu | new %s",         (unsigned long)batch->dither_latest.complete_event_count,         calibration_dither_offset_status_name(             batch->dither_latest.status));
+                                                            }
+                                                            else if (batch->dither_invalid > 0U) {
+                                                                xil_printf(" | dither INVALID | events %lu | reason %s",         (unsigned long)batch->dither_latest.complete_event_count,         calibration_dither_offset_reason_name(             batch->dither_latest.reason));
+                                                            }
                                                             if (pass)         xil_printf(" | PASS %lu/%u\r\n",                    (unsigned long)state->convergence_count,                    CALIBRATION_OFFSET_REQUIRED_CONVERGED_FRAMES);
                                                             else         xil_printf(" | %s\r\n", status != NULL ? status : "RUNNING");
                                                         }
@@ -2354,6 +2364,331 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         }
                                                                         xil_printf("No calibration coefficients were updated by diagnostics.\r\n");
                                                                         xil_printf("==================================================\r\n");
+                                                                    }
+                                                                    static calibration_dither_offset_diagnostic_t g_latest_dither_offset_diagnostic;
+                                                                    static const char *calibration_dither_offset_status_name(     calibration_dither_offset_status_t status) {
+                                                                        switch (status) {
+                                                                        case CAL_DITHER_OFFSET_STATUS_PASS:
+                                                                            return "PASS";
+                                                                        case CAL_DITHER_OFFSET_STATUS_WARNING:
+                                                                            return "WARNING";
+                                                                        case CAL_DITHER_OFFSET_STATUS_INVALID:
+                                                                        default:
+                                                                            return "INVALID";
+                                                                        }
+                                                                    }
+                                                                    static const char *calibration_dither_offset_reason_name(     calibration_dither_offset_reason_t reason) {
+                                                                        switch (reason) {
+                                                                        case CAL_DITHER_OFFSET_REASON_NONE:
+                                                                            return "NONE";
+                                                                        case CAL_DITHER_OFFSET_REASON_TIMING_CONTEXT:
+                                                                            return "TIMING_CONTEXT";
+                                                                        case CAL_DITHER_OFFSET_REASON_TONE_FIT:
+                                                                            return "TONE_FIT";
+                                                                        case CAL_DITHER_OFFSET_REASON_TOO_FEW_EVENTS:
+                                                                            return "TOO_FEW_EVENTS";
+                                                                        case CAL_DITHER_OFFSET_REASON_POLARITY_IMBALANCE:
+                                                                            return "POLARITY_IMBALANCE";
+                                                                        case CAL_DITHER_OFFSET_REASON_FLAT_TOP:
+                                                                            return "FLAT_TOP";
+                                                                        case CAL_DITHER_OFFSET_REASON_INTERPOLATION:
+                                                                            return "INTERPOLATION";
+                                                                        case CAL_DITHER_OFFSET_REASON_NUMERICAL:
+                                                                            return "NUMERICAL";
+                                                                        case CAL_DITHER_OFFSET_REASON_NO_DITHER:
+                                                                            return "NO_DITHER";
+                                                                        case CAL_DITHER_OFFSET_REASON_EVENT_PROFILE:
+                                                                        default:
+                                                                            return "EVENT_PROFILE";
+                                                                        }
+                                                                    }
+                                                                    static void calibration_dither_offset_mark_invalid(     calibration_dither_offset_diagnostic_t *diagnostic,     calibration_dither_offset_reason_t reason,     double existing_offset_codes) {
+                                                                        if (diagnostic == NULL) return;
+                                                                        memset(diagnostic, 0, sizeof(*diagnostic));
+                                                                        diagnostic->status = CAL_DITHER_OFFSET_STATUS_INVALID;
+                                                                        diagnostic->reason = reason;
+                                                                        diagnostic->existing_offset_codes = existing_offset_codes;
+                                                                        diagnostic->dither_offset_codes = NAN;
+                                                                        diagnostic->fitted_tone_dc_codes = NAN;
+                                                                        diagnostic->existing_vs_dither_codes = NAN;
+                                                                        diagnostic->dither_vs_fitted_dc_codes = NAN;
+                                                                        diagnostic->offset_profile_std_codes = NAN;
+                                                                        diagnostic->offset_profile_min_codes = NAN;
+                                                                        diagnostic->offset_profile_max_codes = NAN;
+                                                                        diagnostic->mean_event_polarity = NAN;
+                                                                        diagnostic->separation_denominator = NAN;
+                                                                        diagnostic->fitted_tone_frequency_hz = NAN;
+                                                                        diagnostic->fitted_tone_amplitude_codes = NAN;
+                                                                        diagnostic->fitted_tone_phase_rad = NAN;
+                                                                        diagnostic->tone_fit_rmse_codes = NAN;
+                                                                        diagnostic->tone_only_correlation = NAN;
+                                                                        diagnostic->units = "corrected ADC codes";
+                                                                    }
+                                                                    typedef struct {
+                                                                        double center;
+                                                                        size_t start;
+                                                                        size_t end;
+                                                                        double polarity;
+                                                                    } calibration_dither_offset_event_t;
+                                                                    static int calibration_dither_offset_interpolate(     const double *samples, size_t count, double position,     double *value) {
+                                                                        size_t lower;
+                                                                        double fraction;
+                                                                        if (samples == NULL || value == NULL || count == 0U ||         !isfinite(position) || position < 0.0 ||         position > (double)(count - 1U))         return -1;
+                                                                        lower = (size_t)floor(position);
+                                                                        if (lower >= count - 1U) {
+                                                                            *value = samples[count - 1U];
+                                                                            return isfinite(*value) ? 0 : -2;
+                                                                        }
+                                                                        fraction = position - (double)lower;
+                                                                        *value = (1.0 - fraction) * samples[lower] +         fraction * samples[lower + 1U];
+                                                                        return isfinite(*value) ? 0 : -2;
+                                                                    }
+                                                                    static int calibration_dither_offset_find_events(     const double *template_samples, size_t count,     calibration_dither_offset_event_t *events, size_t max_events,     uint32_t *complete_count, uint32_t *discarded_boundary_count) {
+                                                                        double max_abs = 0.0;
+                                                                        uint32_t complete = 0U;
+                                                                        uint32_t discarded = 0U;
+                                                                        if (complete_count != NULL) *complete_count = 0U;
+                                                                        if (discarded_boundary_count != NULL)         *discarded_boundary_count = 0U;
+                                                                        if (template_samples == NULL || events == NULL ||         count == 0U || max_events == 0U)         return -1;
+                                                                        for (size_t i = 0U; i < count; ++i) {
+                                                                            if (!isfinite(template_samples[i])) return -2;
+                                                                            if (fabs(template_samples[i]) > max_abs)         max_abs = fabs(template_samples[i]);
+                                                                        }
+                                                                        if (max_abs <= DBL_EPSILON) return -3;
+                                                                        for (size_t i = 0U; i < count;) {
+                                                                            if (fabs(template_samples[i]) <             CAL_DITHER_EVENT_THRESHOLD_FRACTION * max_abs) {
+                                                                                ++i;
+                                                                                continue;
+                                                                            }
+                                                                            {
+                                                                                const size_t start = i;
+                                                                                double weighted_sum = 0.0;
+                                                                                double weight_sum = 0.0;
+                                                                                double signed_sum = 0.0;
+                                                                                double peak_abs = 0.0;
+                                                                                double peak_value = 0.0;
+                                                                                while (i < count &&                    fabs(template_samples[i]) >=                        CAL_DITHER_EVENT_THRESHOLD_FRACTION * max_abs) {
+                                                                                    const double sample = template_samples[i];
+                                                                                    const double weight = fabs(sample);
+                                                                                    weighted_sum += (double)i * weight;
+                                                                                    weight_sum += weight;
+                                                                                    signed_sum += sample;
+                                                                                    if (weight > peak_abs) {
+                                                                                        peak_abs = weight;
+                                                                                        peak_value = sample;
+                                                                                    }
+                                                                                    ++i;
+                                                                                }
+                                                                                if (weight_sum <= DBL_EPSILON) continue;
+                                                                                if (start == 0U || i >= count) {
+                                                                                    ++discarded;
+                                                                                    continue;
+                                                                                }
+                                                                                if (complete >= max_events) return -4;
+                                                                                events[complete].start = start;
+                                                                                events[complete].end = i;
+                                                                                events[complete].center = weighted_sum / weight_sum;
+                                                                                events[complete].polarity =         signed_sum >= 0.0 ? 1.0 : -1.0;
+                                                                                if (fabs(signed_sum) <= DBL_EPSILON)         events[complete].polarity = peak_value >= 0.0 ? 1.0 : -1.0;
+                                                                                ++complete;
+                                                                            }
+                                                                        }
+                                                                        if (complete_count != NULL) *complete_count = complete;
+                                                                        if (discarded_boundary_count != NULL)         *discarded_boundary_count = discarded;
+                                                                        return 0;
+                                                                    }
+                                                                    static int calibration_estimate_dither_offset(     const calibration_aligned_frame_t *frame,     double existing_offset_codes,     calibration_dither_offset_diagnostic_t *diagnostic) {
+                                                                        static double adc_samples[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double reference_samples[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double adc_tone[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double adc_residual[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double reference_tone[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double dither_template[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static calibration_dither_offset_event_t events[CAL_FIXED_WINDOW_LENGTH / 2U];
+                                                                        static double u[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        static double v[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        static double template_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        static double offset_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        static double dither_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        calibration_tone_fit_result_t adc_fit;
+                                                                        calibration_tone_fit_result_t reference_fit;
+                                                                        uint32_t complete_events = 0U;
+                                                                        uint32_t discarded_boundary = 0U;
+                                                                        double p_sum = 0.0;
+                                                                        double p_mean;
+                                                                        double denominator;
+                                                                        double rel_start = -DBL_MAX;
+                                                                        double rel_end = DBL_MAX;
+                                                                        int m_first;
+                                                                        int m_last;
+                                                                        size_t profile_count;
+                                                                        double max_template_abs = 0.0;
+                                                                        uint32_t flat_count = 0U;
+                                                                        double offset_sum = 0.0;
+                                                                        double offset_square_sum = 0.0;
+                                                                        double offset_min = DBL_MAX;
+                                                                        double offset_max = -DBL_MAX;
+                                                                        if (diagnostic == NULL) return -1;
+                                                                        calibration_dither_offset_mark_invalid(         diagnostic, CAL_DITHER_OFFSET_REASON_NUMERICAL,         existing_offset_codes);
+                                                                        if (frame == NULL || !frame->frame_valid ||         frame->selected_channel != g_stored_offset_reference.selected_channel ||         frame->canonical_reference_phase !=             g_stored_offset_reference.canonical_reference_phase ||         frame->calibration_window_start !=             g_stored_offset_reference.calibration_window_start ||         frame->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||         frame->valid_analysis_sample_count != CAL_FIXED_WINDOW_LENGTH ||         frame->aligned_corrected_adc_samples == NULL ||         frame->canonical_reference_window == NULL ||         !isfinite(frame->total_lag) ||         !isfinite(frame->reference_frequency_hz) ||         frame->reference_frequency_hz <= 0.0 ||         !frame->timing_diagnostics.valid ||         frame->timing_diagnostics.selected_common_channel < 0 ||         !isfinite(frame->timing_diagnostics.dither_derived_lag)) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_TIMING_CONTEXT;
+                                                                            return -2;
+                                                                        }
+                                                                        diagnostic->timing_context_pass = 1U;
+                                                                        for (size_t i = 0U; i < CAL_FIXED_WINDOW_LENGTH; ++i) {
+                                                                            adc_samples[i] = frame->aligned_corrected_adc_samples[i];
+                                                                            reference_samples[i] = frame->canonical_reference_window[i];
+                                                                        }
+                                                                        if (calibration_fit_tone_refined(         adc_samples, CAL_FIXED_WINDOW_LENGTH,         frame->reference_frequency_hz,         adc_get_effective_sample_rate_hz(), &adc_fit, adc_tone,         adc_residual) != 0 ||         !calibration_tone_fit_parameters_are_finite(&adc_fit) ||         adc_fit.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||         adc_fit.tone_only_correlation <             CAL_TONE_VALIDATION_MIN_CORRELATION) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_TONE_FIT;
+                                                                            return -3;
+                                                                        }
+                                                                        if (calibration_fit_tone_refined(         reference_samples, CAL_FIXED_WINDOW_LENGTH,         frame->reference_frequency_hz,         adc_get_effective_sample_rate_hz(), &reference_fit,         reference_tone, dither_template) != 0 ||         !calibration_tone_fit_parameters_are_finite(&reference_fit)) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_TONE_FIT;
+                                                                            return -3;
+                                                                        }
+                                                                        diagnostic->tone_fit_pass = 1U;
+                                                                        if (calibration_dither_offset_find_events(         dither_template, CAL_FIXED_WINDOW_LENGTH, events,         sizeof(events) / sizeof(events[0]), &complete_events,         &discarded_boundary) != 0) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_NO_DITHER;
+                                                                            return -4;
+                                                                        }
+                                                                        diagnostic->complete_event_count = complete_events;
+                                                                        diagnostic->discarded_boundary_event_count = discarded_boundary;
+                                                                        if (complete_events < CAL_DITHER_OFFSET_MIN_COMPLETE_EVENTS) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_TOO_FEW_EVENTS;
+                                                                            return -5;
+                                                                        }
+                                                                        diagnostic->event_count_pass = 1U;
+                                                                        for (uint32_t k = 0U; k < complete_events; ++k) {
+                                                                            const double left = (double)events[k].start - events[k].center;
+                                                                            const double right =             (double)(events[k].end - 1U) - events[k].center;
+                                                                            if (left > rel_start) rel_start = left;
+                                                                            if (right < rel_end) rel_end = right;
+                                                                            p_sum += events[k].polarity;
+                                                                        }
+                                                                        m_first = (int)ceil(rel_start);
+                                                                        m_last = (int)floor(rel_end);
+                                                                        if (m_last < m_first) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_EVENT_PROFILE;
+                                                                            return -6;
+                                                                        }
+                                                                        profile_count = (size_t)(m_last - m_first + 1);
+                                                                        if (profile_count == 0U ||         profile_count > CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_EVENT_PROFILE;
+                                                                            return -6;
+                                                                        }
+                                                                        memset(u, 0, profile_count * sizeof(u[0]));
+                                                                        memset(v, 0, profile_count * sizeof(v[0]));
+                                                                        memset(template_profile, 0,                 profile_count * sizeof(template_profile[0]));
+                                                                        for (uint32_t k = 0U; k < complete_events; ++k) {
+                                                                            const double p = events[k].polarity;
+                                                                            for (size_t j = 0U; j < profile_count; ++j) {
+                                                                                const double position =             events[k].center + (double)(m_first + (int)j);
+                                                                                double residual_value;
+                                                                                double template_value;
+                                                                                if (calibration_dither_offset_interpolate(                     adc_residual, CAL_FIXED_WINDOW_LENGTH, position,                     &residual_value) != 0 ||                 calibration_dither_offset_interpolate(                     dither_template, CAL_FIXED_WINDOW_LENGTH, position,                     &template_value) != 0) {
+                                                                                    diagnostic->reason =                 CAL_DITHER_OFFSET_REASON_INTERPOLATION;
+                                                                                    return -7;
+                                                                                }
+                                                                                u[j] += residual_value;
+                                                                                v[j] += p * residual_value;
+                                                                                template_profile[j] += p * template_value;
+                                                                            }
+                                                                        }
+                                                                        p_mean = p_sum / (double)complete_events;
+                                                                        denominator = 1.0 - p_mean * p_mean;
+                                                                        diagnostic->mean_event_polarity = p_mean;
+                                                                        diagnostic->separation_denominator = denominator;
+                                                                        if (!isfinite(denominator) ||         denominator <= CAL_DITHER_OFFSET_DENOMINATOR_FLOOR) {
+                                                                            diagnostic->reason =             CAL_DITHER_OFFSET_REASON_POLARITY_IMBALANCE;
+                                                                            return -8;
+                                                                        }
+                                                                        diagnostic->polarity_balance_pass = 1U;
+                                                                        for (size_t j = 0U; j < profile_count; ++j) {
+                                                                            u[j] /= (double)complete_events;
+                                                                            v[j] /= (double)complete_events;
+                                                                            template_profile[j] /= (double)complete_events;
+                                                                            offset_profile[j] = (u[j] - p_mean * v[j]) / denominator;
+                                                                            dither_profile[j] = (v[j] - p_mean * u[j]) / denominator;
+                                                                            if (!isfinite(offset_profile[j]) ||         !isfinite(dither_profile[j]) ||         !isfinite(template_profile[j])) {
+                                                                                diagnostic->reason = CAL_DITHER_OFFSET_REASON_NUMERICAL;
+                                                                                return -9;
+                                                                            }
+                                                                            if (fabs(template_profile[j]) > max_template_abs)         max_template_abs = fabs(template_profile[j]);
+                                                                        }
+                                                                        if (max_template_abs <= DBL_EPSILON) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_NO_DITHER;
+                                                                            return -10;
+                                                                        }
+                                                                        for (size_t j = 0U; j < profile_count; ++j) {
+                                                                            const double previous = j > 0U ?             template_profile[j - 1U] : template_profile[j];
+                                                                            const double next = j + 1U < profile_count ?             template_profile[j + 1U] : template_profile[j];
+                                                                            const double derivative = 0.5 * (next - previous);
+                                                                            const bool flat =         fabs(derivative) <=             CAL_DITHER_OFFSET_FLAT_TOP_DERIVATIVE_FRACTION *                 max_template_abs &&         fabs(template_profile[j]) >=             CAL_DITHER_OFFSET_FLAT_TOP_AMPLITUDE_FRACTION *                 max_template_abs;
+                                                                            if (!flat) continue;
+                                                                            offset_sum += offset_profile[j];
+                                                                            offset_square_sum += offset_profile[j] * offset_profile[j];
+                                                                            if (offset_profile[j] < offset_min)         offset_min = offset_profile[j];
+                                                                            if (offset_profile[j] > offset_max)         offset_max = offset_profile[j];
+                                                                            ++flat_count;
+                                                                        }
+                                                                        diagnostic->flat_top_sample_count = flat_count;
+                                                                        if (flat_count < CAL_DITHER_OFFSET_MIN_FLAT_TOP_SAMPLES) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_FLAT_TOP;
+                                                                            return -11;
+                                                                        }
+                                                                        diagnostic->flat_top_pass = 1U;
+                                                                        diagnostic->dither_offset_codes = offset_sum / (double)flat_count;
+                                                                        diagnostic->offset_profile_std_codes = sqrt(fmax(0.0,         offset_square_sum / (double)flat_count -         diagnostic->dither_offset_codes * diagnostic->dither_offset_codes));
+                                                                        diagnostic->offset_profile_min_codes = offset_min;
+                                                                        diagnostic->offset_profile_max_codes = offset_max;
+                                                                        diagnostic->existing_offset_codes = existing_offset_codes;
+                                                                        diagnostic->fitted_tone_dc_codes = adc_fit.dc_offset_codes;
+                                                                        diagnostic->existing_vs_dither_codes =         existing_offset_codes - diagnostic->dither_offset_codes;
+                                                                        diagnostic->dither_vs_fitted_dc_codes =         diagnostic->dither_offset_codes - diagnostic->fitted_tone_dc_codes;
+                                                                        diagnostic->tone = adc_fit;
+                                                                        diagnostic->fitted_tone_frequency_hz = adc_fit.fitted_frequency_hz;
+                                                                        diagnostic->fitted_tone_amplitude_codes = adc_fit.amplitude;
+                                                                        diagnostic->fitted_tone_phase_rad = adc_fit.phase_rad;
+                                                                        diagnostic->tone_fit_rmse_codes = adc_fit.rmse;
+                                                                        diagnostic->tone_only_correlation = adc_fit.tone_only_correlation;
+                                                                        diagnostic->estimate_consistency_pass =         fabs(diagnostic->existing_vs_dither_codes) <=             CAL_DITHER_OFFSET_AGREEMENT_TOLERANCE_CODES;
+                                                                        diagnostic->numerical_pass =         isfinite(diagnostic->dither_offset_codes) &&         isfinite(diagnostic->existing_vs_dither_codes) &&         isfinite(diagnostic->dither_vs_fitted_dc_codes) &&         isfinite(diagnostic->offset_profile_std_codes);
+                                                                        if (!diagnostic->numerical_pass) {
+                                                                            diagnostic->reason = CAL_DITHER_OFFSET_REASON_NUMERICAL;
+                                                                            return -12;
+                                                                        }
+                                                                        diagnostic->valid = 1U;
+                                                                        diagnostic->reason = CAL_DITHER_OFFSET_REASON_NONE;
+                                                                        diagnostic->status =         diagnostic->estimate_consistency_pass ?         CAL_DITHER_OFFSET_STATUS_PASS :         CAL_DITHER_OFFSET_STATUS_WARNING;
+                                                                        return 0;
+                                                                    }
+                                                                    static void calibration_print_dither_offset_diagnostic(     const calibration_dither_offset_diagnostic_t *diagnostic) {
+                                                                        if (diagnostic == NULL ||         (diagnostic->status == CAL_DITHER_OFFSET_STATUS_INVALID &&          diagnostic->reason == CAL_DITHER_OFFSET_REASON_NONE))         return;
+                                                                        xil_printf("\r\n-----------------------------------------\r\n");
+                                                                        xil_printf("Dither-Aware Offset Diagnostic\r\n");
+                                                                        xil_printf("-----------------------------------------\r\n");
+                                                                        xil_printf("Complete events          : %lu\r\n",         (unsigned long)diagnostic->complete_event_count);
+                                                                        xil_printf("Discarded boundary events: %lu\r\n",         (unsigned long)diagnostic->discarded_boundary_event_count);
+                                                                        print_double_value("Mean event polarity",         diagnostic->mean_event_polarity, "");
+                                                                        print_double_value("Separation denominator",         diagnostic->separation_denominator, "");
+                                                                        xil_printf("Flat-top samples         : %lu\r\n",         (unsigned long)diagnostic->flat_top_sample_count);
+                                                                        print_double_value("Existing residual",         diagnostic->existing_offset_codes, " codes");
+                                                                        if (diagnostic->valid) {
+                                                                            print_double_value("Dither offset",             diagnostic->dither_offset_codes, " codes");
+                                                                            print_double_value("Fitted-tone DC",             diagnostic->fitted_tone_dc_codes, " codes");
+                                                                            print_double_value("Existing-dither delta",             diagnostic->existing_vs_dither_codes, " codes");
+                                                                            print_double_value("Dither-DC delta",             diagnostic->dither_vs_fitted_dc_codes, " codes");
+                                                                            print_double_value("Offset-profile deviation",             diagnostic->offset_profile_std_codes, " codes");
+                                                                        }
+                                                                        else {
+                                                                            xil_printf("Dither offset            : INVALID\r\n");
+                                                                            xil_printf("Rejection reason         : %s\r\n",         calibration_dither_offset_reason_name(diagnostic->reason));
+                                                                        }
+                                                                        print_double_value("Tone fit RMSE",         diagnostic->tone_fit_rmse_codes, " codes");
+                                                                        print_double_value("Tone-only correlation",         diagnostic->tone_only_correlation, "");
+                                                                        xil_printf("Estimate units           : %s\r\n",         diagnostic->units != NULL ? diagnostic->units :         "corrected ADC codes");
+                                                                        xil_printf("New estimator status     : %s\r\n",         calibration_dither_offset_status_name(diagnostic->status));
                                                                     }
                                                                     static void calibration_run_timing_alignment_diagnostic(uint32_t frame_count) {
                                                                         static int16_t even_reference[ADC_CHANNEL_SAMPLE_COUNT];
@@ -3324,9 +3659,24 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                     }
                                                                                                 }
                                                                                                 else {
+                                                                                                    calibration_dither_offset_diagnostic_t dither_diagnostic;
                                                                                                     ++batch->accepted;
                                                                                                     ++state->accepted_frame_count;
                                                                                                     if (ADC_CAL_VERBOSE_DEBUG)                     calibration_print_fixed_window(&frame);
+                                                                                                    if (calibration_estimate_dither_offset(                     &frame, residual, &dither_diagnostic) == 0 &&                 dither_diagnostic.valid) {
+                                                                                                        batch->dither_latest = dither_diagnostic;
+                                                                                                        g_latest_dither_offset_diagnostic = dither_diagnostic;
+                                                                                                        ++batch->dither_valid_estimates;
+                                                                                                        if (dither_diagnostic.status ==                         CAL_DITHER_OFFSET_STATUS_PASS)                     ++batch->dither_pass;
+                                                                                                        else                     ++batch->dither_warning;
+                                                                                                        batch->mean_dither_offset +=                     dither_diagnostic.dither_offset_codes;
+                                                                                                        batch->mean_existing_dither_delta +=                     dither_diagnostic.existing_vs_dither_codes;
+                                                                                                    }
+                                                                                                    else {
+                                                                                                        batch->dither_latest = dither_diagnostic;
+                                                                                                        g_latest_dither_offset_diagnostic = dither_diagnostic;
+                                                                                                        ++batch->dither_invalid;
+                                                                                                    }
                                                                                                     sum += residual;
                                                                                                     sum_squares += (double)residual * (double)residual;
                                                                                                     correlation_sum += frame.correlation;
@@ -3342,6 +3692,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         print_float_value("Nominal system gain",                     g_stored_offset_reference.canonical_nominal_system_gain,                     "");
                                                                                                         print_float_value("Sample-wise residual mean",                                   residual, " codes");
                                                                                                         print_float_value("Mean-identity residual",                                   mean_identity, " codes");
+                                                                                                        calibration_print_dither_offset_diagnostic(                     &dither_diagnostic);
                                                                                                     }
                                                                                                     if (ADC_CAL_VERBOSE_DEBUG) {
                                                                                                         for (size_t h = 0U;
@@ -3377,6 +3728,10 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                         batch->stddev = (float)sqrt(fmax(0.0,         sum_squares / (double)batch->accepted -         (double)batch->mean * (double)batch->mean));
                                                                                         batch->mean_correlation =         (float)(correlation_sum / (double)batch->accepted);
                                                                                         batch->mean_fitted_rmse =         (float)(fitted_rmse_sum / (double)batch->accepted);
+                                                                                        if (batch->dither_valid_estimates > 0U) {
+                                                                                            batch->mean_dither_offset /=         (double)batch->dither_valid_estimates;
+                                                                                            batch->mean_existing_dither_delta /=         (double)batch->dither_valid_estimates;
+                                                                                        }
                                                                                         return 0;
                                                                                     }
                                                                                     /* Gain-stage estimator.  Offset calibration stores the additive correction  * C = -O, so the fixed-offset signal is gain_correction * (raw + C).  * Centering both signals keeps any small residual DC error out of the AC gain  * estimate; that residual is reported separately and never fed back. */
@@ -3616,6 +3971,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                             print_float_value("Offset correction",                           state->offset_correction, " codes");
                                                                                             xil_printf("Status                  : %s\r\n",                    calibration_offset_result_name(state->stage_result));
                                                                                             if (state->stage_result == CALIBRATION_OFFSET_RESULT_FAILED)             xil_printf("Reason                  : %s\r\n",                 calibration_offset_termination_name(                     state->termination_reason));
+                                                                                            calibration_print_dither_offset_diagnostic(         &g_latest_dither_offset_diagnostic);
                                                                                             return;
                                                                                         }
                                                                                         xil_printf("\r\n========== Offset Calibration Summary ==========\r\n");
@@ -3646,6 +4002,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                         xil_printf("Termination reason       : %s\r\n",                calibration_offset_termination_name(state->termination_reason));
                                                                                         xil_printf("Offset stage status      : %s\r\n",                calibration_offset_result_name(state->stage_result));
                                                                                         xil_printf("Output usable for gain   : %s\r\n",                state->stage_result == CALIBRATION_OFFSET_RESULT_CONVERGED ||                state->stage_result == CALIBRATION_OFFSET_RESULT_PROVISIONAL ?                "YES" : "NO");
+                                                                                        calibration_print_dither_offset_diagnostic(         &g_latest_dither_offset_diagnostic);
                                                                                         xil_printf("===============================================\r\n");
                                                                                     }
                                                                                     static void handle_adc_offset_calibration_status_cmd(void) {
@@ -3915,6 +4272,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         /* A failed rerun must never expose a handoff from an earlier offset run. */
                                                                                                         calibration_gain_input_frame_invalidate();
                                                                                                         calibration_offset_loop_begin_run(state);
+                                                                                                        memset(&g_latest_dither_offset_diagnostic, 0,         sizeof(g_latest_dither_offset_diagnostic));
                                                                                                         if ((state->calibration_channel < -1) ||         (state->calibration_channel > 1)) {
                                                                                                             ERR("Invalid calibration channel in offset calibration state.");
                                                                                                             state->final_status = CALIBRATION_OFFSET_LOOP_FAILED;
@@ -4036,6 +4394,14 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                                 print_float_value("Filtered residual",                               state->filtered_residual, " codes");
                                                                                                                 xil_printf("Accepted frames         : %lu/%u\r\n",                        (unsigned long)batch.accepted,                        CALIBRATION_OFFSET_BATCH_SIZE);
                                                                                                                 xil_printf("Rejected frames         : %lu/%u\r\n",                        (unsigned long)batch.rejected,                        CALIBRATION_OFFSET_BATCH_SIZE);
+                                                                                                                xil_printf("Dither estimator frames : PASS %lu | WARNING %lu | INVALID %lu\r\n",                        (unsigned long)batch.dither_pass,                        (unsigned long)batch.dither_warning,                        (unsigned long)batch.dither_invalid);
+                                                                                                                if (batch.dither_valid_estimates > 0U) {
+                                                                                                                    print_double_value("Mean dither offset",                               batch.mean_dither_offset, " codes");
+                                                                                                                    print_double_value("Mean existing-dither delta",                               batch.mean_existing_dither_delta,                               " codes");
+                                                                                                                }
+                                                                                                                else if (batch.dither_invalid > 0U) {
+                                                                                                                    xil_printf("Dither rejection reason : %s\r\n",                            calibration_dither_offset_reason_name(                                batch.dither_latest.reason));
+                                                                                                                }
                                                                                                             }
                                                                                                             score = fabsf(state->filtered_residual) +                 CALIBRATION_OFFSET_SCORE_RMSE_WEIGHT *                     batch.mean_fitted_rmse +                 CALIBRATION_OFFSET_SCORE_STDERR_WEIGHT * standard_error;
                                                                                                             if (!compact) print_float_value("Batch solution score", score, "");
