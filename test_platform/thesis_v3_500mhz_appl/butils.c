@@ -28,6 +28,10 @@
 #include "reference_buffer.h"
 #include "adc_frame.h"
 #include "timing_alignment.h"
+#include "adc_calibration_pipeline.h"
+#include "adc_calibration_dither.h"
+#include "adc_calibration_skew.h"
+#include "adc_calibration_performance.h"
 #include "adc_test_config.h"
 
 #include "xil_cache.h"
@@ -768,20 +772,7 @@ typedef struct {
     float residual;
 } calibration_offset_stability_record_t;
 
-typedef struct {
-    float sndr_db;
-    float sfdr_db;
-    float thd_db;
-    float enob;
-    double signal_hz;
-    double worst_spur_hz;
-    size_t signal_bin;
-    size_t worst_spur_bin;
-    double signal_power;
-    double noise_distortion_power;
-    double spur_power;
-    double harmonic_power;
-} adc_performance_spectral_metrics_t;
+typedef adc_cal_perf_spectral_metrics_t adc_performance_spectral_metrics_t;
 
 typedef struct {
     uint32_t frame_number;
@@ -999,6 +990,7 @@ static calibration_pending_frame_t g_stored_offset_reference;
 /* One-shot output handed from a successful offset stage to the gain stage. */
 static calibration_pending_frame_t g_pending_calibration_frame;
 static adc_automatic_calibration_state_t g_automatic_calibration;
+static adc_cal_pipeline_state_t g_adc_calibration_pipeline;
 static bool g_quiet_calibration_capture;
 
 void calibration_pending_frame_invalidate(void)
@@ -1007,6 +999,7 @@ void calibration_pending_frame_invalidate(void)
     g_automatic_calibration.output_valid = false;
     g_automatic_calibration.final_output.valid = false;
     g_automatic_calibration.performance_measurement_available = false;
+    adc_cal_pipeline_mark_performance_not_run(&g_adc_calibration_pipeline);
     memset(&g_automatic_calibration.performance, 0,
            sizeof(g_automatic_calibration.performance));
     memset(&g_stored_offset_reference, 0,
@@ -1027,6 +1020,7 @@ void calibration_gain_input_frame_invalidate(void)
     g_automatic_calibration.output_valid = false;
     g_automatic_calibration.final_output.valid = false;
     g_automatic_calibration.performance_measurement_available = false;
+    adc_cal_pipeline_mark_performance_not_run(&g_adc_calibration_pipeline);
     memset(&g_automatic_calibration.performance, 0,
            sizeof(g_automatic_calibration.performance));
     memset(&g_pending_calibration_frame, 0,
@@ -1888,6 +1882,7 @@ void handle_udp_cmd(char *line)
 static void calibration_automatic_state_reset(void)
 {
     memset(&g_automatic_calibration, 0, sizeof(g_automatic_calibration));
+    adc_cal_pipeline_reset(&g_adc_calibration_pipeline);
     g_automatic_calibration.stage = ADC_CAL_STAGE_IDLE;
     g_automatic_calibration.failed_stage = ADC_CAL_STAGE_IDLE;
     g_automatic_calibration.calibration_channel = -1;

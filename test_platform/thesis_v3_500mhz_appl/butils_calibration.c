@@ -201,26 +201,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             spectrum->dominant_frequency_hz =         (double)spectrum->dominant_bin * sample_rate_hz /         (double)sample_count;
             return spectrum->dominant_bin != 0U ? 0 : -2;
         }
-        /* Goertzel evaluates one bin of an arbitrary-length DFT.  The performance
-         * stage analyzes all 800 samples directly and does not need zero padding. */
-        static double adc_performance_goertzel_power(     const double *windowed_samples, size_t sample_count, size_t bin) {
-            const double omega = 6.28318530717958647692 * (double)bin /                          (double)sample_count;
-            const double coefficient = 2.0 * cos(omega);
-            double previous = 0.0;
-            double previous2 = 0.0;
-            for (size_t i = 0U;
-            i < sample_count;
-            ++i) {
-                const double current = windowed_samples[i] +                                coefficient * previous - previous2;
-                previous2 = previous;
-                previous = current;
-            }
-            {
-                double power = previous2 * previous2 + previous * previous -                        coefficient * previous * previous2;
-                if (power < 0.0 && power > -1.0e-6) power = 0.0;
-                return power;
-            }
-        }
+        /* Performance spectral mathematics lives in adc_calibration_performance.c. */
         static void adc_performance_statistics_init(     adc_performance_statistics_t *statistics) {
             memset(statistics, 0, sizeof(*statistics));
             statistics->minimum = DBL_MAX;
@@ -245,157 +226,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             return statistics->count > 1U ?         (float)sqrt(statistics->m2 / (double)(statistics->count - 1U)) :         0.0f;
         }
         static void adc_performance_spectral_reset(     adc_performance_spectral_metrics_t *metrics) {
-            if (metrics == NULL) return;
-            memset(metrics, 0, sizeof(*metrics));
-            metrics->sndr_db = NAN;
-            metrics->sfdr_db = NAN;
-            metrics->thd_db = NAN;
-            metrics->enob = NAN;
-            metrics->signal_hz = NAN;
-            metrics->worst_spur_hz = NAN;
-            metrics->signal_power = NAN;
-            metrics->noise_distortion_power = NAN;
-            metrics->spur_power = NAN;
-            metrics->harmonic_power = NAN;
-        }
-        static double adc_performance_blackman_harris7(     size_t index, size_t count) {
-            static const double coefficient[] = {
-                0.27105140069342,
-                -0.43329793923448,
-                0.21812299954311,
-                -0.06592544638803,
-                0.01081174209837,
-                -0.00077658482522,
-                0.00001388721735
-            };
-            double value = 0.0;
-            for (size_t i = 0U; i < sizeof(coefficient) / sizeof(coefficient[0]); ++i) {
-                value += coefficient[i] * cos(         6.28318530717958647692 * (double)i * (double)index /         (double)count);
-            }
-            return value;
-        }
-        static double adc_performance_sum_band_power(     const double *power, size_t power_count, size_t center,     size_t guard) {
-            const size_t first = center > guard ? center - guard : 0U;
-            size_t last = center + guard;
-            double sum = 0.0;
-            if (power == NULL || power_count == 0U) return NAN;
-            if (last >= power_count) last = power_count - 1U;
-            for (size_t bin = first; bin <= last; ++bin) sum += power[bin];
-            return sum;
-        }
-        static int adc_performance_power_spectrum(     const double *samples, size_t sample_count, double *power,     size_t power_count) {
-            static double windowed[CAL_FIXED_WINDOW_LENGTH];
-            double mean = 0.0;
-            double window_square_mean = 0.0;
-            double window_scale;
-            if (samples == NULL || power == NULL ||         sample_count != CAL_FIXED_WINDOW_LENGTH ||         power_count < sample_count / 2U + 1U)         return -1;
-            for (size_t i = 0U; i < sample_count; ++i) {
-                if (!isfinite(samples[i])) return -2;
-                mean += samples[i];
-            }
-            mean /= (double)sample_count;
-            for (size_t i = 0U; i < sample_count; ++i) {
-                const double w = adc_performance_blackman_harris7(i, sample_count);
-                window_square_mean += w * w;
-            }
-            window_scale = sqrt(window_square_mean / (double)sample_count);
-            if (!isfinite(window_scale) || window_scale <= DBL_EPSILON) return -3;
-            for (size_t i = 0U; i < sample_count; ++i) {
-                const double w = adc_performance_blackman_harris7(i, sample_count) /         window_scale;
-                windowed[i] = (samples[i] - mean) * w;
-                if (!isfinite(windowed[i])) return -4;
-            }
-            for (size_t bin = 0U; bin < sample_count / 2U + 1U; ++bin) {
-                const double raw_power = adc_performance_goertzel_power(         windowed, sample_count, bin);
-                power[bin] = raw_power /         ((double)sample_count * (double)sample_count);
-                if (!isfinite(power[bin]) || power[bin] < 0.0) return -5;
-            }
-            return 0;
-        }
-        static int adc_performance_analyse_record(     const double *samples, size_t sample_count, double sample_rate_hz,     adc_performance_spectral_metrics_t *metrics) {
-            static double power[CAL_FIXED_WINDOW_LENGTH / 2U + 1U];
-            const size_t guard = 8U;
-            const size_t dc_bins = 12U;
-            const size_t n_harmonics = 5U;
-            const size_t power_count = sample_count / 2U + 1U;
-            size_t signal_bin = 0U;
-            size_t spur_bin = 0U;
-            double signal_power;
-            double noise_and_distortion = 0.0;
-            double harmonic_power = 0.0;
-            double spur_power;
-            if (metrics == NULL) return -1;
-            adc_performance_spectral_reset(metrics);
-            if (sample_count != CAL_FIXED_WINDOW_LENGTH ||         !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0 ||         adc_performance_power_spectrum(samples, sample_count, power,             power_count) != 0)         return -2;
-            for (size_t bin = dc_bins; bin < power_count; ++bin) {
-                if (power[bin] > power[signal_bin]) signal_bin = bin;
-            }
-            if (signal_bin == 0U) return -3;
-            signal_power = adc_performance_sum_band_power(         power, power_count, signal_bin, guard);
-            if (!isfinite(signal_power) || signal_power <= DBL_EPSILON) return -4;
-            for (size_t bin = dc_bins; bin < power_count; ++bin) {
-                const bool in_signal =         bin + guard >= signal_bin && bin <= signal_bin + guard;
-                if (!in_signal) noise_and_distortion += power[bin];
-            }
-            for (size_t h = 2U; h <= n_harmonics; ++h) {
-                size_t harmonic_bin = h * signal_bin;
-                const size_t folded_period = 2U * (power_count - 1U);
-                if (folded_period == 0U) continue;
-                harmonic_bin %= folded_period;
-                if (harmonic_bin > power_count - 1U)         harmonic_bin = folded_period - harmonic_bin;
-                if (harmonic_bin < dc_bins) continue;
-                harmonic_power += adc_performance_sum_band_power(         power, power_count, harmonic_bin, guard);
-            }
-            {
-                double worst_power = 0.0;
-                for (size_t bin = dc_bins; bin < power_count; ++bin) {
-                    const bool in_signal =         bin + guard >= signal_bin && bin <= signal_bin + guard;
-                    if (!in_signal && power[bin] > worst_power) {
-                        worst_power = power[bin];
-                        spur_bin = bin;
-                    }
-                }
-            }
-            spur_power = adc_performance_sum_band_power(         power, power_count, spur_bin, guard);
-            metrics->signal_bin = signal_bin;
-            metrics->worst_spur_bin = spur_bin;
-            metrics->signal_hz =         (double)signal_bin * sample_rate_hz / (double)sample_count;
-            metrics->worst_spur_hz =         (double)spur_bin * sample_rate_hz / (double)sample_count;
-            metrics->signal_power = signal_power;
-            metrics->noise_distortion_power = noise_and_distortion;
-            metrics->spur_power = spur_power;
-            metrics->harmonic_power = harmonic_power;
-            metrics->sndr_db =         noise_and_distortion > 0.0 ?         (float)(10.0 * log10(signal_power / noise_and_distortion)) :         INFINITY;
-            metrics->sfdr_db =         spur_power > 0.0 ?         (float)(10.0 * log10(signal_power / spur_power)) : INFINITY;
-            metrics->thd_db =         harmonic_power > 0.0 ?         (float)(10.0 * log10(harmonic_power / signal_power)) :         -INFINITY;
-            metrics->enob = (metrics->sndr_db - 1.76f) / 6.02f;
-            return isfinite(metrics->signal_hz) &&         isfinite(metrics->worst_spur_hz) &&         isfinite(metrics->signal_power) &&         isfinite(metrics->noise_distortion_power) ? 0 : -5;
-        }
-        static int adc_performance_channel_difference_dbc(     const double *a, const double *b, size_t sample_count,     double sample_rate_hz, double input_frequency_hz,     float *difference_dbc, float *dc_difference_codes) {
-            static double pa[CAL_FIXED_WINDOW_LENGTH / 2U + 1U];
-            static double pd[CAL_FIXED_WINDOW_LENGTH / 2U + 1U];
-            static double difference[CAL_FIXED_WINDOW_LENGTH];
-            const size_t power_count = sample_count / 2U + 1U;
-            const size_t guard = 8U;
-            size_t input_bin;
-            double carrier;
-            double residual;
-            double mean_a = 0.0;
-            double mean_b = 0.0;
-            if (a == NULL || b == NULL || difference_dbc == NULL ||         dc_difference_codes == NULL ||         sample_count != CAL_FIXED_WINDOW_LENGTH ||         !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0 ||         !isfinite(input_frequency_hz) || input_frequency_hz <= 0.0)         return -1;
-            input_bin = (size_t)lround(input_frequency_hz /         (sample_rate_hz / (double)sample_count));
-            if (input_bin >= power_count) input_bin = power_count - 1U;
-            for (size_t i = 0U; i < sample_count; ++i) {
-                difference[i] = a[i] - b[i];
-                mean_a += a[i];
-                mean_b += b[i];
-            }
-            if (adc_performance_power_spectrum(a, sample_count, pa, power_count) != 0 ||         adc_performance_power_spectrum(difference, sample_count, pd,             power_count) != 0)         return -2;
-            carrier = adc_performance_sum_band_power(         pa, power_count, input_bin, guard);
-            residual = adc_performance_sum_band_power(         pd, power_count, input_bin, guard);
-            *difference_dbc =         carrier > 0.0 && residual > 0.0 ?         (float)(10.0 * log10(residual / carrier)) : -INFINITY;
-            *dc_difference_codes =         (float)(mean_a / (double)sample_count - mean_b / (double)sample_count);
-            return 0;
+            adc_cal_perf_spectral_reset(metrics);
         }
         static void adc_performance_frame_result_reset(     adc_performance_frame_result_t *result, uint32_t frame_number) {
             memset(result, 0, sizeof(*result));
@@ -501,440 +332,400 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             return isfinite(metrics->mean_residual) &&            isfinite(metrics->rmse) &&            isfinite(metrics->raw_reference_mean) &&            isfinite(metrics->scaled_reference_mean) &&            isfinite(metrics->raw_adc_mean) &&            isfinite(metrics->offset_corrected_adc_mean) &&            isfinite(metrics->gain_corrected_adc_mean) ? 0 : -3;
         }
         /* Per-frame measurement only.  The gain controller targets  * measured/nominal gain = 1, so the expected waveform is:  *   residual[i] = calibrated_adc[i]  *                 - nominal_system_gain * scaled_reference[i]  *   RMSE = sqrt(mean(residual^2))  *   SNDR = 10*log10(Pfundamental / Pnoise+distortion)  *   ENOB = (SNDR - 1.76)/6.02  * DC and the fundamental main lobe are removed from total power.  Harmonic  * bins intentionally remain in the SNDR denominator. */
-        static int adc_evaluate_performance_frame(     const calibration_aligned_frame_t *frame,     uint32_t frame_number,     float final_gain_correction,     float final_offset_correction,     float nominal_system_gain,     double sample_rate_hz,     double expected_fundamental_hz,     adc_performance_frame_result_t *result) {
-            static double adc_windowed[CAL_FIXED_WINDOW_LENGTH];
-            static double reference_windowed[CAL_FIXED_WINDOW_LENGTH];
-            const size_t sample_count = frame != NULL ?         frame->valid_analysis_sample_count : 0U;
-            size_t half_spectrum;
-            size_t search_first;
-            size_t search_last;
-            size_t fundamental_bin = 0U;
-            size_t signal_half_width;
-            adc_final_reference_metrics_t reference_metrics;
-            double adc_mean = 0.0;
-            double reference_mean = 0.0;
-            double best_reference_power = 0.0;
-            double total_non_dc_power = 0.0;
-            double signal_power = 0.0;
-            double noise_distortion_power;
-            if (result == NULL) return -1;
-            adc_performance_frame_result_reset(result, frame_number);
-            if (frame == NULL || !frame->frame_valid ||         sample_count != CAL_FIXED_WINDOW_LENGTH ||         frame->calibration_window_length != sample_count ||         frame->aligned_corrected_adc_samples == NULL ||         frame->aligned_reference_samples == NULL ||         !isfinite(frame->analysis_reference_scale) ||         frame->analysis_reference_scale <= 0.0f ||         !isfinite(nominal_system_gain) || nominal_system_gain <= 0.0f) {
-                result->failure_reason = "invalid final calibrated analysis window";
-                return -2;
-            }
-            result->sample_count = sample_count;
-            result->transform_length = sample_count;
-            result->sample_rate_hz = sample_rate_hz;
-            result->fundamental_known =         isfinite(expected_fundamental_hz) &&         expected_fundamental_hz > 0.0 &&         isfinite(sample_rate_hz) &&         expected_fundamental_hz < 0.5 * sample_rate_hz;
-            result->expected_fundamental_hz = result->fundamental_known ?         expected_fundamental_hz : NAN;
-            if (adc_calculate_final_reference_metrics(             frame, final_gain_correction, final_offset_correction,             nominal_system_gain, &reference_metrics) != 0) {
-                result->failure_reason = "final sample equation mismatch";
-                return -3;
-            }
-            result->mean_residual = reference_metrics.mean_residual;
-            result->rmse = reference_metrics.rmse;
-            result->raw_reference_mean = reference_metrics.raw_reference_mean;
-            result->scaled_reference_mean = reference_metrics.scaled_reference_mean;
-            result->raw_adc_mean = reference_metrics.raw_adc_mean;
-            result->offset_corrected_adc_mean =         reference_metrics.offset_corrected_adc_mean;
-            result->gain_corrected_adc_mean =         reference_metrics.gain_corrected_adc_mean;
-            result->reference_fit_s_error_db =         reference_metrics.reference_fit_s_error_db;
-            /* The final-frame analyzer already calculated Pearson correlation on      * these same aligned arrays.  Positive nominal scaling of the reference      * does not change Pearson correlation. */
-            result->correlation = frame->metrics.correlation;
-            result->normalized_gain =         frame->metrics.measured_gain / nominal_system_gain;
-            if (!isfinite(result->mean_residual) ||         !isfinite(result->rmse) || result->rmse < 0.0f ||         !isfinite(result->correlation) ||         result->correlation < CAL_DAC_REF_MIN_CORRELATION ||         result->correlation > 1.0001f ||         !isfinite(result->normalized_gain)) {
-                result->failure_reason = "invalid reference-based performance metrics";
-                return -4;
-            }
-            if (!isfinite(result->sample_rate_hz) ||         result->sample_rate_hz <= 0.0 || sample_count < 8U) {
-                result->failure_reason = "invalid sample rate or transform length";
-                return -5;
-            }
-            if (result->fundamental_known) {
-                result->cycles_in_window = result->expected_fundamental_hz *             (double)sample_count / result->sample_rate_hz;
-                result->expected_fundamental_bin = result->cycles_in_window;
-                result->coherent_sampling =             fabs(result->cycles_in_window -                  round(result->cycles_in_window)) <=             CAL_COHERENCE_TOLERANCE;
-            }
-            result->window_name = result->coherent_sampling ?         "RECTANGULAR" : "HANN";
-            for (size_t i = 0U;
-            i < sample_count;
-            ++i) {
-                adc_mean += frame->aligned_corrected_adc_samples[i];
-                reference_mean += frame->aligned_reference_samples[i];
-            }
-            adc_mean /= (double)sample_count;
-            reference_mean /= (double)sample_count;
-            for (size_t i = 0U;
-            i < sample_count;
-            ++i) {
-                const double window = result->coherent_sampling ? 1.0 :             0.5 - 0.5 * cos(6.28318530717958647692 * (double)i /                             (double)(sample_count - 1U));
-                adc_windowed[i] =             ((double)frame->aligned_corrected_adc_samples[i] - adc_mean) *             window;
-                reference_windowed[i] =             ((double)frame->aligned_reference_samples[i] - reference_mean) *             window;
-                if (!isfinite(adc_windowed[i]) ||             !isfinite(reference_windowed[i])) {
-                    result->failure_reason = "invalid windowed sample";
-                    return -6;
-                }
-            }
-            half_spectrum = sample_count / 2U;
-            if (result->fundamental_known) {
-                const size_t expected_bin = (size_t)lround(             result->expected_fundamental_bin);
-                search_first = expected_bin >                 ADC_PERFORMANCE_FUNDAMENTAL_SEARCH_BINS ?             expected_bin - ADC_PERFORMANCE_FUNDAMENTAL_SEARCH_BINS : 1U;
-                search_last = expected_bin +             ADC_PERFORMANCE_FUNDAMENTAL_SEARCH_BINS;
-                if (search_last > half_spectrum)             search_last = half_spectrum;
-            }
-            else {
-                search_first = 1U;
-                search_last = half_spectrum;
-            }
-            if (search_first > search_last || search_last > half_spectrum) {
-                result->failure_reason = "expected fundamental is outside spectrum";
-                return -7;
-            }
-            for (size_t bin = search_first;
-            bin <= search_last;
-            ++bin) {
-                const double power = adc_performance_goertzel_power(             reference_windowed, sample_count, bin);
-                if (isfinite(power) && power > best_reference_power) {
-                    best_reference_power = power;
-                    fundamental_bin = bin;
-                }
-            }
-            if (fundamental_bin == 0U || !isfinite(best_reference_power) ||         best_reference_power <= DBL_EPSILON) {
-                result->failure_reason = "reference fundamental was not detected";
-                return -8;
-            }
-            result->fundamental_bin = fundamental_bin;
-            result->detected_fundamental_hz =         (double)fundamental_bin * result->sample_rate_hz /         (double)sample_count;
-            signal_half_width = result->coherent_sampling ? 0U :         ADC_PERFORMANCE_HANN_SIGNAL_HALF_WIDTH;
-            result->signal_bin_first = fundamental_bin >             signal_half_width ?         fundamental_bin - signal_half_width : 1U;
-            result->signal_bin_last = fundamental_bin +         signal_half_width;
-            if (result->signal_bin_last > half_spectrum)         result->signal_bin_last = half_spectrum;
-            result->dc_power = adc_performance_goertzel_power(         adc_windowed, sample_count, 0U);
-            /* Numerator and denominator use the same DFT and window power scale.      * No one-sided amplitude or window correction is applied to only one      * term, so the common scale cancels in the SNDR ratio. */
-            for (size_t bin = 1U;
-            bin <= half_spectrum;
-            ++bin) {
-                const double power = adc_performance_goertzel_power(             adc_windowed, sample_count, bin);
-                const double one_sided_weight =             (sample_count % 2U == 0U && bin == half_spectrum) ? 1.0 : 2.0;
-                const double weighted_power = one_sided_weight * power;
-                if (!isfinite(weighted_power) || weighted_power < 0.0) {
-                    result->failure_reason = "invalid spectral power";
-                    return -9;
-                }
-                total_non_dc_power += weighted_power;
-                if (bin >= result->signal_bin_first &&             bin <= result->signal_bin_last)             signal_power += weighted_power;
-            }
-            noise_distortion_power = total_non_dc_power - signal_power;
-            result->total_non_dc_power = total_non_dc_power;
-            result->signal_power = signal_power;
-            result->noise_distortion_power = noise_distortion_power;
-            if (!isfinite(result->dc_power) || result->dc_power < 0.0 ||         !isfinite(signal_power) || signal_power <= DBL_EPSILON ||         !isfinite(noise_distortion_power) ||         noise_distortion_power <= DBL_EPSILON) {
-                result->failure_reason = "nonpositive signal or noise-and-distortion power";
-                return -10;
-            }
-            result->sndr_db = (float)(10.0 * log10(         signal_power / noise_distortion_power));
-            result->enob = (result->sndr_db - 1.76f) / 6.02f;
-            if (!isfinite(result->sndr_db) || !isfinite(result->enob)) {
-                result->sndr_db = NAN;
-                result->enob = NAN;
-                result->failure_reason = "nonfinite SNDR or ENOB";
-                return -11;
-            }
-            result->valid = true;
-            result->failure_reason = "none";
-            return 0;
+        typedef struct {
+    const calibration_pending_frame_t *saved_output;
+    calibration_frame_workspace_t *workspace;
+    adc_performance_result_t *legacy_result;
+    float final_gain_correction;
+    float final_offset_correction;
+    float nominal_system_gain;
+    uint32_t frame_number;
+} adc_shared_performance_capture_context_t;
+
+static void adc_map_shared_spectral_metrics(
+    const adc_cal_perf_spectral_metrics_t *shared,
+    adc_performance_spectral_metrics_t *legacy)
+{
+    if (shared == NULL || legacy == NULL) return;
+    *legacy = *shared;
+}
+
+static void adc_map_shared_performance_frame(
+    const adc_cal_perf_frame_result_t *shared,
+    adc_performance_frame_result_t *legacy)
+{
+    if (shared == NULL || legacy == NULL) return;
+    legacy->sample_count = shared->sample_count;
+    legacy->sample_rate_hz = shared->sample_rate_hz;
+    legacy->expected_fundamental_hz = shared->expected_fundamental_hz;
+    legacy->detected_fundamental_hz = shared->cal_combined.signal_hz;
+    legacy->fundamental_bin = shared->cal_combined.signal_bin;
+    legacy->signal_power = shared->cal_combined.signal_power;
+    legacy->noise_distortion_power = shared->cal_combined.noise_distortion_power;
+    legacy->total_non_dc_power = shared->cal_combined.signal_power +
+        shared->cal_combined.noise_distortion_power;
+    legacy->mean_residual = shared->mean_residual;
+    legacy->rmse = shared->rmse;
+    legacy->correlation = shared->correlation;
+    legacy->normalized_gain = shared->normalized_gain;
+    legacy->sndr_db = shared->sndr_db;
+    legacy->sfdr_db = shared->sfdr_db;
+    legacy->thd_db = shared->thd_db;
+    legacy->enob = shared->enob;
+    adc_map_shared_spectral_metrics(&shared->raw_a, &legacy->raw_a);
+    adc_map_shared_spectral_metrics(&shared->raw_b, &legacy->raw_b);
+    adc_map_shared_spectral_metrics(&shared->cal_a, &legacy->cal_a);
+    adc_map_shared_spectral_metrics(&shared->cal_b, &legacy->cal_b);
+    adc_map_shared_spectral_metrics(&shared->raw_combined, &legacy->raw_combined);
+    adc_map_shared_spectral_metrics(&shared->cal_combined, &legacy->cal_combined);
+    legacy->raw_difference_dbc = shared->raw_difference_dbc;
+    legacy->cal_difference_dbc = shared->cal_difference_dbc;
+    legacy->cal_dc_difference_codes = shared->cal_dc_difference_codes;
+    legacy->raw_offset_spur_dbc = NAN;
+    legacy->raw_image_spur_dbc = shared->raw_difference_dbc;
+    legacy->cal_offset_spur_dbc = NAN;
+    legacy->cal_image_spur_dbc = shared->cal_difference_dbc;
+    legacy->window_name = "BLACKMAN_HARRIS_7";
+    legacy->valid = shared->valid;
+    legacy->failure_reason = shared->failure_reason;
+}
+
+static int adc_shared_performance_capture(
+    void *context,
+    double *raw_a,
+    double *raw_b,
+    double *reference,
+    size_t capacity,
+    size_t *sample_count,
+    const char **reason)
+{
+    adc_shared_performance_capture_context_t *capture =
+        (adc_shared_performance_capture_context_t *)context;
+    calibration_aligned_frame_t frame;
+    adc_performance_frame_result_t *legacy_frame;
+    size_t phase_offset;
+    size_t source_count;
+    const int16_t *source_a;
+    const int16_t *source_b;
+    int status;
+
+    if (capture == NULL || capture->saved_output == NULL ||
+        capture->workspace == NULL || capture->legacy_result == NULL ||
+        raw_a == NULL || raw_b == NULL || reference == NULL ||
+        sample_count == NULL || capacity != CAL_FIXED_WINDOW_LENGTH ||
+        capture->frame_number >= ADC_PERFORMANCE_FRAMES) {
+        if (reason != NULL) *reason = "invalid performance capture adapter";
+        return -1;
+    }
+    ++capture->frame_number;
+    if (capture->frame_number > 1U) usleep(ADC_TIMING_INTERFRAME_DELAY_US);
+    legacy_frame = &capture->legacy_result->frames[capture->frame_number - 1U];
+    adc_performance_frame_result_reset(legacy_frame, capture->frame_number);
+
+    status = calibration_capture_against_owned_reference(
+        capture->saved_output, true, capture->final_gain_correction,
+        capture->final_offset_correction,
+        capture->saved_output->analysis_reference_scale,
+        capture->workspace, &frame, reason);
+    if (status != 0 || !frame.frame_valid) {
+        legacy_frame->failure_reason = reason != NULL && *reason != NULL ?
+            *reason : "performance capture or alignment failed";
+        return -2;
+    }
+
+    legacy_frame->correlation = frame.correlation;
+    legacy_frame->raw_reference_mean = frame.canonical_reference_mean;
+    legacy_frame->scaled_reference_mean = frame.metrics.reference_mean;
+    legacy_frame->raw_adc_mean = frame.raw_aligned_adc_mean;
+    legacy_frame->offset_corrected_adc_mean =
+        frame.raw_aligned_adc_mean + capture->final_offset_correction;
+    legacy_frame->gain_corrected_adc_mean = frame.metrics.adc_mean;
+    legacy_frame->offset_a_codes = capture->final_offset_correction;
+    legacy_frame->offset_b_codes = capture->final_offset_correction;
+    legacy_frame->gain_a_codes = capture->final_gain_correction;
+    legacy_frame->gain_b_codes = capture->final_gain_correction;
+    legacy_frame->gain_ratio = 1.0f;
+    legacy_frame->events_used =
+        capture->saved_output->timing_diagnostics.complete_dither_event_count;
+    legacy_frame->align_n0 = (int32_t)lround(
+        capture->saved_output->timing_diagnostics.dither_n0_fractional);
+
+    phase_offset = frame.selected_reference_phase == 1 ? 1U : 0U;
+    if (phase_offset >= capture->saved_output->alignment_reference_count) {
+        legacy_frame->failure_reason = "invalid performance phase offset";
+        return -3;
+    }
+    source_count = capture->saved_output->alignment_reference_count - phase_offset;
+    source_a = capture->workspace->channel_a + phase_offset;
+    source_b = capture->workspace->channel_b + phase_offset;
+    for (size_t i = 0U; i < CAL_FIXED_WINDOW_LENGTH; ++i) {
+        const size_t reference_index =
+            capture->saved_output->calibration_window_start + i;
+        const double source_position =
+            (double)reference_index + (double)frame.total_lag;
+        if (calibration_interpolate_i16(source_a, source_count,
+                source_position, &raw_a[i]) != 0 ||
+            calibration_interpolate_i16(source_b, source_count,
+                source_position, &raw_b[i]) != 0) {
+            legacy_frame->failure_reason = "performance channel interpolation failed";
+            return -4;
         }
-        static int adc_evaluate_uploaded_performance_row(     const calibration_pending_frame_t *saved_output,     const calibration_frame_workspace_t *workspace,     const calibration_aligned_frame_t *frame,     float final_gain_correction, float final_offset_correction,     double sample_rate_hz, double expected_fundamental_hz,     adc_performance_frame_result_t *result) {
-            static double raw_a[CAL_FIXED_WINDOW_LENGTH];
-            static double raw_b[CAL_FIXED_WINDOW_LENGTH];
-            static double cal_a[CAL_FIXED_WINDOW_LENGTH];
-            static double cal_b[CAL_FIXED_WINDOW_LENGTH];
-            static double ref[CAL_FIXED_WINDOW_LENGTH];
-            static double ref_tone[CAL_FIXED_WINDOW_LENGTH];
-            static double dither_template[CAL_FIXED_WINDOW_LENGTH];
-            calibration_tone_fit_result_t ref_fit;
-            calibration_skew_frame_result_t skew;
-            double dither_gain_a = 0.0;
-            double dither_gain_b = 0.0;
-            float raw_dc_difference_codes = NAN;
-            size_t phase_offset;
-            size_t source_count;
-            const int16_t *source_a;
-            const int16_t *source_b;
-            if (saved_output == NULL || workspace == NULL || frame == NULL ||         result == NULL || !frame->frame_valid ||         !isfinite(final_gain_correction) || final_gain_correction <= 0.0f ||         !isfinite(final_offset_correction) ||         !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0 ||         saved_output->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||         frame->calibration_window_length != CAL_FIXED_WINDOW_LENGTH)         return -1;
-            result->offset_a_codes = final_offset_correction;
-            result->offset_b_codes = final_offset_correction;
-            phase_offset = frame->selected_reference_phase == 1 ? 1U : 0U;
-            if (phase_offset >= saved_output->alignment_reference_count) return -2;
-            source_count = saved_output->alignment_reference_count - phase_offset;
-            source_a = workspace->channel_a + phase_offset;
-            source_b = workspace->channel_b + phase_offset;
-            for (size_t i = 0U; i < CAL_FIXED_WINDOW_LENGTH; ++i) {
-                const size_t reference_index = saved_output->calibration_window_start + i;
-                const double source_position =         (double)reference_index + (double)frame->total_lag;
-                if (calibration_interpolate_i16(source_a, source_count,         source_position, &raw_a[i]) != 0 ||         calibration_interpolate_i16(source_b, source_count,         source_position, &raw_b[i]) != 0)         return -3;
-                /* The production controller currently owns one shared software
-                 * offset and one shared software gain.  Both physical channels
-                 * use those frozen coefficients for performance
-                 * characterization; channel-specific dither/skew values below
-                 * are diagnostic estimates only. */
-                cal_a[i] = (double)final_gain_correction *         calibration_apply_offset_correction(raw_a[i], final_offset_correction);
-                cal_b[i] = (double)final_gain_correction *         calibration_apply_offset_correction(raw_b[i], final_offset_correction);
-                ref[i] = frame->aligned_reference_samples[i];
-                if (!isfinite(cal_a[i]) || !isfinite(cal_b[i]) ||         !isfinite(ref[i])) return -4;
-            }
-            if (calibration_estimate_skew_frame(cal_a, cal_b, ref, &skew) == 0 &&         skew.valid) {
-                dither_gain_a = skew.channel[0].pulse_gain;
-                dither_gain_b = skew.channel[1].pulse_gain;
-                result->events_used = skew.complete_event_count;
-                result->align_n0 =         (int32_t)lround(g_stored_offset_reference.timing_diagnostics.dither_n0_fractional);
-                result->gain_a_codes = (float)dither_gain_a;
-                result->gain_b_codes = (float)dither_gain_b;
-                result->gain_ratio =         dither_gain_a > DBL_EPSILON ?         (float)(dither_gain_b / dither_gain_a) : NAN;
-                result->skew_a_ps = (float)skew.channel[0].skew_full_ps;
-                result->skew_b_ps = (float)skew.channel[1].skew_full_ps;
-                result->skew_mismatch_ps = (float)skew.relative_skew_ps;
-            }
-            if (calibration_fit_tone_refined(         ref, CAL_FIXED_WINDOW_LENGTH, expected_fundamental_hz,         sample_rate_hz, &ref_fit, ref_tone, dither_template) == 0 &&         calibration_tone_fit_parameters_are_finite(&ref_fit) &&         isfinite(dither_gain_a) && isfinite(dither_gain_b)) {
-                for (size_t i = 0U; i < CAL_FIXED_WINDOW_LENGTH; ++i) {
-                    cal_a[i] -= dither_gain_a * dither_template[i];
-                    cal_b[i] -= dither_gain_b * dither_template[i];
-                    raw_a[i] -= dither_gain_a * dither_template[i] /         (double)final_gain_correction;
-                    raw_b[i] -= dither_gain_b * dither_template[i] /         (double)final_gain_correction;
-                }
-            }
-            if (adc_performance_analyse_record(         raw_a, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->raw_a) != 0 ||         adc_performance_analyse_record(         raw_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->raw_b) != 0 ||         adc_performance_analyse_record(         cal_a, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->cal_a) != 0 ||         adc_performance_analyse_record(         cal_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->cal_b) != 0)         return -5;
-            /* Current FPGA capture mode presents Channel A and Channel B as
-             * parallel same-instant records.  Until a real A/B interleaved
-             * output stream is available, uploaded-project-compatible
-             * "combined" columns mirror Channel A. */
-            result->raw_combined = result->raw_a;
-            result->cal_combined = result->cal_a;
-            if (adc_performance_channel_difference_dbc(         raw_a, raw_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         expected_fundamental_hz, &result->raw_difference_dbc,         &raw_dc_difference_codes) != 0 ||         adc_performance_channel_difference_dbc(         cal_a, cal_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         expected_fundamental_hz, &result->cal_difference_dbc,         &result->cal_dc_difference_codes) != 0)         return -6;
-            result->raw_offset_spur_dbc = NAN;
-            result->raw_image_spur_dbc = result->raw_difference_dbc;
-            result->cal_offset_spur_dbc = NAN;
-            result->cal_image_spur_dbc = result->cal_difference_dbc;
-            result->sndr_db = result->cal_combined.sndr_db;
-            result->sfdr_db = result->cal_combined.sfdr_db;
-            result->thd_db = result->cal_combined.thd_db;
-            result->enob = result->cal_combined.enob;
-            result->detected_fundamental_hz = result->cal_combined.signal_hz;
-            result->fundamental_bin = result->cal_combined.signal_bin;
-            result->signal_power = result->cal_combined.signal_power;
-            result->noise_distortion_power =         result->cal_combined.noise_distortion_power;
-            result->total_non_dc_power =         result->cal_combined.signal_power +         result->cal_combined.noise_distortion_power;
-            result->window_name = "BLACKMAN_HARRIS_7";
-            return 0;
+        reference[i] = frame.aligned_reference_samples[i];
+        if (!isfinite(raw_a[i]) || !isfinite(raw_b[i]) ||
+            !isfinite(reference[i])) {
+            legacy_frame->failure_reason = "nonfinite performance capture sample";
+            return -5;
         }
-        static int adc_evaluate_performance_batch(     const calibration_pending_frame_t *saved_output,     float final_gain_correction,     float final_offset_correction,     float nominal_system_gain,     double expected_fundamental_hz,     float offset_verification_residual,     float offset_verification_standard_error,     float post_gain_residual,     float post_gain_residual_standard_error,     adc_performance_result_t *result) {
-            static calibration_frame_workspace_t workspace;
-            adc_performance_statistics_t residual_statistics;
-            adc_performance_statistics_t rmse_statistics;
-            adc_performance_statistics_t correlation_statistics;
-            adc_performance_statistics_t sndr_statistics;
-            adc_performance_statistics_t sfdr_statistics;
-            adc_performance_statistics_t thd_statistics;
-            adc_performance_statistics_t enob_statistics;
-            adc_performance_statistics_t raw_sndr_statistics;
-            adc_performance_statistics_t raw_sfdr_statistics;
-            adc_performance_statistics_t raw_thd_statistics;
-            adc_performance_statistics_t raw_enob_statistics;
-            adc_performance_statistics_t raw_image_statistics;
-            adc_performance_statistics_t cal_image_statistics;
-            adc_performance_statistics_t raw_difference_statistics;
-            adc_performance_statistics_t cal_difference_statistics;
-            adc_performance_statistics_t cal_dc_difference_statistics;
-            adc_performance_statistics_t normalized_gain_statistics;
-            const bool previous_quiet_capture = g_quiet_calibration_capture;
-            if (result == NULL) return -1;
-            memset(result, 0, sizeof(*result));
-            result->mean_residual = NAN;
-            result->residual_stddev = NAN;
-            result->residual_standard_error = NAN;
-            result->residual_minimum = NAN;
-            result->residual_maximum = NAN;
-            result->rmse = NAN;
-            result->rmse_stddev = NAN;
-            result->correlation = NAN;
-            result->minimum_correlation = NAN;
-            result->sndr_db = NAN;
-            result->sndr_stddev = NAN;
-            result->minimum_sndr_db = NAN;
-            result->sfdr_db = NAN;
-            result->thd_db = NAN;
-            result->enob = NAN;
-            result->enob_stddev = NAN;
-            result->minimum_enob = NAN;
-            result->raw_sndr_db = NAN;
-            result->raw_sfdr_db = NAN;
-            result->raw_thd_db = NAN;
-            result->raw_enob = NAN;
-            result->raw_image_spur_dbc = NAN;
-            result->cal_image_spur_dbc = NAN;
-            result->raw_difference_dbc = NAN;
-            result->cal_difference_dbc = NAN;
-            result->cal_dc_difference_codes = NAN;
-            result->mean_normalized_gain = NAN;
-            result->normalized_gain_stddev = NAN;
-            result->offset_verification_residual = offset_verification_residual;
-            result->offset_verification_standard_error =         offset_verification_standard_error;
-            result->offset_residual_difference = NAN;
-            result->combined_offset_standard_error = NAN;
-            result->offset_difference_z_like = NAN;
-            result->post_gain_residual = post_gain_residual;
-            result->post_gain_residual_standard_error =         post_gain_residual_standard_error;
-            result->calibration_channel = -1;
-            result->canonical_reference_phase = -1;
-            result->final_offset_correction = NAN;
-            result->final_gain_correction = NAN;
-            result->frames_attempted = ADC_PERFORMANCE_FRAMES;
-            result->frames_rejected = ADC_PERFORMANCE_FRAMES;
-            result->failure_reason = "performance batch not evaluated";
-            if (saved_output == NULL || !saved_output->valid ||         saved_output->consumed ||         saved_output->analysis_sample_count != CAL_FIXED_WINDOW_LENGTH ||         saved_output->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||         !isfinite(saved_output->analysis_reference_scale) ||         saved_output->analysis_reference_scale <= 0.0f ||         !isfinite(saved_output->effective_sample_rate_hz) ||         saved_output->effective_sample_rate_hz <= 0.0 ||         !isfinite(final_gain_correction) || final_gain_correction <= 0.0f ||         !isfinite(final_offset_correction) ||         !isfinite(nominal_system_gain) || nominal_system_gain <= 0.0f ||         fabsf(saved_output->software_gain_correction -               final_gain_correction) > 1.0e-6f ||         fabsf(saved_output->software_offset_correction -               final_offset_correction) > 1.0e-6f ||         fabsf(calibration_software_gain_correction() -               final_gain_correction) > 1.0e-6f ||         fabsf(calibration_software_offset_correction() -               final_offset_correction) > 1.0e-6f) {
-                result->failure_reason = "invalid frozen performance configuration";
-                return -2;
-            }
-            result->calibration_channel = saved_output->selected_channel;
-            result->canonical_reference_phase =         saved_output->canonical_reference_phase;
-            result->fixed_window_start = saved_output->calibration_window_start;
-            result->fixed_window_length = saved_output->calibration_window_length;
-            result->final_offset_correction = final_offset_correction;
-            result->final_gain_correction = final_gain_correction;
-            adc_performance_statistics_init(&residual_statistics);
-            adc_performance_statistics_init(&rmse_statistics);
-            adc_performance_statistics_init(&correlation_statistics);
-            adc_performance_statistics_init(&sndr_statistics);
-            adc_performance_statistics_init(&sfdr_statistics);
-            adc_performance_statistics_init(&thd_statistics);
-            adc_performance_statistics_init(&enob_statistics);
-            adc_performance_statistics_init(&raw_sndr_statistics);
-            adc_performance_statistics_init(&raw_sfdr_statistics);
-            adc_performance_statistics_init(&raw_thd_statistics);
-            adc_performance_statistics_init(&raw_enob_statistics);
-            adc_performance_statistics_init(&raw_image_statistics);
-            adc_performance_statistics_init(&cal_image_statistics);
-            adc_performance_statistics_init(&raw_difference_statistics);
-            adc_performance_statistics_init(&cal_difference_statistics);
-            adc_performance_statistics_init(&cal_dc_difference_statistics);
-            adc_performance_statistics_init(&normalized_gain_statistics);
-            /* The owned-reference capture path performs the same local alignment,
-             * fixed-window mapping, offset correction, and gain correction used by
-             * final gain verification.  Performance measurement only reads the
-             * frozen coefficients. */
-            g_quiet_calibration_capture = true;
-            for (uint32_t frame_number = 1U;
-            frame_number <= ADC_PERFORMANCE_FRAMES;
-            ++frame_number) {
-                adc_performance_frame_result_t *frame_result =             &result->frames[frame_number - 1U];
-                calibration_aligned_frame_t frame;
-                const char *reason = NULL;
-                int status;
-                if (frame_number > 1U)             usleep(ADC_TIMING_INTERFRAME_DELAY_US);
-                adc_performance_frame_result_reset(frame_result, frame_number);
-                status = calibration_capture_against_owned_reference(             saved_output, true, final_gain_correction,             final_offset_correction, saved_output->analysis_reference_scale,             &workspace, &frame, &reason);
-                if (status == 0 && frame.frame_valid) {
-                    status = adc_evaluate_performance_frame(                 &frame, frame_number, final_gain_correction,                 final_offset_correction, nominal_system_gain,                 saved_output->effective_sample_rate_hz,                 expected_fundamental_hz, frame_result);
-                    if (status == 0 && frame_result->valid &&
-                        adc_evaluate_uploaded_performance_row(
-                            saved_output, &workspace, &frame,
-                            final_gain_correction, final_offset_correction,
-                            saved_output->effective_sample_rate_hz,
-                            expected_fundamental_hz, frame_result) != 0) {
-                        frame_result->valid = false;
-                        frame_result->failure_reason =
-                            "uploaded-style performance metrics failed";
-                        status = -6;
-                    }
-                }
-                else {
-                    frame_result->failure_reason = reason != NULL ?                 reason : "performance capture or alignment failed";
-                }
-                if (status == 0 && frame_result->valid) {
-                    ++result->frames_valid;
-                    adc_performance_statistics_add(                 &residual_statistics, frame_result->mean_residual);
-                    adc_performance_statistics_add(                 &rmse_statistics, frame_result->rmse);
-                    adc_performance_statistics_add(                 &correlation_statistics, frame_result->correlation);
-                    adc_performance_statistics_add_if_finite(                 &sndr_statistics, frame_result->sndr_db);
-                    adc_performance_statistics_add_if_finite(                 &sfdr_statistics, frame_result->sfdr_db);
-                    adc_performance_statistics_add_if_finite(                 &thd_statistics, frame_result->thd_db);
-                    adc_performance_statistics_add_if_finite(                 &enob_statistics, frame_result->enob);
-                    adc_performance_statistics_add_if_finite(                 &raw_sndr_statistics,                 frame_result->raw_combined.sndr_db);
-                    adc_performance_statistics_add_if_finite(                 &raw_sfdr_statistics,                 frame_result->raw_combined.sfdr_db);
-                    adc_performance_statistics_add_if_finite(                 &raw_thd_statistics,                 frame_result->raw_combined.thd_db);
-                    adc_performance_statistics_add_if_finite(                 &raw_enob_statistics,                 frame_result->raw_combined.enob);
-                    adc_performance_statistics_add_if_finite(                 &raw_image_statistics,                 frame_result->raw_image_spur_dbc);
-                    adc_performance_statistics_add_if_finite(                 &cal_image_statistics,                 frame_result->cal_image_spur_dbc);
-                    adc_performance_statistics_add_if_finite(                 &raw_difference_statistics,                 frame_result->raw_difference_dbc);
-                    adc_performance_statistics_add_if_finite(                 &cal_difference_statistics,                 frame_result->cal_difference_dbc);
-                    adc_performance_statistics_add_if_finite(                 &cal_dc_difference_statistics,                 frame_result->cal_dc_difference_codes);
-                    adc_performance_statistics_add(                 &normalized_gain_statistics,                 frame_result->normalized_gain);
-                }
-                if (ADC_CAL_VERBOSE_DEBUG) {
-                    xil_printf("Performance frame %lu/%u: %s\r\n",                        (unsigned long)frame_number,                        ADC_PERFORMANCE_FRAMES,                        frame_result->valid ? "VALID" : "REJECTED");
-                    if (frame_result->valid) {
-                        print_signed_float_value_or_invalid("  residual mean",                     frame_result->mean_residual, " codes");
-                        print_float_value_or_invalid("  RMSE",                     frame_result->rmse, " codes");
-                        print_float_value_or_invalid("  correlation",                     frame_result->correlation, "");
-                        print_float_value_2("  SNDR",                     frame_result->sndr_db, " dB");
-                        print_float_value_2("  ENOB",                     frame_result->enob, " bits");
-                    }
-                    else {
-                        xil_printf("  Reason                : %s\r\n",                     frame_result->failure_reason != NULL ?                     frame_result->failure_reason : "unknown");
-                    }
-                }
-            }
-            g_quiet_calibration_capture = previous_quiet_capture;
-            result->frames_rejected =         result->frames_attempted - result->frames_valid;
-            if (fabsf(calibration_software_gain_correction() -               final_gain_correction) > 1.0e-6f ||         fabsf(calibration_software_offset_correction() -               final_offset_correction) > 1.0e-6f) {
-                result->failure_reason =             "calibration coefficient changed during performance batch";
-                return -3;
-            }
-            if (result->frames_valid == 0U) {
-                result->failure_reason = "no valid performance frames";
-                return -4;
-            }
-            result->mean_residual = (float)residual_statistics.mean;
-            result->residual_stddev =         adc_performance_statistics_stddev(&residual_statistics);
-            result->residual_standard_error = result->residual_stddev /         sqrtf((float)result->frames_valid);
-            result->residual_minimum = (float)residual_statistics.minimum;
-            result->residual_maximum = (float)residual_statistics.maximum;
-            result->rmse = (float)rmse_statistics.mean;
-            result->rmse_stddev =         adc_performance_statistics_stddev(&rmse_statistics);
-            result->correlation = (float)correlation_statistics.mean;
-            result->minimum_correlation = (float)correlation_statistics.minimum;
-            result->sndr_db = adc_performance_statistics_mean_or_nan(         &sndr_statistics);
-            result->sndr_stddev =         adc_performance_statistics_stddev(&sndr_statistics);
-            result->minimum_sndr_db = sndr_statistics.count > 0U ?         (float)sndr_statistics.minimum : NAN;
-            result->sfdr_db = adc_performance_statistics_mean_or_nan(         &sfdr_statistics);
-            result->thd_db = adc_performance_statistics_mean_or_nan(         &thd_statistics);
-            result->enob = adc_performance_statistics_mean_or_nan(         &enob_statistics);
-            result->enob_stddev =         adc_performance_statistics_stddev(&enob_statistics);
-            result->minimum_enob = enob_statistics.count > 0U ?         (float)enob_statistics.minimum : NAN;
-            result->raw_sndr_db = adc_performance_statistics_mean_or_nan(         &raw_sndr_statistics);
-            result->raw_sfdr_db = adc_performance_statistics_mean_or_nan(         &raw_sfdr_statistics);
-            result->raw_thd_db = adc_performance_statistics_mean_or_nan(         &raw_thd_statistics);
-            result->raw_enob = adc_performance_statistics_mean_or_nan(         &raw_enob_statistics);
-            result->raw_image_spur_dbc = adc_performance_statistics_mean_or_nan(         &raw_image_statistics);
-            result->cal_image_spur_dbc = adc_performance_statistics_mean_or_nan(         &cal_image_statistics);
-            result->raw_difference_dbc = adc_performance_statistics_mean_or_nan(         &raw_difference_statistics);
-            result->cal_difference_dbc = adc_performance_statistics_mean_or_nan(         &cal_difference_statistics);
-            result->cal_dc_difference_codes = adc_performance_statistics_mean_or_nan(         &cal_dc_difference_statistics);
-            result->mean_normalized_gain = (float)normalized_gain_statistics.mean;
-            result->normalized_gain_stddev =         adc_performance_statistics_stddev(&normalized_gain_statistics);
-            result->offset_residual_difference =         isfinite(offset_verification_residual) ?         result->mean_residual - offset_verification_residual : NAN;
-            if (isfinite(offset_verification_standard_error) &&         offset_verification_standard_error >= 0.0f &&         isfinite(result->residual_standard_error) &&         result->residual_standard_error >= 0.0f) {
-                result->combined_offset_standard_error = hypotf(             offset_verification_standard_error,             result->residual_standard_error);
-                result->offset_difference_z_like =             result->combined_offset_standard_error > FLT_EPSILON ?             fabsf(result->offset_residual_difference) /                 result->combined_offset_standard_error : NAN;
-            }
-            result->reference_metrics_valid =         isfinite(result->mean_residual) &&         isfinite(result->residual_stddev) &&         isfinite(result->residual_standard_error) &&         isfinite(result->residual_minimum) &&         isfinite(result->residual_maximum) &&         isfinite(result->rmse) && isfinite(result->rmse_stddev) &&         isfinite(result->correlation) &&         isfinite(result->minimum_correlation) &&         isfinite(result->mean_normalized_gain) &&         isfinite(result->normalized_gain_stddev);
-            result->spectral_metrics_valid =         sndr_statistics.count > 0U && enob_statistics.count > 0U &&         isfinite(result->sndr_db) && isfinite(result->sndr_stddev) &&         isfinite(result->minimum_sndr_db) && isfinite(result->enob) &&         isfinite(result->enob_stddev) && isfinite(result->minimum_enob);
-            result->valid =         result->frames_valid >= ADC_PERFORMANCE_MIN_VALID_FRAMES &&         result->reference_metrics_valid && result->spectral_metrics_valid;
-            result->failure_reason = result->valid ? "none" :         result->frames_valid < ADC_PERFORMANCE_MIN_VALID_FRAMES ?         "insufficient valid performance frames" :         "invalid aggregate performance metrics";
-            return result->valid ? 0 : -5;
+    }
+    *sample_count = CAL_FIXED_WINDOW_LENGTH;
+    if (reason != NULL) *reason = "none";
+    return 0;
+}
+
+static int adc_evaluate_performance_batch(
+    const calibration_pending_frame_t *saved_output,
+    float final_gain_correction,
+    float final_offset_correction,
+    float nominal_system_gain,
+    double expected_fundamental_hz,
+    float offset_verification_residual,
+    float offset_verification_standard_error,
+    float post_gain_residual,
+    float post_gain_residual_standard_error,
+    adc_performance_result_t *result)
+{
+    static calibration_frame_workspace_t workspace;
+    static adc_cal_perf_frame_result_t shared_frames[ADC_PERFORMANCE_FRAMES];
+    adc_shared_performance_capture_context_t capture;
+    adc_cal_perf_config_t config;
+    adc_cal_perf_batch_result_t shared;
+    adc_performance_statistics_t residual_statistics;
+    adc_performance_statistics_t rmse_statistics;
+    adc_performance_statistics_t correlation_statistics;
+    adc_performance_statistics_t sndr_statistics;
+    adc_performance_statistics_t sfdr_statistics;
+    adc_performance_statistics_t thd_statistics;
+    adc_performance_statistics_t enob_statistics;
+    adc_performance_statistics_t raw_sndr_statistics;
+    adc_performance_statistics_t raw_sfdr_statistics;
+    adc_performance_statistics_t raw_thd_statistics;
+    adc_performance_statistics_t raw_enob_statistics;
+    adc_performance_statistics_t raw_image_statistics;
+    adc_performance_statistics_t cal_image_statistics;
+    adc_performance_statistics_t raw_difference_statistics;
+    adc_performance_statistics_t cal_difference_statistics;
+    adc_performance_statistics_t cal_dc_difference_statistics;
+    adc_performance_statistics_t normalized_gain_statistics;
+    const bool previous_quiet_capture = g_quiet_calibration_capture;
+    int status;
+
+    if (result == NULL) return -1;
+    memset(result, 0, sizeof(*result));
+    result->mean_residual = NAN;
+    result->residual_stddev = NAN;
+    result->residual_standard_error = NAN;
+    result->residual_minimum = NAN;
+    result->residual_maximum = NAN;
+    result->rmse = NAN;
+    result->rmse_stddev = NAN;
+    result->correlation = NAN;
+    result->minimum_correlation = NAN;
+    result->sndr_db = NAN;
+    result->sndr_stddev = NAN;
+    result->minimum_sndr_db = NAN;
+    result->sfdr_db = NAN;
+    result->thd_db = NAN;
+    result->enob = NAN;
+    result->enob_stddev = NAN;
+    result->minimum_enob = NAN;
+    result->raw_sndr_db = NAN;
+    result->raw_sfdr_db = NAN;
+    result->raw_thd_db = NAN;
+    result->raw_enob = NAN;
+    result->raw_image_spur_dbc = NAN;
+    result->cal_image_spur_dbc = NAN;
+    result->raw_difference_dbc = NAN;
+    result->cal_difference_dbc = NAN;
+    result->cal_dc_difference_codes = NAN;
+    result->mean_normalized_gain = NAN;
+    result->normalized_gain_stddev = NAN;
+    result->offset_verification_residual = offset_verification_residual;
+    result->offset_verification_standard_error = offset_verification_standard_error;
+    result->offset_residual_difference = NAN;
+    result->combined_offset_standard_error = NAN;
+    result->offset_difference_z_like = NAN;
+    result->post_gain_residual = post_gain_residual;
+    result->post_gain_residual_standard_error = post_gain_residual_standard_error;
+    result->calibration_channel = -1;
+    result->canonical_reference_phase = -1;
+    result->final_offset_correction = NAN;
+    result->final_gain_correction = NAN;
+    result->frames_attempted = ADC_PERFORMANCE_FRAMES;
+    result->frames_rejected = ADC_PERFORMANCE_FRAMES;
+    result->failure_reason = "performance batch not evaluated";
+
+    if (saved_output == NULL || !saved_output->valid || saved_output->consumed ||
+        saved_output->analysis_sample_count != CAL_FIXED_WINDOW_LENGTH ||
+        saved_output->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||
+        !isfinite(saved_output->analysis_reference_scale) ||
+        saved_output->analysis_reference_scale <= 0.0f ||
+        !isfinite(saved_output->effective_sample_rate_hz) ||
+        saved_output->effective_sample_rate_hz <= 0.0 ||
+        !isfinite(final_gain_correction) || final_gain_correction <= 0.0f ||
+        !isfinite(final_offset_correction) ||
+        !isfinite(nominal_system_gain) || nominal_system_gain <= 0.0f ||
+        fabsf(saved_output->software_gain_correction -
+              final_gain_correction) > 1.0e-6f ||
+        fabsf(saved_output->software_offset_correction -
+              final_offset_correction) > 1.0e-6f ||
+        fabsf(calibration_software_gain_correction() -
+              final_gain_correction) > 1.0e-6f ||
+        fabsf(calibration_software_offset_correction() -
+              final_offset_correction) > 1.0e-6f) {
+        result->failure_reason = "invalid frozen performance configuration";
+        return -2;
+    }
+
+    result->calibration_channel = saved_output->selected_channel;
+    result->canonical_reference_phase = saved_output->canonical_reference_phase;
+    result->fixed_window_start = saved_output->calibration_window_start;
+    result->fixed_window_length = saved_output->calibration_window_length;
+    result->final_offset_correction = final_offset_correction;
+    result->final_gain_correction = final_gain_correction;
+
+    memset(shared_frames, 0, sizeof(shared_frames));
+    memset(&capture, 0, sizeof(capture));
+    capture.saved_output = saved_output;
+    capture.workspace = &workspace;
+    capture.legacy_result = result;
+    capture.final_gain_correction = final_gain_correction;
+    capture.final_offset_correction = final_offset_correction;
+    capture.nominal_system_gain = nominal_system_gain;
+
+    adc_cal_perf_default_config(&config);
+    config.sample_count = CAL_FIXED_WINDOW_LENGTH;
+    config.sample_rate_hz = saved_output->effective_sample_rate_hz;
+    config.expected_fundamental_hz = expected_fundamental_hz;
+    config.frame_count = ADC_PERFORMANCE_FRAMES;
+    config.minimum_valid_frames = ADC_PERFORMANCE_MIN_VALID_FRAMES;
+    config.final_gain_correction = final_gain_correction;
+    config.final_offset_correction = final_offset_correction;
+    config.nominal_system_gain = nominal_system_gain;
+    config.combined_uses_channel_a = true;
+    config.frame_results = shared_frames;
+    config.frame_result_capacity = ADC_PERFORMANCE_FRAMES;
+
+    adc_performance_statistics_init(&residual_statistics);
+    adc_performance_statistics_init(&rmse_statistics);
+    adc_performance_statistics_init(&correlation_statistics);
+    adc_performance_statistics_init(&sndr_statistics);
+    adc_performance_statistics_init(&sfdr_statistics);
+    adc_performance_statistics_init(&thd_statistics);
+    adc_performance_statistics_init(&enob_statistics);
+    adc_performance_statistics_init(&raw_sndr_statistics);
+    adc_performance_statistics_init(&raw_sfdr_statistics);
+    adc_performance_statistics_init(&raw_thd_statistics);
+    adc_performance_statistics_init(&raw_enob_statistics);
+    adc_performance_statistics_init(&raw_image_statistics);
+    adc_performance_statistics_init(&cal_image_statistics);
+    adc_performance_statistics_init(&raw_difference_statistics);
+    adc_performance_statistics_init(&cal_difference_statistics);
+    adc_performance_statistics_init(&cal_dc_difference_statistics);
+    adc_performance_statistics_init(&normalized_gain_statistics);
+
+    g_quiet_calibration_capture = true;
+    status = adc_cal_perf_run_batch(
+        &config, adc_shared_performance_capture, &capture, &shared);
+    g_quiet_calibration_capture = previous_quiet_capture;
+
+    result->frames_attempted = shared.frames_attempted;
+    result->frames_valid = shared.frames_valid;
+    result->frames_rejected = shared.frames_rejected;
+    for (uint32_t i = 0U; i < shared.frames_attempted &&
+         i < ADC_PERFORMANCE_FRAMES; ++i) {
+        adc_map_shared_performance_frame(&shared_frames[i], &result->frames[i]);
+        if (result->frames[i].valid) {
+            adc_performance_statistics_add(&residual_statistics, result->frames[i].mean_residual);
+            adc_performance_statistics_add(&rmse_statistics, result->frames[i].rmse);
+            adc_performance_statistics_add(&correlation_statistics, result->frames[i].correlation);
+            adc_performance_statistics_add_if_finite(&sndr_statistics, result->frames[i].sndr_db);
+            adc_performance_statistics_add_if_finite(&sfdr_statistics, result->frames[i].sfdr_db);
+            adc_performance_statistics_add_if_finite(&thd_statistics, result->frames[i].thd_db);
+            adc_performance_statistics_add_if_finite(&enob_statistics, result->frames[i].enob);
+            adc_performance_statistics_add_if_finite(&raw_sndr_statistics, result->frames[i].raw_combined.sndr_db);
+            adc_performance_statistics_add_if_finite(&raw_sfdr_statistics, result->frames[i].raw_combined.sfdr_db);
+            adc_performance_statistics_add_if_finite(&raw_thd_statistics, result->frames[i].raw_combined.thd_db);
+            adc_performance_statistics_add_if_finite(&raw_enob_statistics, result->frames[i].raw_combined.enob);
+            adc_performance_statistics_add_if_finite(&raw_image_statistics, result->frames[i].raw_image_spur_dbc);
+            adc_performance_statistics_add_if_finite(&cal_image_statistics, result->frames[i].cal_image_spur_dbc);
+            adc_performance_statistics_add_if_finite(&raw_difference_statistics, result->frames[i].raw_difference_dbc);
+            adc_performance_statistics_add_if_finite(&cal_difference_statistics, result->frames[i].cal_difference_dbc);
+            adc_performance_statistics_add_if_finite(&cal_dc_difference_statistics, result->frames[i].cal_dc_difference_codes);
+            adc_performance_statistics_add(&normalized_gain_statistics, result->frames[i].normalized_gain);
         }
-        static void adc_print_performance_csv_number(double value) {
+    }
+
+    result->mean_residual = (float)residual_statistics.mean;
+    result->residual_stddev = adc_performance_statistics_stddev(&residual_statistics);
+    result->residual_standard_error = result->frames_valid > 0U ?
+        result->residual_stddev / sqrtf((float)result->frames_valid) : NAN;
+    result->residual_minimum = residual_statistics.count > 0U ?
+        (float)residual_statistics.minimum : NAN;
+    result->residual_maximum = residual_statistics.count > 0U ?
+        (float)residual_statistics.maximum : NAN;
+    result->rmse = (float)rmse_statistics.mean;
+    result->rmse_stddev = adc_performance_statistics_stddev(&rmse_statistics);
+    result->correlation = (float)correlation_statistics.mean;
+    result->minimum_correlation = correlation_statistics.count > 0U ?
+        (float)correlation_statistics.minimum : NAN;
+    result->sndr_db = shared.sndr_db;
+    result->sndr_stddev = adc_performance_statistics_stddev(&sndr_statistics);
+    result->minimum_sndr_db = sndr_statistics.count > 0U ?
+        (float)sndr_statistics.minimum : NAN;
+    result->sfdr_db = shared.sfdr_db;
+    result->thd_db = shared.thd_db;
+    result->enob = shared.enob;
+    result->enob_stddev = adc_performance_statistics_stddev(&enob_statistics);
+    result->minimum_enob = enob_statistics.count > 0U ?
+        (float)enob_statistics.minimum : NAN;
+    result->raw_sndr_db = shared.raw_sndr_db;
+    result->raw_sfdr_db = shared.raw_sfdr_db;
+    result->raw_thd_db = shared.raw_thd_db;
+    result->raw_enob = shared.raw_enob;
+    result->raw_image_spur_dbc = adc_performance_statistics_mean_or_nan(&raw_image_statistics);
+    result->cal_image_spur_dbc = adc_performance_statistics_mean_or_nan(&cal_image_statistics);
+    result->raw_difference_dbc = adc_performance_statistics_mean_or_nan(&raw_difference_statistics);
+    result->cal_difference_dbc = adc_performance_statistics_mean_or_nan(&cal_difference_statistics);
+    result->cal_dc_difference_codes = adc_performance_statistics_mean_or_nan(&cal_dc_difference_statistics);
+    result->mean_normalized_gain = adc_performance_statistics_mean_or_nan(&normalized_gain_statistics);
+    result->normalized_gain_stddev = adc_performance_statistics_stddev(&normalized_gain_statistics);
+    result->offset_residual_difference = isfinite(offset_verification_residual) ?
+        result->mean_residual - offset_verification_residual : NAN;
+    if (isfinite(offset_verification_standard_error) &&
+        offset_verification_standard_error >= 0.0f &&
+        isfinite(result->residual_standard_error) &&
+        result->residual_standard_error >= 0.0f) {
+        result->combined_offset_standard_error = hypotf(
+            offset_verification_standard_error, result->residual_standard_error);
+        result->offset_difference_z_like =
+            result->combined_offset_standard_error > FLT_EPSILON ?
+            fabsf(result->offset_residual_difference) /
+                result->combined_offset_standard_error : NAN;
+    }
+    result->reference_metrics_valid =
+        isfinite(result->mean_residual) && isfinite(result->residual_stddev) &&
+        isfinite(result->residual_standard_error) && isfinite(result->rmse) &&
+        isfinite(result->rmse_stddev) && isfinite(result->correlation) &&
+        isfinite(result->minimum_correlation) &&
+        isfinite(result->mean_normalized_gain) &&
+        isfinite(result->normalized_gain_stddev);
+    result->spectral_metrics_valid = shared.spectral_metrics_valid;
+    result->valid = shared.valid && result->reference_metrics_valid;
+    result->failure_reason = result->valid ? "none" :
+        shared.failure_reason != NULL ? shared.failure_reason :
+        "invalid aggregate performance metrics";
+    return status == 0 && result->valid ? 0 : -5;
+}static void adc_print_performance_csv_number(double value) {
             if (isfinite(value)) print_double_inline(value);
             else xil_printf("nan");
         }
@@ -2920,70 +2711,28 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         double polarity;
                                                                     } calibration_dither_offset_event_t;
                                                                     static int calibration_dither_offset_interpolate(     const double *samples, size_t count, double position,     double *value) {
-                                                                        size_t lower;
-                                                                        double fraction;
-                                                                        if (samples == NULL || value == NULL || count == 0U ||         !isfinite(position) || position < 0.0 ||         position > (double)(count - 1U))         return -1;
-                                                                        lower = (size_t)floor(position);
-                                                                        if (lower >= count - 1U) {
-                                                                            *value = samples[count - 1U];
-                                                                            return isfinite(*value) ? 0 : -2;
-                                                                        }
-                                                                        fraction = position - (double)lower;
-                                                                        *value = (1.0 - fraction) * samples[lower] +         fraction * samples[lower + 1U];
-                                                                        return isfinite(*value) ? 0 : -2;
+                                                                        return adc_cal_dither_interpolate(samples, count, position, value);
                                                                     }
                                                                     static int calibration_dither_offset_find_events(     const double *template_samples, size_t count,     calibration_dither_offset_event_t *events, size_t max_events,     uint32_t *complete_count, uint32_t *discarded_boundary_count) {
-                                                                        double max_abs = 0.0;
-                                                                        uint32_t complete = 0U;
-                                                                        uint32_t discarded = 0U;
+                                                                        adc_cal_dither_config_t config;
+                                                                        adc_cal_dither_result_t shared;
                                                                         if (complete_count != NULL) *complete_count = 0U;
                                                                         if (discarded_boundary_count != NULL)         *discarded_boundary_count = 0U;
                                                                         if (template_samples == NULL || events == NULL ||         count == 0U || max_events == 0U)         return -1;
-                                                                        for (size_t i = 0U; i < count; ++i) {
-                                                                            if (!isfinite(template_samples[i])) return -2;
-                                                                            if (fabs(template_samples[i]) > max_abs)         max_abs = fabs(template_samples[i]);
+                                                                        adc_cal_dither_default_config(&config);
+                                                                        config.threshold_fraction = CAL_DITHER_EVENT_THRESHOLD_FRACTION;
+                                                                        config.minimum_events = 1U;
+                                                                        config.boundary_margin = 1U;
+                                                                        if (adc_cal_dither_find_events(         template_samples, count, &config, &shared) != 0)         return -2;
+                                                                        if (shared.accepted_events > max_events) return -4;
+                                                                        for (size_t i = 0U; i < shared.accepted_events; ++i) {
+                                                                            events[i].start = shared.events[i].start;
+                                                                            events[i].end = shared.events[i].end;
+                                                                            events[i].center = shared.events[i].center;
+                                                                            events[i].polarity = shared.events[i].polarity;
                                                                         }
-                                                                        if (max_abs <= DBL_EPSILON) return -3;
-                                                                        for (size_t i = 0U; i < count;) {
-                                                                            if (fabs(template_samples[i]) <             CAL_DITHER_EVENT_THRESHOLD_FRACTION * max_abs) {
-                                                                                ++i;
-                                                                                continue;
-                                                                            }
-                                                                            {
-                                                                                const size_t start = i;
-                                                                                double weighted_sum = 0.0;
-                                                                                double weight_sum = 0.0;
-                                                                                double signed_sum = 0.0;
-                                                                                double peak_abs = 0.0;
-                                                                                double peak_value = 0.0;
-                                                                                while (i < count &&                    fabs(template_samples[i]) >=                        CAL_DITHER_EVENT_THRESHOLD_FRACTION * max_abs) {
-                                                                                    const double sample = template_samples[i];
-                                                                                    const double weight = fabs(sample);
-                                                                                    weighted_sum += (double)i * weight;
-                                                                                    weight_sum += weight;
-                                                                                    signed_sum += sample;
-                                                                                    if (weight > peak_abs) {
-                                                                                        peak_abs = weight;
-                                                                                        peak_value = sample;
-                                                                                    }
-                                                                                    ++i;
-                                                                                }
-                                                                                if (weight_sum <= DBL_EPSILON) continue;
-                                                                                if (start == 0U || i >= count) {
-                                                                                    ++discarded;
-                                                                                    continue;
-                                                                                }
-                                                                                if (complete >= max_events) return -4;
-                                                                                events[complete].start = start;
-                                                                                events[complete].end = i;
-                                                                                events[complete].center = weighted_sum / weight_sum;
-                                                                                events[complete].polarity =         signed_sum >= 0.0 ? 1.0 : -1.0;
-                                                                                if (fabs(signed_sum) <= DBL_EPSILON)         events[complete].polarity = peak_value >= 0.0 ? 1.0 : -1.0;
-                                                                                ++complete;
-                                                                            }
-                                                                        }
-                                                                        if (complete_count != NULL) *complete_count = complete;
-                                                                        if (discarded_boundary_count != NULL)         *discarded_boundary_count = discarded;
+                                                                        if (complete_count != NULL)         *complete_count = (uint32_t)shared.accepted_events;
+                                                                        if (discarded_boundary_count != NULL)         *discarded_boundary_count = (uint32_t)shared.rejected_events;
                                                                         return 0;
                                                                     }
                                                                     static int calibration_estimate_dither_offset(     const calibration_aligned_frame_t *frame,     double existing_offset_codes,     calibration_dither_offset_diagnostic_t *diagnostic) {
@@ -4522,260 +4271,188 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         if (reason != NULL) *reason = "none";
                                                                         return 0;
                                                                     }
-                                                                    static int calibration_skew_profile_estimate(     const double *profile, const double *template_profile,     const double *derivative_profile, size_t count, int mask,     double gain, double *skew_samples, uint32_t *used_count,     double *energy) {
-                                                                        double numerator = 0.0;
-                                                                        double denominator = 0.0;
-                                                                        uint32_t used = 0U;
-                                                                        if (profile == NULL || template_profile == NULL ||         derivative_profile == NULL || skew_samples == NULL ||         used_count == NULL || energy == NULL || count == 0U ||         !isfinite(gain) || fabs(gain) <= DBL_EPSILON)         return -1;
-                                                                        for (size_t i = 0U; i < count; ++i) {
-                                                                            const double dprime = derivative_profile[i];
-                                                                            bool select = true;
-                                                                            if (mask > 0) select = dprime > 0.0;
-                                                                            else if (mask < 0) select = dprime < 0.0;
-                                                                            if (!select) continue;
-                                                                            if (!isfinite(profile[i]) || !isfinite(template_profile[i]) ||         !isfinite(dprime)) return -2;
-                                                                            numerator +=         (profile[i] - gain * template_profile[i]) * dprime;
-                                                                            denominator += dprime * dprime;
-                                                                            ++used;
-                                                                        }
-                                                                        *used_count = used;
-                                                                        *energy = denominator;
-                                                                        if (used == 0U || denominator <= CAL_SKEW_DERIVATIVE_ENERGY_FLOOR)         return -3;
-                                                                        *skew_samples = numerator / (gain * denominator);
-                                                                        return isfinite(*skew_samples) ? 0 : -4;
-                                                                    }
-                                                                    static double calibration_skew_dot_product(     const double *a, const double *b, size_t count) {
-                                                                        double sum = 0.0;
-                                                                        if (a == NULL || b == NULL) return NAN;
-                                                                        for (size_t i = 0U; i < count; ++i) {
-                                                                            if (!isfinite(a[i]) || !isfinite(b[i])) return NAN;
-                                                                            sum += a[i] * b[i];
-                                                                        }
-                                                                        return sum;
-                                                                    }
-                                                                    static int calibration_skew_sign_self_test(void) {
-                                                                        const double expected = 0.125;
-                                                                        const double template_profile[] = {
-                                                                            0.0, 1.0, 2.0, 3.0, 2.0, 1.0, 0.0
-                                                                        };
-                                                                        const double derivative_profile[] = {
-                                                                            0.0, 1.0, 1.0, 0.0, -1.0, -1.0, 0.0
-                                                                        };
-                                                                        double profile[sizeof(template_profile) /             sizeof(template_profile[0])];
-                                                                        double recovered = NAN;
-                                                                        uint32_t used = 0U;
-                                                                        double energy = 0.0;
-                                                                        for (size_t i = 0U; i < sizeof(profile) / sizeof(profile[0]); ++i) {
-                                                                            profile[i] = template_profile[i] +         expected * derivative_profile[i];
-                                                                        }
-                                                                        if (calibration_skew_profile_estimate(         profile, template_profile, derivative_profile,         sizeof(profile) / sizeof(profile[0]), 0, 1.0,         &recovered, &used, &energy) != 0)         return -1;
-                                                                        return fabs(recovered - expected) <= 1.0e-9 ? 0 : -2;
-                                                                    }
-                                                                    static int calibration_estimate_skew_frame(     const double *channel_a, const double *channel_b,     const double *reference, calibration_skew_frame_result_t *result) {
-                                                                        static double tone_a[CAL_FIXED_WINDOW_LENGTH];
-                                                                        static double tone_b[CAL_FIXED_WINDOW_LENGTH];
-                                                                        static double tone_ref[CAL_FIXED_WINDOW_LENGTH];
-                                                                        static double residual_a[CAL_FIXED_WINDOW_LENGTH];
-                                                                        static double residual_b[CAL_FIXED_WINDOW_LENGTH];
-                                                                        static double dither_template[CAL_FIXED_WINDOW_LENGTH];
-                                                                        static calibration_dither_offset_event_t events[CAL_FIXED_WINDOW_LENGTH / 2U];
-                                                                        static double profile_a[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        static double profile_b[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        static double template_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        static double derivative_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        double u_a[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        double v_a[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        double u_b[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        double v_b[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
-                                                                        calibration_tone_fit_result_t fit_a;
-                                                                        calibration_tone_fit_result_t fit_b;
-                                                                        calibration_tone_fit_result_t fit_ref;
-                                                                        uint32_t complete_events = 0U;
-                                                                        uint32_t discarded_boundary = 0U;
-                                                                        double rel_start = -DBL_MAX;
-                                                                        double rel_end = DBL_MAX;
-                                                                        double p_sum = 0.0;
-                                                                        double p_mean;
-                                                                        double denominator;
-                                                                        int m_first;
-                                                                        int m_last;
-                                                                        size_t profile_count;
-                                                                        double pulse_energy = 0.0;
-                                                                        double derivative_energy = 0.0;
-                                                                        double max_abs_derivative = 0.0;
-                                                                        double max_abs_template = 0.0;
-                                                                        double sample_period_ps;
-                                                                        if (result == NULL) return -1;
-                                                                        calibration_skew_mark_invalid(         result, CAL_SKEW_REASON_NUMERICAL, "numerical processing failed");
-                                                                        if (channel_a == NULL || channel_b == NULL || reference == NULL ||         !g_stored_offset_reference.timing_diagnostics.valid ||         g_stored_offset_reference.timing_diagnostics.validation.dither_status !=             CAL_TIMING_VALIDATION_PASS) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_CONTEXT,             "stored timing/dither context is invalid");
-                                                                            return -2;
-                                                                        }
-                                                                        if (calibration_fit_tone_refined(         channel_a, CAL_FIXED_WINDOW_LENGTH,         g_stored_offset_reference.reference_frequency_hz,         adc_get_effective_sample_rate_hz(), &fit_a, tone_a,         residual_a) != 0 ||         calibration_fit_tone_refined(         channel_b, CAL_FIXED_WINDOW_LENGTH,         g_stored_offset_reference.reference_frequency_hz,         adc_get_effective_sample_rate_hz(), &fit_b, tone_b,         residual_b) != 0 ||         calibration_fit_tone_refined(         reference, CAL_FIXED_WINDOW_LENGTH,         g_stored_offset_reference.reference_frequency_hz,         adc_get_effective_sample_rate_hz(), &fit_ref, tone_ref,         dither_template) != 0 ||         !calibration_tone_fit_parameters_are_finite(&fit_a) ||         !calibration_tone_fit_parameters_are_finite(&fit_b) ||         !calibration_tone_fit_parameters_are_finite(&fit_ref) ||         fit_a.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||         fit_b.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||         fit_a.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION ||         fit_b.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_TONE_FIT,             "tone fit failed for one or both physical channels");
-                                                                            return -3;
-                                                                        }
-                                                                        if (calibration_dither_offset_find_events(         dither_template, CAL_FIXED_WINDOW_LENGTH, events,         sizeof(events) / sizeof(events[0]), &complete_events,         &discarded_boundary) != 0) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_DITHER_ALIGNMENT,             "dither pulse template was not found");
-                                                                            return -4;
-                                                                        }
-                                                                        result->complete_event_count = complete_events;
-                                                                        result->discarded_boundary_event_count = discarded_boundary;
-                                                                        if (complete_events < CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS ||         complete_events < CAL_SKEW_MIN_ACCEPTED_FRAMES) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_TOO_FEW_EVENTS,             "too few complete dither events");
-                                                                            result->complete_event_count = complete_events;
-                                                                            return -5;
-                                                                        }
-                                                                        for (uint32_t k = 0U; k < complete_events; ++k) {
-                                                                            const double left = (double)events[k].start - events[k].center;
-                                                                            const double right =         (double)(events[k].end - 1U) - events[k].center;
-                                                                            if (left > rel_start) rel_start = left;
-                                                                            if (right < rel_end) rel_end = right;
-                                                                            p_sum += events[k].polarity;
-                                                                        }
-                                                                        m_first = (int)ceil(rel_start);
-                                                                        m_last = (int)floor(rel_end);
-                                                                        if (m_last < m_first) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_TEMPLATE,             "complete-event profile is empty");
-                                                                            return -6;
-                                                                        }
-                                                                        profile_count = (size_t)(m_last - m_first + 1);
-                                                                        if (profile_count == 0U ||         profile_count > CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_TEMPLATE,             "complete-event profile is too long");
-                                                                            return -7;
-                                                                        }
-                                                                        memset(u_a, 0, sizeof(u_a));
-                                                                        memset(v_a, 0, sizeof(v_a));
-                                                                        memset(u_b, 0, sizeof(u_b));
-                                                                        memset(v_b, 0, sizeof(v_b));
-                                                                        memset(template_profile, 0, sizeof(template_profile));
-                                                                        for (uint32_t k = 0U; k < complete_events; ++k) {
-                                                                            const double polarity = events[k].polarity;
-                                                                            for (size_t j = 0U; j < profile_count; ++j) {
-                                                                                const double position =         events[k].center + (double)(m_first + (int)j);
-                                                                                double a_value;
-                                                                                double b_value;
-                                                                                double template_value;
-                                                                                if (calibration_dither_offset_interpolate(             residual_a, CAL_FIXED_WINDOW_LENGTH, position,             &a_value) != 0 ||         calibration_dither_offset_interpolate(             residual_b, CAL_FIXED_WINDOW_LENGTH, position,             &b_value) != 0 ||         calibration_dither_offset_interpolate(             dither_template, CAL_FIXED_WINDOW_LENGTH, position,             &template_value) != 0) {
-                                                                                    calibration_skew_mark_invalid(                 result, CAL_SKEW_REASON_NUMERICAL,                 "event interpolation failed");
-                                                                                    return -8;
-                                                                                }
-                                                                                u_a[j] += a_value;
-                                                                                v_a[j] += polarity * a_value;
-                                                                                u_b[j] += b_value;
-                                                                                v_b[j] += polarity * b_value;
-                                                                                template_profile[j] += polarity * template_value;
-                                                                            }
-                                                                        }
-                                                                        p_mean = p_sum / (double)complete_events;
-                                                                        denominator = 1.0 - p_mean * p_mean;
-                                                                        if (!isfinite(denominator) ||         denominator < CAL_DITHER_GAIN_DENOMINATOR_FLOOR) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_POLARITY_IMBALANCE,             "polarity-separation denominator is too small");
-                                                                            result->mean_event_polarity = p_mean;
-                                                                            result->separation_denominator = denominator;
-                                                                            return -9;
-                                                                        }
-                                                                        for (size_t j = 0U; j < profile_count; ++j) {
-                                                                            u_a[j] /= (double)complete_events;
-                                                                            v_a[j] /= (double)complete_events;
-                                                                            u_b[j] /= (double)complete_events;
-                                                                            v_b[j] /= (double)complete_events;
-                                                                            template_profile[j] /= (double)complete_events;
-                                                                            profile_a[j] = (v_a[j] - p_mean * u_a[j]) / denominator;
-                                                                            profile_b[j] = (v_b[j] - p_mean * u_b[j]) / denominator;
-                                                                            if (!isfinite(profile_a[j]) || !isfinite(profile_b[j]) ||         !isfinite(template_profile[j])) {
-                                                                                calibration_skew_mark_invalid(                 result, CAL_SKEW_REASON_NUMERICAL,                 "nonfinite separated dither profile");
-                                                                                return -10;
-                                                                            }
-                                                                            pulse_energy += template_profile[j] * template_profile[j];
-                                                                            if (fabs(template_profile[j]) > max_abs_template)         max_abs_template = fabs(template_profile[j]);
-                                                                        }
-                                                                        if (!isfinite(pulse_energy) ||         pulse_energy <= CAL_DITHER_GAIN_TEMPLATE_ENERGY_FLOOR ||         max_abs_template <= DBL_EPSILON) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_TEMPLATE,             "pulse-template energy is too small");
-                                                                            return -11;
-                                                                        }
-                                                                        for (size_t j = 0U; j < profile_count; ++j) {
-                                                                            const double previous = j > 0U ?         template_profile[j - 1U] : template_profile[j];
-                                                                            const double next = j + 1U < profile_count ?         template_profile[j + 1U] : template_profile[j];
-                                                                            derivative_profile[j] = 0.5 * (next - previous);
-                                                                            if (!isfinite(derivative_profile[j])) {
-                                                                                calibration_skew_mark_invalid(                 result, CAL_SKEW_REASON_DERIVATIVE,                 "nonfinite pulse derivative");
-                                                                                return -12;
-                                                                            }
-                                                                            if (fabs(derivative_profile[j]) > max_abs_derivative)         max_abs_derivative = fabs(derivative_profile[j]);
-                                                                        }
-                                                                        if (max_abs_derivative <= DBL_EPSILON) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_DERIVATIVE,             "pulse derivative is zero");
-                                                                            return -13;
-                                                                        }
-                                                                        for (size_t j = 0U; j < profile_count; ++j) {
-                                                                            if (fabs(derivative_profile[j]) <         CAL_SKEW_EDGE_DERIVATIVE_FRACTION * max_abs_derivative)         derivative_profile[j] = 0.0;
-                                                                            derivative_energy += derivative_profile[j] * derivative_profile[j];
-                                                                        }
-                                                                        if (!isfinite(derivative_energy) ||         derivative_energy <= CAL_SKEW_DERIVATIVE_ENERGY_FLOOR) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_DERIVATIVE,             "edge derivative energy is too small");
-                                                                            return -14;
-                                                                        }
-                                                                        result->channel[0].pulse_gain =         pulse_energy > DBL_EPSILON ?         calibration_skew_dot_product(profile_a, template_profile, profile_count) /             pulse_energy : NAN;
-                                                                        result->channel[1].pulse_gain =         pulse_energy > DBL_EPSILON ?         calibration_skew_dot_product(profile_b, template_profile, profile_count) /             pulse_energy : NAN;
-                                                                        if (!isfinite(result->channel[0].pulse_gain) ||         !isfinite(result->channel[1].pulse_gain) ||         result->channel[0].pulse_gain <= CAL_DITHER_GAIN_MIN_POSITIVE_GAIN ||         result->channel[1].pulse_gain <= CAL_DITHER_GAIN_MIN_POSITIVE_GAIN) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_GAIN,             "dither gain is invalid for skew model");
-                                                                            return -15;
-                                                                        }
-                                                                        for (int ch = 0; ch < 2; ++ch) {
-                                                                            calibration_skew_channel_estimate_t *estimate =         &result->channel[ch];
-                                                                            const double *profile = ch == 0 ? profile_a : profile_b;
-                                                                            uint32_t used = 0U;
-                                                                            double energy = 0.0;
-                                                                            estimate->tone = ch == 0 ? fit_a : fit_b;
-                                                                            estimate->status = CAL_SKEW_ESTIMATOR_PASS;
-                                                                            estimate->reason = CAL_SKEW_REASON_NONE;
-                                                                            if (calibration_skew_profile_estimate(             profile, template_profile, derivative_profile, profile_count,             0, estimate->pulse_gain, &estimate->skew_full_samples,             &used, &energy) != 0 ||         calibration_skew_profile_estimate(             profile, template_profile, derivative_profile, profile_count,             1, estimate->pulse_gain, &estimate->skew_rising_samples,             &estimate->rising_edge_samples, &energy) != 0 ||         calibration_skew_profile_estimate(             profile, template_profile, derivative_profile, profile_count,             -1, estimate->pulse_gain, &estimate->skew_falling_samples,             &estimate->falling_edge_samples, &energy) != 0) {
-                                                                                calibration_skew_mark_invalid(                 result, CAL_SKEW_REASON_DERIVATIVE,                 "edge skew estimate failed");
-                                                                                return -16;
-                                                                            }
-                                                                            if (estimate->rising_edge_samples < CAL_SKEW_MIN_EDGE_SAMPLES ||         estimate->falling_edge_samples < CAL_SKEW_MIN_EDGE_SAMPLES) {
-                                                                                calibration_skew_mark_invalid(                 result, CAL_SKEW_REASON_DERIVATIVE,                 "too few edge samples");
-                                                                                return -17;
-                                                                            }
-                                                                            if (fabs(estimate->skew_full_samples) >         CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES ||         fabs(estimate->skew_rising_samples) >             CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES ||         fabs(estimate->skew_falling_samples) >             CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES) {
-                                                                                calibration_skew_mark_invalid(                 result, CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE,                 "OUTSIDE_LINEAR_RANGE");
-                                                                                return -18;
-                                                                            }
-                                                                            estimate->valid = 1U;
-                                                                        }
-                                                                        sample_period_ps = 1.0e12 / adc_get_effective_sample_rate_hz();
-                                                                        for (int ch = 0; ch < 2; ++ch) {
-                                                                            result->channel[ch].skew_full_ps =         result->channel[ch].skew_full_samples * sample_period_ps;
-                                                                            result->channel[ch].skew_rising_ps =         result->channel[ch].skew_rising_samples * sample_period_ps;
-                                                                            result->channel[ch].skew_falling_ps =         result->channel[ch].skew_falling_samples * sample_period_ps;
-                                                                        }
-                                                                        result->relative_skew_samples =         result->channel[1].skew_full_samples -         result->channel[0].skew_full_samples;
-                                                                        result->relative_rising_skew_samples =         result->channel[1].skew_rising_samples -         result->channel[0].skew_rising_samples;
-                                                                        result->relative_falling_skew_samples =         result->channel[1].skew_falling_samples -         result->channel[0].skew_falling_samples;
-                                                                        result->relative_skew_ps =         result->relative_skew_samples * sample_period_ps;
-                                                                        result->edge_disagreement_samples = fabs(         result->relative_rising_skew_samples -         result->relative_falling_skew_samples);
-                                                                        result->edge_disagreement_ps =         result->edge_disagreement_samples * sample_period_ps;
-                                                                        result->estimator_status =         result->edge_disagreement_samples <=             CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES ?         CAL_SKEW_ESTIMATOR_PASS : CAL_SKEW_ESTIMATOR_WARNING;
-                                                                        if (result->edge_disagreement_samples >         CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES) {
-                                                                            calibration_skew_mark_invalid(             result, CAL_SKEW_REASON_EDGE_DISAGREEMENT,             "rising and falling edge skew disagree");
-                                                                            return -19;
-                                                                        }
-                                                                        result->valid = 1U;
-                                                                        result->stage_status = CAL_SKEW_STAGE_RUNNING;
-                                                                        result->reason = CAL_SKEW_REASON_NONE;
-                                                                        result->mean_event_polarity = p_mean;
-                                                                        result->separation_denominator = denominator;
-                                                                        result->pulse_energy = pulse_energy;
-                                                                        result->derivative_energy = derivative_energy;
-                                                                        result->max_abs_derivative = max_abs_derivative;
-                                                                        result->profile_count = profile_count;
-                                                                        result->m_first = m_first;
-                                                                        result->m_last = m_last;
-                                                                        result->rejection_reason = "none";
-                                                                        return 0;
-                                                                    }
-                                                                    static double calibration_median_double(     double *values, size_t count) {
+                                                                    static calibration_skew_reject_reason_t calibration_map_shared_skew_reason(
+    adc_cal_skew_reason_t reason)
+{
+    switch (reason) {
+    case ADC_CAL_SKEW_REASON_NONE:
+        return CAL_SKEW_REASON_NONE;
+    case ADC_CAL_SKEW_REASON_CONTEXT:
+        return CAL_SKEW_REASON_CONTEXT;
+    case ADC_CAL_SKEW_REASON_DITHER:
+        return CAL_SKEW_REASON_DITHER_ALIGNMENT;
+    case ADC_CAL_SKEW_REASON_TOO_FEW_EVENTS:
+        return CAL_SKEW_REASON_TOO_FEW_EVENTS;
+    case ADC_CAL_SKEW_REASON_POLARITY:
+        return CAL_SKEW_REASON_POLARITY_IMBALANCE;
+    case ADC_CAL_SKEW_REASON_TEMPLATE:
+        return CAL_SKEW_REASON_TEMPLATE;
+    case ADC_CAL_SKEW_REASON_DERIVATIVE:
+        return CAL_SKEW_REASON_DERIVATIVE;
+    case ADC_CAL_SKEW_REASON_EDGE_DISAGREEMENT:
+        return CAL_SKEW_REASON_EDGE_DISAGREEMENT;
+    case ADC_CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE:
+        return CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE;
+    case ADC_CAL_SKEW_REASON_NUMERICAL:
+    default:
+        return CAL_SKEW_REASON_NUMERICAL;
+    }
+}
+
+static calibration_skew_estimator_status_t calibration_map_shared_skew_status(
+    adc_cal_skew_status_t status)
+{
+    switch (status) {
+    case ADC_CAL_SKEW_STATUS_PASS:
+        return CAL_SKEW_ESTIMATOR_PASS;
+    case ADC_CAL_SKEW_STATUS_WARNING:
+        return CAL_SKEW_ESTIMATOR_WARNING;
+    case ADC_CAL_SKEW_STATUS_INVALID:
+    default:
+        return CAL_SKEW_ESTIMATOR_INVALID;
+    }
+}
+
+static void calibration_map_shared_skew_result(
+    const adc_cal_skew_result_t *shared,
+    const calibration_tone_fit_result_t *fit_a,
+    const calibration_tone_fit_result_t *fit_b,
+    calibration_skew_frame_result_t *legacy)
+{
+    if (shared == NULL || legacy == NULL) return;
+    legacy->valid = shared->valid ? 1U : 0U;
+    legacy->estimator_status = calibration_map_shared_skew_status(shared->status);
+    legacy->stage_status = shared->valid ? CAL_SKEW_STAGE_RUNNING : CAL_SKEW_STAGE_FAIL;
+    legacy->reason = calibration_map_shared_skew_reason(shared->reason);
+    legacy->relative_skew_samples = shared->relative_skew_samples;
+    legacy->relative_skew_ps = shared->relative_skew_ps;
+    legacy->relative_rising_skew_samples = shared->rising_skew_samples;
+    legacy->relative_falling_skew_samples = shared->falling_skew_samples;
+    legacy->edge_disagreement_samples = shared->edge_disagreement_samples;
+    legacy->edge_disagreement_ps = shared->edge_disagreement_samples *
+        (1.0e12 / adc_get_effective_sample_rate_hz());
+    legacy->mean_event_polarity = NAN;
+    legacy->separation_denominator = NAN;
+    legacy->pulse_energy = shared->pulse_energy;
+    legacy->derivative_energy = shared->derivative_energy;
+    legacy->max_abs_derivative = NAN;
+    legacy->complete_event_count = shared->accepted_events;
+    legacy->discarded_boundary_event_count = shared->rejected_events;
+    legacy->profile_count = 0U;
+    legacy->m_first = 0;
+    legacy->m_last = 0;
+    legacy->rejection_reason = shared->failure_reason;
+    legacy->channel[0].valid = shared->valid ? 1U : 0U;
+    legacy->channel[1].valid = shared->valid ? 1U : 0U;
+    legacy->channel[0].status = legacy->estimator_status;
+    legacy->channel[1].status = legacy->estimator_status;
+    legacy->channel[0].reason = legacy->reason;
+    legacy->channel[1].reason = legacy->reason;
+    if (fit_a != NULL) legacy->channel[0].tone = *fit_a;
+    if (fit_b != NULL) legacy->channel[1].tone = *fit_b;
+    legacy->channel[0].pulse_gain = NAN;
+    legacy->channel[1].pulse_gain = NAN;
+    legacy->channel[0].skew_full_samples = shared->channel_a_skew_samples;
+    legacy->channel[1].skew_full_samples = shared->channel_b_skew_samples;
+    legacy->channel[0].skew_rising_samples = NAN;
+    legacy->channel[1].skew_rising_samples = NAN;
+    legacy->channel[0].skew_falling_samples = NAN;
+    legacy->channel[1].skew_falling_samples = NAN;
+    legacy->channel[0].skew_full_ps = shared->channel_a_skew_samples *
+        (1.0e12 / adc_get_effective_sample_rate_hz());
+    legacy->channel[1].skew_full_ps = shared->channel_b_skew_samples *
+        (1.0e12 / adc_get_effective_sample_rate_hz());
+    legacy->channel[0].skew_rising_ps = NAN;
+    legacy->channel[1].skew_rising_ps = NAN;
+    legacy->channel[0].skew_falling_ps = NAN;
+    legacy->channel[1].skew_falling_ps = NAN;
+    legacy->channel[0].rising_edge_samples = 0U;
+    legacy->channel[1].rising_edge_samples = 0U;
+    legacy->channel[0].falling_edge_samples = 0U;
+    legacy->channel[1].falling_edge_samples = 0U;
+}
+
+static int calibration_estimate_skew_frame(
+    const double *channel_a,
+    const double *channel_b,
+    const double *reference,
+    calibration_skew_frame_result_t *result)
+{
+    static double tone_a[CAL_FIXED_WINDOW_LENGTH];
+    static double tone_b[CAL_FIXED_WINDOW_LENGTH];
+    static double tone_ref[CAL_FIXED_WINDOW_LENGTH];
+    static double residual_a[CAL_FIXED_WINDOW_LENGTH];
+    static double residual_b[CAL_FIXED_WINDOW_LENGTH];
+    static double dither_template[CAL_FIXED_WINDOW_LENGTH];
+    calibration_tone_fit_result_t fit_a;
+    calibration_tone_fit_result_t fit_b;
+    calibration_tone_fit_result_t fit_ref;
+    adc_cal_skew_config_t config;
+    adc_cal_skew_result_t shared;
+
+    if (result == NULL) return -1;
+    calibration_skew_mark_invalid(
+        result, CAL_SKEW_REASON_NUMERICAL, "numerical processing failed");
+    if (channel_a == NULL || channel_b == NULL || reference == NULL ||
+        !g_stored_offset_reference.timing_diagnostics.valid ||
+        g_stored_offset_reference.timing_diagnostics.validation.dither_status !=
+            CAL_TIMING_VALIDATION_PASS) {
+        calibration_skew_mark_invalid(
+            result, CAL_SKEW_REASON_CONTEXT,
+            "stored timing/dither context is invalid");
+        return -2;
+    }
+    if (calibration_fit_tone_refined(
+            channel_a, CAL_FIXED_WINDOW_LENGTH,
+            g_stored_offset_reference.reference_frequency_hz,
+            adc_get_effective_sample_rate_hz(), &fit_a, tone_a,
+            residual_a) != 0 ||
+        calibration_fit_tone_refined(
+            channel_b, CAL_FIXED_WINDOW_LENGTH,
+            g_stored_offset_reference.reference_frequency_hz,
+            adc_get_effective_sample_rate_hz(), &fit_b, tone_b,
+            residual_b) != 0 ||
+        calibration_fit_tone_refined(
+            reference, CAL_FIXED_WINDOW_LENGTH,
+            g_stored_offset_reference.reference_frequency_hz,
+            adc_get_effective_sample_rate_hz(), &fit_ref, tone_ref,
+            dither_template) != 0 ||
+        !calibration_tone_fit_parameters_are_finite(&fit_a) ||
+        !calibration_tone_fit_parameters_are_finite(&fit_b) ||
+        !calibration_tone_fit_parameters_are_finite(&fit_ref) ||
+        fit_a.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||
+        fit_b.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||
+        fit_a.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION ||
+        fit_b.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION) {
+        calibration_skew_mark_invalid(
+            result, CAL_SKEW_REASON_TONE_FIT,
+            "tone fit failed for one or both physical channels");
+        return -3;
+    }
+
+    adc_cal_skew_default_config(&config);
+    config.minimum_events = CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS;
+    config.sample_rate_hz = adc_get_effective_sample_rate_hz();
+    config.max_linear_skew_samples = CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
+    config.max_edge_disagreement_samples = CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
+
+    if (adc_cal_skew_estimate_from_residuals(
+            residual_a, residual_b, dither_template, CAL_FIXED_WINDOW_LENGTH,
+            &config, &shared) != 0 || !shared.valid) {
+        calibration_map_shared_skew_result(&shared, &fit_a, &fit_b, result);
+        if (result->reason == CAL_SKEW_REASON_NONE) {
+            result->reason = CAL_SKEW_REASON_NUMERICAL;
+        }
+        result->stage_status = CAL_SKEW_STAGE_FAIL;
+        result->rejection_reason = shared.failure_reason != NULL ?
+            shared.failure_reason : calibration_skew_reason_name(result->reason);
+        return -4;
+    }
+    calibration_map_shared_skew_result(&shared, &fit_a, &fit_b, result);
+    result->rejection_reason = "none";
+    return 0;
+}
+static double calibration_median_double(     double *values, size_t count) {
                                                                         for (size_t i = 1U; i < count; ++i) {
                                                                             const double key = values[i];
                                                                             size_t j = i;
@@ -4826,11 +4503,6 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         batch->initial_delay_register = -1;
                                                                         batch->final_delay_register = -1;
                                                                         batch->failure_reason = "skew prerequisites are invalid";
-                                                                        if (calibration_skew_sign_self_test() != 0) {
-                                                                            batch->reason = CAL_SKEW_REASON_NUMERICAL;
-                                                                            batch->failure_reason = "skew sign self-test failed";
-                                                                            return -1;
-                                                                        }
                                                                         if (!calibration_skew_prerequisites(&reason)) {
                                                                             batch->failure_reason = reason;
                                                                             return -2;
@@ -6816,67 +6488,129 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                             xil_printf("Failed stage            : TIMING\r\n");
                                                                                                         }
                                                                                                     }
-                                                                                                    static void calibration_automatic_fail(     adc_calibration_stage_t failed_stage, const char *reason) {
-                                                                                                        g_automatic_calibration.active = false;
-                                                                                                        g_automatic_calibration.valid = false;
-                                                                                                        g_automatic_calibration.output_valid = false;
-                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_FAILED;
-                                                                                                        g_automatic_calibration.failed_stage = failed_stage;
-                                                                                                        g_automatic_calibration.overall_result = ADC_CAL_RESULT_FAILED;
-                                                                                                        g_automatic_calibration.failure_reason = reason;
-                                                                                                        calibration_automatic_print_summary();
-                                                                                                    }
-                                                                                                    void handle_adc_calibration_cmd(uint32_t frame_count) {
-                                                                                                        calibration_offset_loop_state_t *offset_state;
-                                                                                                        calibration_gain_loop_state_t *gain_state;
-                                                                                                        calibration_skew_batch_result_t skew_batch;
-                                                                                                        float final_normalized_gain;
-                                                                                                        int performance_status;
-                                                                                                        if (adc_sweep_active) {
-                                                                                                            ERR("Another automatic ADC capture is already in progress.");
-                                                                                                            return;
+                                                                                                    static adc_calibration_stage_t calibration_pipeline_to_automatic_stage(     adc_cal_pipeline_stage_t stage) {
+                                                                                                        switch (stage) {
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_IDLE: return ADC_CAL_STAGE_IDLE;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_TIMING: return ADC_CAL_STAGE_TIMING;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_OFFSET: return ADC_CAL_STAGE_OFFSET;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_GAIN: return ADC_CAL_STAGE_GAIN;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_GAIN_VERIFY: return ADC_CAL_STAGE_GAIN_VERIFY;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_SKEW: return ADC_CAL_STAGE_SKEW;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_PERFORMANCE: return ADC_CAL_STAGE_PERFORMANCE;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_COMPLETE: return ADC_CAL_STAGE_COMPLETE;
+                                                                                                            case ADC_CAL_PIPELINE_STAGE_FAILED: return ADC_CAL_STAGE_FAILED;
+                                                                                                            default: return ADC_CAL_STAGE_FAILED;
                                                                                                         }
-                                                                                                        calibration_all_loops_reset();
-                                                                                                        calibration_automatic_state_reset();
-                                                                                                        g_automatic_calibration.active = true;
-                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_TIMING;
-                                                                                                        xil_printf("\r\n=========================================\r\n");
-                                                                                                        xil_printf("       ADC AUTOMATIC CALIBRATION\r\n");
-                                                                                                        xil_printf("=========================================\r\n");
+                                                                                                    }
+                                                                                                    static adc_calibration_result_t calibration_pipeline_to_automatic_result(     adc_cal_pipeline_result_t result) {
+                                                                                                        switch (result) {
+                                                                                                            case ADC_CAL_PIPELINE_RESULT_PASS: return ADC_CAL_RESULT_PASS;
+                                                                                                            case ADC_CAL_PIPELINE_RESULT_PROVISIONAL: return ADC_CAL_RESULT_PROVISIONAL;
+                                                                                                            case ADC_CAL_PIPELINE_RESULT_FAILED: return ADC_CAL_RESULT_FAILED;
+                                                                                                            case ADC_CAL_PIPELINE_RESULT_NONE:
+                                                                                                            default: return ADC_CAL_RESULT_NONE;
+                                                                                                        }
+                                                                                                    }
+                                                                                                    static calibration_offset_result_t calibration_pipeline_to_offset_result(     adc_cal_pipeline_offset_result_t result) {
+                                                                                                        switch (result) {
+                                                                                                            case ADC_CAL_PIPELINE_OFFSET_CONVERGED: return CALIBRATION_OFFSET_RESULT_CONVERGED;
+                                                                                                            case ADC_CAL_PIPELINE_OFFSET_PROVISIONAL: return CALIBRATION_OFFSET_RESULT_PROVISIONAL;
+                                                                                                            case ADC_CAL_PIPELINE_OFFSET_FAILED: return CALIBRATION_OFFSET_RESULT_FAILED;
+                                                                                                            case ADC_CAL_PIPELINE_OFFSET_NONE:
+                                                                                                            default: return CALIBRATION_OFFSET_RESULT_NONE;
+                                                                                                        }
+                                                                                                    }
+                                                                                                    static adc_cal_pipeline_offset_result_t calibration_offset_to_pipeline_result(     calibration_offset_result_t result) {
+                                                                                                        switch (result) {
+                                                                                                            case CALIBRATION_OFFSET_RESULT_CONVERGED: return ADC_CAL_PIPELINE_OFFSET_CONVERGED;
+                                                                                                            case CALIBRATION_OFFSET_RESULT_PROVISIONAL: return ADC_CAL_PIPELINE_OFFSET_PROVISIONAL;
+                                                                                                            case CALIBRATION_OFFSET_RESULT_FAILED: return ADC_CAL_PIPELINE_OFFSET_FAILED;
+                                                                                                            case CALIBRATION_OFFSET_RESULT_NONE:
+                                                                                                            default: return ADC_CAL_PIPELINE_OFFSET_NONE;
+                                                                                                        }
+                                                                                                    }
+                                                                                                    static void calibration_pipeline_sync_automatic_state(     const adc_cal_pipeline_state_t *state) {
+                                                                                                        if (state == NULL) return;
+                                                                                                        g_automatic_calibration.active = state->active;
+                                                                                                        g_automatic_calibration.valid = state->valid;
+                                                                                                        g_automatic_calibration.timing_pass = state->timing_pass;
+                                                                                                        g_automatic_calibration.offset_pass = state->offset_pass;
+                                                                                                        g_automatic_calibration.gain_pass = state->gain_pass;
+                                                                                                        g_automatic_calibration.skew_pass = state->skew_pass;
+                                                                                                        g_automatic_calibration.gain_verification_pass = state->gain_verification_pass;
+                                                                                                        g_automatic_calibration.output_valid = state->output_valid;
+                                                                                                        g_automatic_calibration.performance_measurement_available =             state->performance_measurement_available;
+                                                                                                        g_automatic_calibration.stage =             calibration_pipeline_to_automatic_stage(state->stage);
+                                                                                                        g_automatic_calibration.failed_stage =             calibration_pipeline_to_automatic_stage(state->failed_stage);
+                                                                                                        g_automatic_calibration.overall_result =             calibration_pipeline_to_automatic_result(state->overall_result);
+                                                                                                        g_automatic_calibration.offset_result =             calibration_pipeline_to_offset_result(state->offset_result);
+                                                                                                        g_automatic_calibration.calibration_channel = state->calibration_channel;
+                                                                                                        g_automatic_calibration.canonical_reference_phase =             state->canonical_reference_phase;
+                                                                                                        g_automatic_calibration.fixed_window_start = state->fixed_window_start;
+                                                                                                        g_automatic_calibration.fixed_window_length = state->fixed_window_length;
+                                                                                                        g_automatic_calibration.expected_lag = state->expected_lag;
+                                                                                                        g_automatic_calibration.timing_mean_correlation =             state->timing_mean_correlation;
+                                                                                                        g_automatic_calibration.offset_correction = state->offset_correction;
+                                                                                                        g_automatic_calibration.offset_verification_error =             state->offset_verification_error;
+                                                                                                        g_automatic_calibration.gain_correction = state->gain_correction;
+                                                                                                        g_automatic_calibration.nominal_system_gain = state->nominal_system_gain;
+                                                                                                        g_automatic_calibration.final_normalized_gain =             state->final_normalized_gain;
+                                                                                                        g_automatic_calibration.gain_verification_error =             state->gain_verification_error;
+                                                                                                        g_automatic_calibration.final_relative_skew_ps =             state->final_relative_skew_ps;
+                                                                                                        g_automatic_calibration.failure_reason = state->failure_reason;
+                                                                                                    }
+                                                                                                    static int calibration_pipeline_prepare_fpga(     void *context, const adc_cal_pipeline_run_config_t *config,     const char **reason) {
+                                                                                                        (void)context;
+                                                                                                        (void)config;
                                                                                                         if (!reference_buffer_is_ready() || reference_buffer_length() == 0U) {
                                                                                                             xil_printf("ADC calibration cannot start.\r\n");
                                                                                                             xil_printf("Upload DAC reference first.\r\n");
-                                                                                                            calibration_pending_frame_invalidate();
-                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_TIMING, "uploaded DAC reference is unavailable");
-                                                                                                            return;
+                                                                                                            if (reason != NULL) *reason = "uploaded DAC reference is unavailable";
+                                                                                                            return -1;
                                                                                                         }
                                                                                                         if (RxBufferPtr == NULL) {
-                                                                                                            calibration_pending_frame_invalidate();
-                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_TIMING, "DMA receive buffer is unavailable");
-                                                                                                            return;
+                                                                                                            if (reason != NULL) *reason = "DMA receive buffer is unavailable";
+                                                                                                            return -2;
                                                                                                         }
                                                                                                         print_adc_calibration_rate_summary();
-                                                                                                        calibration_print_stage_header(1U, "Timing Alignment");
-                                                                                                        if (adc_run_timing_calibration(frame_count) != 0 ||         !g_automatic_calibration.timing_pass ||         !g_stored_offset_reference.valid) {
-                                                                                                            calibration_pending_frame_invalidate();
-                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_TIMING, "timing alignment did not pass");
-                                                                                                            return;
+                                                                                                        return 0;
+                                                                                                    }
+                                                                                                    static int calibration_pipeline_run_timing_fpga(     void *context, adc_cal_pipeline_state_t *state,     const adc_cal_pipeline_run_config_t *config, const char **reason) {
+                                                                                                        (void)context;
+                                                                                                        if (state == NULL || config == NULL) return -1;
+                                                                                                        g_automatic_calibration.active = true;
+                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_TIMING;
+                                                                                                        if (adc_run_timing_calibration(config->timing_frame_count) != 0 ||         !g_automatic_calibration.timing_pass ||         !g_stored_offset_reference.valid) {
+                                                                                                            if (reason != NULL) *reason = "timing alignment did not pass";
+                                                                                                            return -2;
                                                                                                         }
+                                                                                                        state->timing_pass = true;
+                                                                                                        state->calibration_channel = g_stored_offset_reference.selected_channel;
+                                                                                                        state->canonical_reference_phase =             g_stored_offset_reference.canonical_reference_phase;
+                                                                                                        state->fixed_window_start =             g_stored_offset_reference.calibration_window_start;
+                                                                                                        state->fixed_window_length =             g_stored_offset_reference.calibration_window_length;
+                                                                                                        state->expected_lag = g_stored_offset_reference.integer_lag;
+                                                                                                        state->timing_mean_correlation =             g_automatic_calibration.timing_mean_correlation;
+                                                                                                        calibration_pipeline_sync_automatic_state(state);
+                                                                                                        return 0;
+                                                                                                    }
+                                                                                                    static int calibration_pipeline_run_offset_fpga(     void *context, adc_cal_pipeline_state_t *state, const char **reason) {
+                                                                                                        calibration_offset_loop_state_t *offset_state;
+                                                                                                        (void)context;
+                                                                                                        if (state == NULL) return -1;
+                                                                                                        g_automatic_calibration.active = true;
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_OFFSET;
-                                                                                                        calibration_print_stage_header(2U, "Offset Calibration");
                                                                                                         handle_adc_offset_calibration_loop_cmd();
                                                                                                         offset_state = calibration_offset_loop_state();
-                                                                                                        g_automatic_calibration.offset_correction =         offset_state->offset_correction;
-                                                                                                        g_automatic_calibration.offset_verification_error =         offset_state->verification_residual;
-                                                                                                        g_automatic_calibration.offset_controller_converged =         offset_state->controller_converged != 0U;
-                                                                                                        g_automatic_calibration.offset_verification_status =         offset_state->verification_status;
-                                                                                                        g_automatic_calibration.offset_result = offset_state->stage_result;
+                                                                                                        state->offset_correction = offset_state->offset_correction;
+                                                                                                        state->offset_verification_error =             offset_state->verification_residual;
+                                                                                                        state->offset_result =             calibration_offset_to_pipeline_result(offset_state->stage_result);
                                                                                                         if ((offset_state->stage_result != CALIBRATION_OFFSET_RESULT_CONVERGED &&          offset_state->stage_result !=              CALIBRATION_OFFSET_RESULT_PROVISIONAL) ||         !offset_state->controller_converged ||         !offset_state->verification_valid ||         (offset_state->verification_status != CAL_OFFSET_VERIFICATION_PASS &&          offset_state->verification_status !=              CAL_OFFSET_VERIFICATION_MARGINAL) ||         !calibration_pending_frame_is_compatible(NULL) ||         !g_pending_calibration_frame.valid ||         g_pending_calibration_frame.consumed ||         g_pending_calibration_frame.source_offset_result !=             offset_state->stage_result) {
-                                                                                                            calibration_gain_input_frame_invalidate();
-                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_OFFSET,             "offset result is unusable");
-                                                                                                            return;
+                                                                                                            if (reason != NULL) *reason = "offset result is unusable";
+                                                                                                            calibration_pipeline_sync_automatic_state(state);
+                                                                                                            return -2;
                                                                                                         }
-                                                                                                        g_automatic_calibration.offset_pass = true;
+                                                                                                        state->offset_pass = true;
                                                                                                         if (ADC_CAL_VERBOSE_DEBUG) {
                                                                                                             xil_printf("Offset:\r\n");
                                                                                                             print_float_value("  Applied correction",                           offset_state->offset_correction, " codes");
@@ -6890,71 +6624,148 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                             xil_printf("Continuing to gain calibration with provisional offset.\r\n");
                                                                                                             print_float_value("Fixed offset correction",                           offset_state->offset_correction, " codes");
                                                                                                         }
+                                                                                                        calibration_pipeline_sync_automatic_state(state);
+                                                                                                        return 0;
+                                                                                                    }
+                                                                                                    static int calibration_pipeline_run_gain_fpga(     void *context, adc_cal_pipeline_state_t *state, const char **reason) {
+                                                                                                        calibration_gain_loop_state_t *gain_state;
+                                                                                                        float final_normalized_gain;
+                                                                                                        (void)context;
+                                                                                                        if (state == NULL) return -1;
+                                                                                                        g_automatic_calibration.active = true;
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_GAIN;
-                                                                                                        calibration_print_stage_header(3U, "Gain Calibration");
                                                                                                         handle_adc_gain_calibration_loop_cmd();
                                                                                                         gain_state = calibration_gain_loop_state();
-                                                                                                        g_automatic_calibration.gain_correction = gain_state->gain_correction;
-                                                                                                        g_automatic_calibration.nominal_system_gain =         gain_state->nominal_system_gain;
-                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_GAIN_VERIFY;
+                                                                                                        state->gain_correction = gain_state->gain_correction;
+                                                                                                        state->nominal_system_gain = gain_state->nominal_system_gain;
+                                                                                                        state->stage = ADC_CAL_PIPELINE_STAGE_GAIN_VERIFY;
                                                                                                         final_normalized_gain =         gain_state->nominal_system_gain > FLT_EPSILON ?         g_pending_calibration_frame.metrics.measured_gain /             gain_state->nominal_system_gain : NAN;
-                                                                                                        if (g_pending_calibration_frame.valid &&         isfinite(final_normalized_gain)) {
-                                                                                                            g_automatic_calibration.final_normalized_gain =             final_normalized_gain;
-                                                                                                            g_automatic_calibration.gain_verification_error =             final_normalized_gain - 1.0f;
+                                                                                                        if (g_pending_calibration_frame.valid && isfinite(final_normalized_gain)) {
+                                                                                                            state->final_normalized_gain = final_normalized_gain;
+                                                                                                            state->gain_verification_error = final_normalized_gain - 1.0f;
                                                                                                         }
                                                                                                         else if (isfinite(gain_state->latest_fitted_gain)) {
-                                                                                                            g_automatic_calibration.final_normalized_gain =             gain_state->latest_fitted_gain;
-                                                                                                            g_automatic_calibration.gain_verification_error =             gain_state->latest_gain_error;
+                                                                                                            state->final_normalized_gain = gain_state->latest_fitted_gain;
+                                                                                                            state->gain_verification_error = gain_state->latest_gain_error;
                                                                                                         }
                                                                                                         if (gain_state->final_status != CALIBRATION_GAIN_LOOP_PASS ||         !gain_state->nominal_system_gain_valid ||         !isfinite(final_normalized_gain) ||         !calibration_pending_frame_is_compatible(NULL) ||         !g_pending_calibration_frame.valid ||         g_pending_calibration_frame.consumed ||         g_pending_calibration_frame.analysis_sample_count !=             CAL_FIXED_WINDOW_LENGTH ||         g_pending_calibration_frame.selected_channel !=             g_stored_offset_reference.selected_channel ||         g_pending_calibration_frame.canonical_reference_phase !=             g_stored_offset_reference.canonical_reference_phase ||         g_pending_calibration_frame.calibration_window_start !=             g_stored_offset_reference.calibration_window_start ||         g_pending_calibration_frame.calibration_window_length !=             g_stored_offset_reference.calibration_window_length) {
-                                                                                                            calibration_gain_input_frame_invalidate();
-                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_GAIN,             "gain did not converge or publish a verified output");
-                                                                                                            return;
+                                                                                                            if (reason != NULL) *reason = "gain did not converge or publish a verified output";
+                                                                                                            calibration_pipeline_sync_automatic_state(state);
+                                                                                                            return -2;
                                                                                                         }
-                                                                                                        g_automatic_calibration.gain_pass = true;
-                                                                                                        g_automatic_calibration.gain_verification_pass = true;
-                                                                                                        g_automatic_calibration.final_normalized_gain = final_normalized_gain;
-                                                                                                        g_automatic_calibration.gain_verification_error =         final_normalized_gain - 1.0f;
+                                                                                                        state->gain_pass = true;
+                                                                                                        state->gain_verification_pass = true;
+                                                                                                        state->output_valid = true;
+                                                                                                        state->valid = true;
                                                                                                         g_automatic_calibration.final_output = g_pending_calibration_frame;
-                                                                                                        g_automatic_calibration.output_valid = true;
-                                                                                                        g_automatic_calibration.valid = true;
                                                                                                         if (ADC_CAL_VERBOSE_DEBUG) {
                                                                                                             xil_printf("Gain:\r\n");
                                                                                                             print_float_value("  Nominal system gain",                           gain_state->nominal_system_gain, "");
                                                                                                             print_float_value("  Normalized ADC gain", final_normalized_gain, "");
                                                                                                             print_float_value("  Applied correction",                           gain_state->gain_correction, "");
-                                                                                                            print_float_value("  Verification error",                           g_automatic_calibration.gain_verification_error, "");
+                                                                                                            print_float_value("  Verification error",                           state->gain_verification_error, "");
                                                                                                             xil_printf("  Verification status   : PASS\r\n");
                                                                                                             xil_printf("  Status                : CONVERGED\r\n");
                                                                                                         }
+                                                                                                        calibration_pipeline_sync_automatic_state(state);
+                                                                                                        return 0;
+                                                                                                    }
+                                                                                                    static int calibration_pipeline_run_skew_fpga(     void *context, adc_cal_pipeline_state_t *state, const char **reason) {
+                                                                                                        calibration_skew_batch_result_t skew_batch;
+                                                                                                        (void)context;
+                                                                                                        if (state == NULL) return -1;
+                                                                                                        g_automatic_calibration.active = true;
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_SKEW;
-                                                                                                        calibration_print_stage_header(4U, "Open-Loop Skew Measurement");
                                                                                                         if (calibration_run_skew_open_loop(&skew_batch, false) != 0 &&         skew_batch.stage_status == CAL_SKEW_STAGE_FAIL) {
-                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_SKEW,             skew_batch.failure_reason != NULL ?                 skew_batch.failure_reason : "skew measurement failed");
-                                                                                                            return;
+                                                                                                            if (reason != NULL) *reason =             skew_batch.failure_reason != NULL ?                 skew_batch.failure_reason : "skew measurement failed";
+                                                                                                            calibration_pipeline_sync_automatic_state(state);
+                                                                                                            return -2;
                                                                                                         }
                                                                                                         calibration_print_skew_summary(&skew_batch, false);
-                                                                                                        g_automatic_calibration.final_relative_skew_ps =         skew_batch.final_relative_skew_ps;
-                                                                                                        g_automatic_calibration.skew_pass =         skew_batch.stage_status == CAL_SKEW_STAGE_PASS;
-                                                                                                        if (!g_automatic_calibration.skew_pass) {
+                                                                                                        state->final_relative_skew_ps = skew_batch.final_relative_skew_ps;
+                                                                                                        state->skew_pass = skew_batch.stage_status == CAL_SKEW_STAGE_PASS;
+                                                                                                        if (!state->skew_pass) {
                                                                                                             xil_printf("\r\nWARNING: Skew stage is diagnostic-only in this build.\r\n");
                                                                                                             xil_printf("No skew register writes were performed.\r\n");
                                                                                                             xil_printf("Continuing to performance measurement without delay-register updates.\r\n");
                                                                                                         }
+                                                                                                        calibration_pipeline_sync_automatic_state(state);
+                                                                                                        return 0;
+                                                                                                    }
+                                                                                                    static int calibration_pipeline_run_performance_fpga(     void *context, adc_cal_pipeline_state_t *state, const char **reason) {
+                                                                                                        const calibration_offset_loop_state_t *offset_state =         calibration_offset_loop_state();
+                                                                                                        const calibration_gain_loop_state_t *gain_state =         calibration_gain_loop_state();
+                                                                                                        int performance_status;
+                                                                                                        (void)context;
+                                                                                                        if (state == NULL) return -1;
+                                                                                                        g_automatic_calibration.active = true;
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_PERFORMANCE;
-                                                                                                        calibration_print_stage_header(5U, "Performance Measurement");
                                                                                                         performance_status = adc_evaluate_performance_batch(         &g_automatic_calibration.final_output,         gain_state->gain_correction,         gain_state->fixed_offset_correction,         gain_state->nominal_system_gain,         g_stored_offset_reference.reference_frequency_hz,         offset_state->verification_residual,         offset_state->verification_standard_error,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual : NAN,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual_standard_error : NAN,         &g_automatic_calibration.performance);
                                                                                                         g_automatic_calibration.performance_measurement_available = true;
                                                                                                         adc_print_performance_result(&g_automatic_calibration.performance);
-                                                                                                        if (performance_status == 0 &&         g_automatic_calibration.performance.valid) {
+                                                                                                        if (performance_status == 0 && g_automatic_calibration.performance.valid) {
                                                                                                             xil_printf("Performance measurement: VALID\r\n");
                                                                                                         }
                                                                                                         else {
                                                                                                             xil_printf("Performance measurement: INVALID\r\n");
                                                                                                             xil_printf("Performance reason      : %s\r\n",             g_automatic_calibration.performance.failure_reason != NULL ?             g_automatic_calibration.performance.failure_reason : "unknown");
                                                                                                         }
-                                                                                                        g_automatic_calibration.active = false;
-                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_COMPLETE;
-                                                                                                        g_automatic_calibration.overall_result =         (offset_state->stage_result ==              CALIBRATION_OFFSET_RESULT_PROVISIONAL ||          !g_automatic_calibration.skew_pass) ?         ADC_CAL_RESULT_PROVISIONAL : ADC_CAL_RESULT_PASS;
+                                                                                                        state->performance_measurement_available = true;
+                                                                                                        state->performance_valid = g_automatic_calibration.performance.valid;
+                                                                                                        state->performance_failure_reason =             g_automatic_calibration.performance.failure_reason;
+                                                                                                        if (performance_status != 0 && reason != NULL) {
+                                                                                                            *reason = state->performance_failure_reason;
+                                                                                                        }
+                                                                                                        calibration_pipeline_sync_automatic_state(state);
+                                                                                                        return performance_status == 0 ? 0 : -2;
+                                                                                                    }
+                                                                                                    static void calibration_pipeline_print_stage_header_fpga(     void *context, uint32_t stage_number, const char *stage_name) {
+                                                                                                        (void)context;
+                                                                                                        calibration_print_stage_header(stage_number, stage_name);
+                                                                                                    }
+                                                                                                    static void calibration_pipeline_invalidate_timing_fpga(void *context) {
+                                                                                                        (void)context;
+                                                                                                        calibration_pending_frame_invalidate();
+                                                                                                    }
+                                                                                                    static void calibration_pipeline_invalidate_gain_input_fpga(void *context) {
+                                                                                                        (void)context;
+                                                                                                        calibration_gain_input_frame_invalidate();
+                                                                                                    }
+                                                                                                    static void calibration_pipeline_print_summary_fpga(     void *context, const adc_cal_pipeline_state_t *state) {
+                                                                                                        (void)context;
+                                                                                                        calibration_pipeline_sync_automatic_state(state);
                                                                                                         calibration_automatic_print_summary();
+                                                                                                    }
+                                                                                                    void handle_adc_calibration_cmd(uint32_t frame_count) {
+                                                                                                        adc_cal_pipeline_run_config_t config;
+                                                                                                        adc_cal_pipeline_callbacks_t callbacks;
+                                                                                                        if (adc_sweep_active) {
+                                                                                                            ERR("Another automatic ADC capture is already in progress.");
+                                                                                                            return;
+                                                                                                        }
+                                                                                                        calibration_all_loops_reset();
+                                                                                                        calibration_automatic_state_reset();
+                                                                                                        g_automatic_calibration.active = true;
+                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_TIMING;
+                                                                                                        xil_printf("\r\n=========================================\r\n");
+                                                                                                        xil_printf("       ADC AUTOMATIC CALIBRATION\r\n");
+                                                                                                        xil_printf("=========================================\r\n");
+                                                                                                        memset(&config, 0, sizeof(config));
+                                                                                                        config.timing_frame_count = frame_count;
+                                                                                                        memset(&callbacks, 0, sizeof(callbacks));
+                                                                                                        callbacks.prepare = calibration_pipeline_prepare_fpga;
+                                                                                                        callbacks.run_timing = calibration_pipeline_run_timing_fpga;
+                                                                                                        callbacks.run_offset = calibration_pipeline_run_offset_fpga;
+                                                                                                        callbacks.run_gain = calibration_pipeline_run_gain_fpga;
+                                                                                                        callbacks.run_skew = calibration_pipeline_run_skew_fpga;
+                                                                                                        callbacks.run_performance = calibration_pipeline_run_performance_fpga;
+                                                                                                        callbacks.invalidate_timing = calibration_pipeline_invalidate_timing_fpga;
+                                                                                                        callbacks.invalidate_gain_input = calibration_pipeline_invalidate_gain_input_fpga;
+                                                                                                        callbacks.print_stage_header = calibration_pipeline_print_stage_header_fpga;
+                                                                                                        callbacks.print_summary = calibration_pipeline_print_summary_fpga;
+                                                                                                        (void)adc_cal_pipeline_run_all(
+                                                                                                            &g_adc_calibration_pipeline,
+                                                                                                            &callbacks,
+                                                                                                            &config);
+                                                                                                        return;
                                                                                                     }

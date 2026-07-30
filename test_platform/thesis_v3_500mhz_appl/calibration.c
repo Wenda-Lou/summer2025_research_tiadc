@@ -36,6 +36,17 @@ static int config_is_valid(const calibration_config_t *config)
         return 0;
     }
 
+    if (!isfinite(config->offset_tolerance_codes) ||
+        !isfinite(config->gain_tolerance_ratio) ||
+        !isfinite(config->offset_step) ||
+        !isfinite(config->gain_step) ||
+        !isfinite(config->min_gain_correction) ||
+        !isfinite(config->max_gain_correction) ||
+        !isfinite(config->min_offset_correction) ||
+        !isfinite(config->max_offset_correction)) {
+        return 0;
+    }
+
     if ((config->offset_tolerance_codes < 0.0f) ||
         (config->gain_tolerance_ratio < 0.0f)) {
         return 0;

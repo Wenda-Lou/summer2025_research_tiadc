@@ -41,6 +41,10 @@ set(USER_COMPILE_SOURCES
 "../reference_buffer.c"
 "../adc_frame.c"
 "../timing_alignment.c"
+"../adc_calibration_pipeline.c"
+"../adc_calibration_dither.c"
+"../adc_calibration_skew.c"
+"../adc_calibration_performance.c"
 )
 
 # -----------------------------------------
