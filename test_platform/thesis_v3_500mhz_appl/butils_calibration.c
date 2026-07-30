@@ -1389,6 +1389,24 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                 default: return "NOT RUN";
                                                             }
                                                         }
+                                                        static const char *calibration_existing_offset_loop_status_name(     const calibration_offset_loop_state_t *state) {
+                                                            if (state == NULL) return "FAIL";
+                                                            switch (state->final_status) {
+                                                            case CALIBRATION_OFFSET_LOOP_PASS:
+                                                                return "PASS";
+                                                            case CALIBRATION_OFFSET_LOOP_RUNNING:
+                                                            case CALIBRATION_OFFSET_LOOP_CONTROLLER_CONVERGED:
+                                                            case CALIBRATION_OFFSET_LOOP_VERIFYING:
+                                                                return "RUNNING";
+                                                            case CALIBRATION_OFFSET_LOOP_BEST_AVAILABLE:
+                                                            case CALIBRATION_OFFSET_LOOP_NOT_CONVERGED:
+                                                            case CALIBRATION_OFFSET_LOOP_IDLE:
+                                                                return "NOT CONVERGED";
+                                                            case CALIBRATION_OFFSET_LOOP_FAILED:
+                                                            default:
+                                                                return "FAIL";
+                                                            }
+                                                        }
                                                         static const char *calibration_automatic_result_name(     adc_calibration_result_t result) {
                                                             switch (result) {
                                                                 case ADC_CAL_RESULT_PASS: return "PASS";
@@ -3963,6 +3981,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                     static void calibration_offset_loop_print_summary(     const calibration_offset_loop_state_t *state ) {
                                                                                         if (calibration_compact_output_enabled()) {
                                                                                             xil_printf("\r\nOffset controller       : %s\r\n",                    state->controller_converged ? "CONVERGED" : "FAILED");
+                                                                                            xil_printf("Existing offset loop status : %s\r\n",                    calibration_existing_offset_loop_status_name(state));
+                                                                                            xil_printf("Dither estimator status     : %s\r\n",                    calibration_dither_offset_status_name(                        g_latest_dither_offset_diagnostic.status));
                                                                                             xil_printf("Verification            : %s\r\n",                    calibration_offset_verification_name(                        state->verification_status));
                                                                                             xil_printf("Verification frames     : %lu\r\n",                    (unsigned long)state->verification_accepted_frames);
                                                                                             print_float_value("Verification residual",                           state->verification_residual, " codes");
@@ -3998,6 +4018,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                         xil_printf("Verification frames     : %lu\r\n",                (unsigned long)state->verification_accepted_frames);
                                                                                         xil_printf("Verification status     : %s\r\n",                calibration_offset_verification_name(                    state->verification_status));
                                                                                         xil_printf("Controller converged    : %s\r\n",                state->controller_converged ? "YES" : "NO");
+                                                                                        xil_printf("Existing offset loop status : %s\r\n",                calibration_existing_offset_loop_status_name(state));
+                                                                                        xil_printf("Dither estimator status     : %s\r\n",                calibration_dither_offset_status_name(                    g_latest_dither_offset_diagnostic.status));
                                                                                         xil_printf("Consecutive passes      : %lu/%u\r\n",                (unsigned long)state->convergence_count,                CALIBRATION_OFFSET_REQUIRED_CONVERGED_FRAMES);
                                                                                         xil_printf("Termination reason       : %s\r\n",                calibration_offset_termination_name(state->termination_reason));
                                                                                         xil_printf("Offset stage status      : %s\r\n",                calibration_offset_result_name(state->stage_result));
@@ -4023,6 +4045,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                         print_float_value("Latest fitted offset",                       state->latest_fitted_offset, " codes");
                                                                                         print_float_value("Latest fitted RMSE",                       state->latest_rmse, " codes");
                                                                                         xil_printf("Controller converged   : %s\r\n",                state->controller_converged ? "YES" : "NO");
+                                                                                        xil_printf("Existing offset loop status: %s\r\n",                calibration_existing_offset_loop_status_name(state));
+                                                                                        xil_printf("Dither estimator status    : %s\r\n",                calibration_dither_offset_status_name(                    g_latest_dither_offset_diagnostic.status));
                                                                                         xil_printf("Verification status    : %s\r\n",                calibration_offset_verification_name(                    state->verification_status));
                                                                                         xil_printf("Offset stage status    : %s\r\n",                calibration_offset_result_name(state->stage_result));
                                                                                         xil_printf("==================================================\r\n");

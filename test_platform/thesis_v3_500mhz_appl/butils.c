@@ -772,6 +772,8 @@ static int adc_run_timing_calibration(uint32_t frame_count);
 static void calibration_automatic_state_reset(void);
 static void calibration_automatic_print_command_help(void);
 static void calibration_automatic_print_summary(void);
+static const char *calibration_existing_offset_loop_status_name(
+    const calibration_offset_loop_state_t *state);
 static const char *calibration_offset_verification_name(uint8_t status);
 static int calibration_prepare_uploaded_dac_reference(
     int16_t *even_reference,
