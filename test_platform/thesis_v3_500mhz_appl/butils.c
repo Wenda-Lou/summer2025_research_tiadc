@@ -181,6 +181,36 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #ifndef CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES
 #define CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES  128U
 #endif
+#ifndef CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS
+#define CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS          CAL_DITHER_OFFSET_MIN_COMPLETE_EVENTS
+#endif
+#ifndef CAL_DITHER_GAIN_DENOMINATOR_FLOOR
+#define CAL_DITHER_GAIN_DENOMINATOR_FLOOR            CAL_DITHER_OFFSET_DENOMINATOR_FLOOR
+#endif
+#ifndef CAL_DITHER_GAIN_TEMPLATE_ENERGY_FLOOR
+#define CAL_DITHER_GAIN_TEMPLATE_ENERGY_FLOOR        1.0e-6
+#endif
+#ifndef CAL_DITHER_GAIN_MIN_POSITIVE_GAIN
+#define CAL_DITHER_GAIN_MIN_POSITIVE_GAIN            0.05
+#endif
+#ifndef CAL_DITHER_GAIN_MIN_PLAUSIBLE_GAIN
+#define CAL_DITHER_GAIN_MIN_PLAUSIBLE_GAIN           0.05
+#endif
+#ifndef CAL_DITHER_GAIN_MAX_PLAUSIBLE_GAIN
+#define CAL_DITHER_GAIN_MAX_PLAUSIBLE_GAIN           20.0
+#endif
+#ifndef CAL_DITHER_GAIN_MIN_TEMPLATE_CORRELATION
+#define CAL_DITHER_GAIN_MIN_TEMPLATE_CORRELATION     0.80
+#endif
+#ifndef CAL_DITHER_GAIN_MAX_NORMALIZED_FIT_RMSE
+#define CAL_DITHER_GAIN_MAX_NORMALIZED_FIT_RMSE      0.50
+#endif
+#ifndef CAL_DITHER_GAIN_FULL_FLAT_TOLERANCE
+#define CAL_DITHER_GAIN_FULL_FLAT_TOLERANCE          0.10
+#endif
+#ifndef CAL_DITHER_GAIN_AGREEMENT_TOLERANCE
+#define CAL_DITHER_GAIN_AGREEMENT_TOLERANCE          0.10
+#endif
 
 _Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
                "ADC test configuration sample count mismatch");
@@ -289,6 +319,64 @@ typedef struct {
     double tone_only_correlation;
     const char *units;
 } calibration_dither_offset_diagnostic_t;
+
+typedef enum {
+    CAL_DITHER_GAIN_STATUS_INVALID = 0,
+    CAL_DITHER_GAIN_STATUS_PASS,
+    CAL_DITHER_GAIN_STATUS_WARNING
+} calibration_dither_gain_status_t;
+
+typedef enum {
+    CAL_DITHER_GAIN_REASON_NONE = 0,
+    CAL_DITHER_GAIN_REASON_CONTEXT,
+    CAL_DITHER_GAIN_REASON_TONE_FIT,
+    CAL_DITHER_GAIN_REASON_TOO_FEW_EVENTS,
+    CAL_DITHER_GAIN_REASON_POLARITY_IMBALANCE,
+    CAL_DITHER_GAIN_REASON_TEMPLATE,
+    CAL_DITHER_GAIN_REASON_GAIN_VALUE,
+    CAL_DITHER_GAIN_REASON_FIT_QUALITY,
+    CAL_DITHER_GAIN_REASON_INTERPOLATION,
+    CAL_DITHER_GAIN_REASON_NUMERICAL,
+    CAL_DITHER_GAIN_REASON_NO_DITHER,
+    CAL_DITHER_GAIN_REASON_EVENT_PROFILE
+} calibration_dither_gain_reason_t;
+
+typedef struct {
+    uint8_t valid;
+    calibration_dither_gain_status_t status;
+    calibration_dither_gain_reason_t reason;
+    uint8_t context_pass;
+    uint8_t tone_fit_pass;
+    uint8_t event_count_pass;
+    uint8_t polarity_pass;
+    uint8_t template_pass;
+    uint8_t gain_value_pass;
+    uint8_t fit_quality_pass;
+    uint8_t numerical_pass;
+    uint8_t agreement_pass;
+    calibration_tone_fit_result_t tone;
+    double existing_normalized_gain;
+    double dither_full_gain;
+    double dither_flat_gain;
+    double requested_dither_correction;
+    double tone_amplitude_codes;
+    double existing_vs_dither_gain;
+    double full_vs_flat_gain;
+    double template_energy;
+    double template_correlation;
+    double fit_rmse;
+    double normalized_fit_rmse;
+    double peak_residual;
+    uint32_t complete_event_count;
+    uint32_t discarded_boundary_event_count;
+    double mean_event_polarity;
+    double separation_denominator;
+    uint32_t flat_top_sample_count;
+    double fitted_tone_frequency_hz;
+    double tone_fit_rmse_codes;
+    double tone_only_correlation;
+    const char *gain_definition;
+} calibration_dither_gain_diagnostic_t;
 
 typedef struct {
     uint8_t valid;
@@ -516,6 +604,14 @@ typedef struct {
     float mean_correlation;
     uint32_t accepted;
     uint32_t rejected;
+    uint32_t dither_pass;
+    uint32_t dither_warning;
+    uint32_t dither_invalid;
+    uint32_t dither_valid_estimates;
+    double mean_dither_gain;
+    double mean_dither_flat_gain;
+    double mean_existing_dither_delta;
+    calibration_dither_gain_diagnostic_t dither_latest;
 } calibration_gain_batch_result_t;
 
 typedef struct {
@@ -829,6 +925,14 @@ static const char *calibration_dither_offset_reason_name(
     calibration_dither_offset_reason_t reason);
 static void calibration_print_dither_offset_diagnostic(
     const calibration_dither_offset_diagnostic_t *diagnostic);
+static const char *calibration_existing_gain_loop_status_name(
+    const calibration_gain_loop_state_t *state);
+static const char *calibration_dither_gain_status_name(
+    calibration_dither_gain_status_t status);
+static const char *calibration_dither_gain_reason_name(
+    calibration_dither_gain_reason_t reason);
+static void calibration_print_dither_gain_diagnostic(
+    const calibration_dither_gain_diagnostic_t *diagnostic);
 static int calibration_capture_against_owned_reference(
     const calibration_pending_frame_t *saved,
     bool use_saved_calibration_reference,

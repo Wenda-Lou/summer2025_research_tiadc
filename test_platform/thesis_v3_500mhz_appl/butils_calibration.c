@@ -1438,6 +1438,16 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                         static void calibration_print_gain_batch_compact(     uint32_t iteration,     const calibration_gain_batch_result_t *batch,     const calibration_gain_loop_state_t *state,     bool pass,     const char *status) {
                                                             xil_printf("Batch %2lu | %lu/%u | gain ",                (unsigned long)iteration,                (unsigned long)batch->accepted,                CALIBRATION_GAIN_BATCH_SIZE);
                                                             print_double_inline((double)batch->mean_gain);
+                                                            if (batch->dither_valid_estimates > 0U) {
+                                                                xil_printf(" | dither ");
+                                                                print_double_inline(batch->mean_dither_gain);
+                                                                xil_printf(" | flat ");
+                                                                print_double_inline(batch->mean_dither_flat_gain);
+                                                                xil_printf(" | events %lu | new %s",         (unsigned long)batch->dither_latest.complete_event_count,         calibration_dither_gain_status_name(             batch->dither_latest.status));
+                                                            }
+                                                            else if (batch->dither_invalid > 0U) {
+                                                                xil_printf(" | dither INVALID | events %lu | reason %s",         (unsigned long)batch->dither_latest.complete_event_count,         calibration_dither_gain_reason_name(             batch->dither_latest.reason));
+                                                            }
                                                             xil_printf(" | error ");
                                                             print_signed_float_inline(batch->mean_error);
                                                             xil_printf(" | correction ");
@@ -2708,6 +2718,305 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         xil_printf("Estimate units           : %s\r\n",         diagnostic->units != NULL ? diagnostic->units :         "corrected ADC codes");
                                                                         xil_printf("New estimator status     : %s\r\n",         calibration_dither_offset_status_name(diagnostic->status));
                                                                     }
+                                                                    static calibration_dither_gain_diagnostic_t g_latest_dither_gain_diagnostic;
+                                                                    static const char *calibration_dither_gain_status_name(     calibration_dither_gain_status_t status) {
+                                                                        switch (status) {
+                                                                        case CAL_DITHER_GAIN_STATUS_PASS:
+                                                                            return "PASS";
+                                                                        case CAL_DITHER_GAIN_STATUS_WARNING:
+                                                                            return "WARNING";
+                                                                        case CAL_DITHER_GAIN_STATUS_INVALID:
+                                                                        default:
+                                                                            return "INVALID";
+                                                                        }
+                                                                    }
+                                                                    static const char *calibration_dither_gain_reason_name(     calibration_dither_gain_reason_t reason) {
+                                                                        switch (reason) {
+                                                                        case CAL_DITHER_GAIN_REASON_NONE:
+                                                                            return "NONE";
+                                                                        case CAL_DITHER_GAIN_REASON_CONTEXT:
+                                                                            return "CONTEXT";
+                                                                        case CAL_DITHER_GAIN_REASON_TONE_FIT:
+                                                                            return "TONE_FIT";
+                                                                        case CAL_DITHER_GAIN_REASON_TOO_FEW_EVENTS:
+                                                                            return "TOO_FEW_EVENTS";
+                                                                        case CAL_DITHER_GAIN_REASON_POLARITY_IMBALANCE:
+                                                                            return "POLARITY_IMBALANCE";
+                                                                        case CAL_DITHER_GAIN_REASON_TEMPLATE:
+                                                                            return "TEMPLATE";
+                                                                        case CAL_DITHER_GAIN_REASON_GAIN_VALUE:
+                                                                            return "GAIN_VALUE";
+                                                                        case CAL_DITHER_GAIN_REASON_FIT_QUALITY:
+                                                                            return "FIT_QUALITY";
+                                                                        case CAL_DITHER_GAIN_REASON_INTERPOLATION:
+                                                                            return "INTERPOLATION";
+                                                                        case CAL_DITHER_GAIN_REASON_NUMERICAL:
+                                                                            return "NUMERICAL";
+                                                                        case CAL_DITHER_GAIN_REASON_NO_DITHER:
+                                                                            return "NO_DITHER";
+                                                                        case CAL_DITHER_GAIN_REASON_EVENT_PROFILE:
+                                                                        default:
+                                                                            return "EVENT_PROFILE";
+                                                                        }
+                                                                    }
+                                                                    static void calibration_dither_gain_mark_invalid(     calibration_dither_gain_diagnostic_t *diagnostic,     calibration_dither_gain_reason_t reason,     double existing_normalized_gain) {
+                                                                        if (diagnostic == NULL) return;
+                                                                        memset(diagnostic, 0, sizeof(*diagnostic));
+                                                                        diagnostic->status = CAL_DITHER_GAIN_STATUS_INVALID;
+                                                                        diagnostic->reason = reason;
+                                                                        diagnostic->existing_normalized_gain = existing_normalized_gain;
+                                                                        diagnostic->dither_full_gain = NAN;
+                                                                        diagnostic->dither_flat_gain = NAN;
+                                                                        diagnostic->requested_dither_correction = NAN;
+                                                                        diagnostic->tone_amplitude_codes = NAN;
+                                                                        diagnostic->existing_vs_dither_gain = NAN;
+                                                                        diagnostic->full_vs_flat_gain = NAN;
+                                                                        diagnostic->template_energy = NAN;
+                                                                        diagnostic->template_correlation = NAN;
+                                                                        diagnostic->fit_rmse = NAN;
+                                                                        diagnostic->normalized_fit_rmse = NAN;
+                                                                        diagnostic->peak_residual = NAN;
+                                                                        diagnostic->mean_event_polarity = NAN;
+                                                                        diagnostic->separation_denominator = NAN;
+                                                                        diagnostic->fitted_tone_frequency_hz = NAN;
+                                                                        diagnostic->tone_fit_rmse_codes = NAN;
+                                                                        diagnostic->tone_only_correlation = NAN;
+                                                                        diagnostic->gain_definition = "normalized measured dither gain";
+                                                                    }
+                                                                    static int calibration_estimate_dither_gain_diagnostic(     const calibration_aligned_frame_t *frame,     double existing_normalized_gain,     double nominal_system_gain,     calibration_dither_gain_diagnostic_t *diagnostic) {
+                                                                        static double adc_samples[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double reference_samples[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double adc_tone[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double adc_residual[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double reference_tone[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double dither_template[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static calibration_dither_offset_event_t events[CAL_FIXED_WINDOW_LENGTH / 2U];
+                                                                        static double u[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        static double v[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        static double template_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        static double dither_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
+                                                                        calibration_tone_fit_result_t adc_fit;
+                                                                        calibration_tone_fit_result_t reference_fit;
+                                                                        uint32_t complete_events = 0U;
+                                                                        uint32_t discarded_boundary = 0U;
+                                                                        double p_sum = 0.0;
+                                                                        double p_mean;
+                                                                        double denominator;
+                                                                        double rel_start = -DBL_MAX;
+                                                                        double rel_end = DBL_MAX;
+                                                                        int m_first;
+                                                                        int m_last;
+                                                                        size_t profile_count;
+                                                                        double template_energy = 0.0;
+                                                                        double measured_energy = 0.0;
+                                                                        double projection = 0.0;
+                                                                        double fit_error_sum = 0.0;
+                                                                        double peak_residual = 0.0;
+                                                                        double template_sum = 0.0;
+                                                                        double profile_sum = 0.0;
+                                                                        double template_centered_energy = 0.0;
+                                                                        double profile_centered_energy = 0.0;
+                                                                        double centered_cross = 0.0;
+                                                                        double max_template_abs = 0.0;
+                                                                        double flat_projection = 0.0;
+                                                                        double flat_template_energy = 0.0;
+                                                                        uint32_t flat_count = 0U;
+                                                                        double raw_dither_gain;
+                                                                        double raw_flat_gain = NAN;
+                                                                        if (diagnostic == NULL) return -1;
+                                                                        calibration_dither_gain_mark_invalid(         diagnostic, CAL_DITHER_GAIN_REASON_NUMERICAL,         existing_normalized_gain);
+                                                                        if (frame == NULL || !frame->frame_valid ||         frame->selected_channel != g_stored_offset_reference.selected_channel ||         frame->canonical_reference_phase !=             g_stored_offset_reference.canonical_reference_phase ||         frame->calibration_window_start !=             g_stored_offset_reference.calibration_window_start ||         frame->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||         frame->valid_analysis_sample_count != CAL_FIXED_WINDOW_LENGTH ||         frame->aligned_corrected_adc_samples == NULL ||         frame->aligned_reference_samples == NULL ||         !isfinite(frame->total_lag) ||         !isfinite(frame->reference_frequency_hz) ||         frame->reference_frequency_hz <= 0.0 ||         !isfinite(nominal_system_gain) ||         fabs(nominal_system_gain) <= DBL_EPSILON ||         !frame->timing_diagnostics.valid ||         frame->timing_diagnostics.selected_common_channel < 0 ||         !isfinite(frame->timing_diagnostics.dither_derived_lag)) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_CONTEXT;
+                                                                            return -2;
+                                                                        }
+                                                                        diagnostic->context_pass = 1U;
+                                                                        for (size_t i = 0U; i < CAL_FIXED_WINDOW_LENGTH; ++i) {
+                                                                            adc_samples[i] = frame->aligned_corrected_adc_samples[i];
+                                                                            reference_samples[i] = frame->aligned_reference_samples[i];
+                                                                        }
+                                                                        if (calibration_fit_tone_refined(         adc_samples, CAL_FIXED_WINDOW_LENGTH,         frame->reference_frequency_hz,         adc_get_effective_sample_rate_hz(), &adc_fit, adc_tone,         adc_residual) != 0 ||         !calibration_tone_fit_parameters_are_finite(&adc_fit) ||         adc_fit.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||         adc_fit.tone_only_correlation <             CAL_TONE_VALIDATION_MIN_CORRELATION) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_TONE_FIT;
+                                                                            return -3;
+                                                                        }
+                                                                        if (calibration_fit_tone_refined(         reference_samples, CAL_FIXED_WINDOW_LENGTH,         frame->reference_frequency_hz,         adc_get_effective_sample_rate_hz(), &reference_fit,         reference_tone, dither_template) != 0 ||         !calibration_tone_fit_parameters_are_finite(&reference_fit)) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_TONE_FIT;
+                                                                            return -3;
+                                                                        }
+                                                                        diagnostic->tone_fit_pass = 1U;
+                                                                        if (calibration_dither_offset_find_events(         dither_template, CAL_FIXED_WINDOW_LENGTH, events,         sizeof(events) / sizeof(events[0]), &complete_events,         &discarded_boundary) != 0) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_NO_DITHER;
+                                                                            return -4;
+                                                                        }
+                                                                        diagnostic->complete_event_count = complete_events;
+                                                                        diagnostic->discarded_boundary_event_count = discarded_boundary;
+                                                                        if (complete_events < CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_TOO_FEW_EVENTS;
+                                                                            return -5;
+                                                                        }
+                                                                        diagnostic->event_count_pass = 1U;
+                                                                        for (uint32_t k = 0U; k < complete_events; ++k) {
+                                                                            const double left = (double)events[k].start - events[k].center;
+                                                                            const double right =             (double)(events[k].end - 1U) - events[k].center;
+                                                                            if (left > rel_start) rel_start = left;
+                                                                            if (right < rel_end) rel_end = right;
+                                                                            p_sum += events[k].polarity;
+                                                                        }
+                                                                        m_first = (int)ceil(rel_start);
+                                                                        m_last = (int)floor(rel_end);
+                                                                        if (m_last < m_first) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_EVENT_PROFILE;
+                                                                            return -6;
+                                                                        }
+                                                                        profile_count = (size_t)(m_last - m_first + 1);
+                                                                        if (profile_count == 0U ||         profile_count > CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_EVENT_PROFILE;
+                                                                            return -6;
+                                                                        }
+                                                                        memset(u, 0, profile_count * sizeof(u[0]));
+                                                                        memset(v, 0, profile_count * sizeof(v[0]));
+                                                                        memset(template_profile, 0,                 profile_count * sizeof(template_profile[0]));
+                                                                        for (uint32_t k = 0U; k < complete_events; ++k) {
+                                                                            const double p = events[k].polarity;
+                                                                            for (size_t j = 0U; j < profile_count; ++j) {
+                                                                                const double position =             events[k].center + (double)(m_first + (int)j);
+                                                                                double residual_value;
+                                                                                double template_value;
+                                                                                if (calibration_dither_offset_interpolate(                     adc_residual, CAL_FIXED_WINDOW_LENGTH, position,                     &residual_value) != 0 ||                 calibration_dither_offset_interpolate(                     dither_template, CAL_FIXED_WINDOW_LENGTH, position,                     &template_value) != 0) {
+                                                                                    diagnostic->reason = CAL_DITHER_GAIN_REASON_INTERPOLATION;
+                                                                                    return -7;
+                                                                                }
+                                                                                u[j] += residual_value;
+                                                                                v[j] += p * residual_value;
+                                                                                template_profile[j] += p * template_value;
+                                                                            }
+                                                                        }
+                                                                        p_mean = p_sum / (double)complete_events;
+                                                                        denominator = 1.0 - p_mean * p_mean;
+                                                                        diagnostic->mean_event_polarity = p_mean;
+                                                                        diagnostic->separation_denominator = denominator;
+                                                                        if (!isfinite(denominator) ||         denominator <= CAL_DITHER_GAIN_DENOMINATOR_FLOOR) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_POLARITY_IMBALANCE;
+                                                                            return -8;
+                                                                        }
+                                                                        diagnostic->polarity_pass = 1U;
+                                                                        for (size_t j = 0U; j < profile_count; ++j) {
+                                                                            u[j] /= (double)complete_events;
+                                                                            v[j] /= (double)complete_events;
+                                                                            template_profile[j] /= (double)complete_events;
+                                                                            dither_profile[j] = (v[j] - p_mean * u[j]) / denominator;
+                                                                            if (!isfinite(dither_profile[j]) ||         !isfinite(template_profile[j])) {
+                                                                                diagnostic->reason = CAL_DITHER_GAIN_REASON_NUMERICAL;
+                                                                                return -9;
+                                                                            }
+                                                                            projection += dither_profile[j] * template_profile[j];
+                                                                            template_energy += template_profile[j] * template_profile[j];
+                                                                            measured_energy += dither_profile[j] * dither_profile[j];
+                                                                            template_sum += template_profile[j];
+                                                                            profile_sum += dither_profile[j];
+                                                                            if (fabs(template_profile[j]) > max_template_abs)         max_template_abs = fabs(template_profile[j]);
+                                                                        }
+                                                                        diagnostic->template_energy = template_energy;
+                                                                        if (!isfinite(template_energy) ||         template_energy <= CAL_DITHER_GAIN_TEMPLATE_ENERGY_FLOOR) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_TEMPLATE;
+                                                                            return -10;
+                                                                        }
+                                                                        diagnostic->template_pass = 1U;
+                                                                        raw_dither_gain = projection / template_energy;
+                                                                        diagnostic->dither_full_gain = raw_dither_gain / nominal_system_gain;
+                                                                        if (diagnostic->dither_full_gain >             CAL_DITHER_GAIN_MIN_POSITIVE_GAIN) {
+                                                                            diagnostic->requested_dither_correction =             1.0 / diagnostic->dither_full_gain;
+                                                                        }
+                                                                        if (!isfinite(diagnostic->dither_full_gain) ||         diagnostic->dither_full_gain <=             CAL_DITHER_GAIN_MIN_POSITIVE_GAIN ||         diagnostic->dither_full_gain <             CAL_DITHER_GAIN_MIN_PLAUSIBLE_GAIN ||         diagnostic->dither_full_gain >             CAL_DITHER_GAIN_MAX_PLAUSIBLE_GAIN ||         !isfinite(diagnostic->requested_dither_correction)) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_GAIN_VALUE;
+                                                                            return -11;
+                                                                        }
+                                                                        diagnostic->gain_value_pass = 1U;
+                                                                        template_sum /= (double)profile_count;
+                                                                        profile_sum /= (double)profile_count;
+                                                                        for (size_t j = 0U; j < profile_count; ++j) {
+                                                                            const double fit = raw_dither_gain * template_profile[j];
+                                                                            const double residual = dither_profile[j] - fit;
+                                                                            const double x = template_profile[j] - template_sum;
+                                                                            const double y = dither_profile[j] - profile_sum;
+                                                                            fit_error_sum += residual * residual;
+                                                                            if (fabs(residual) > peak_residual) peak_residual = fabs(residual);
+                                                                            template_centered_energy += x * x;
+                                                                            profile_centered_energy += y * y;
+                                                                            centered_cross += x * y;
+                                                                        }
+                                                                        diagnostic->fit_rmse = sqrt(fit_error_sum / (double)profile_count);
+                                                                        diagnostic->normalized_fit_rmse =         diagnostic->fit_rmse / fmax(sqrt(measured_energy /             (double)profile_count), DBL_EPSILON);
+                                                                        diagnostic->peak_residual = peak_residual;
+                                                                        diagnostic->template_correlation =         template_centered_energy > DBL_EPSILON &&         profile_centered_energy > DBL_EPSILON ?         centered_cross / sqrt(template_centered_energy *             profile_centered_energy) : NAN;
+                                                                        for (size_t j = 0U; j < profile_count; ++j) {
+                                                                            const double previous = j > 0U ?             template_profile[j - 1U] : template_profile[j];
+                                                                            const double next = j + 1U < profile_count ?             template_profile[j + 1U] : template_profile[j];
+                                                                            const double derivative = 0.5 * (next - previous);
+                                                                            const bool flat =         fabs(derivative) <=             CAL_DITHER_OFFSET_FLAT_TOP_DERIVATIVE_FRACTION *                 max_template_abs &&         fabs(template_profile[j]) >=             CAL_DITHER_OFFSET_FLAT_TOP_AMPLITUDE_FRACTION *                 max_template_abs;
+                                                                            if (!flat) continue;
+                                                                            flat_projection += dither_profile[j] * template_profile[j];
+                                                                            flat_template_energy += template_profile[j] * template_profile[j];
+                                                                            ++flat_count;
+                                                                        }
+                                                                        diagnostic->flat_top_sample_count = flat_count;
+                                                                        if (flat_count < CAL_DITHER_OFFSET_MIN_FLAT_TOP_SAMPLES ||         flat_template_energy <= CAL_DITHER_GAIN_TEMPLATE_ENERGY_FLOOR) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_TEMPLATE;
+                                                                            return -12;
+                                                                        }
+                                                                        raw_flat_gain = flat_projection / flat_template_energy;
+                                                                        diagnostic->dither_flat_gain = raw_flat_gain / nominal_system_gain;
+                                                                        diagnostic->full_vs_flat_gain =         diagnostic->dither_full_gain - diagnostic->dither_flat_gain;
+                                                                        diagnostic->fit_quality_pass =         isfinite(diagnostic->template_correlation) &&         diagnostic->template_correlation >=             CAL_DITHER_GAIN_MIN_TEMPLATE_CORRELATION &&         isfinite(diagnostic->normalized_fit_rmse) &&         diagnostic->normalized_fit_rmse <=             CAL_DITHER_GAIN_MAX_NORMALIZED_FIT_RMSE &&         isfinite(diagnostic->full_vs_flat_gain) &&         fabs(diagnostic->full_vs_flat_gain) <=             CAL_DITHER_GAIN_FULL_FLAT_TOLERANCE;
+                                                                        if (!diagnostic->fit_quality_pass) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_FIT_QUALITY;
+                                                                            return -13;
+                                                                        }
+                                                                        diagnostic->existing_normalized_gain = existing_normalized_gain;
+                                                                        diagnostic->tone = adc_fit;
+                                                                        diagnostic->tone_amplitude_codes = adc_fit.amplitude;
+                                                                        diagnostic->existing_vs_dither_gain =         existing_normalized_gain - diagnostic->dither_full_gain;
+                                                                        diagnostic->fitted_tone_frequency_hz = adc_fit.fitted_frequency_hz;
+                                                                        diagnostic->tone_fit_rmse_codes = adc_fit.rmse;
+                                                                        diagnostic->tone_only_correlation = adc_fit.tone_only_correlation;
+                                                                        diagnostic->agreement_pass =         isfinite(diagnostic->existing_vs_dither_gain) &&         fabs(diagnostic->existing_vs_dither_gain) <=             CAL_DITHER_GAIN_AGREEMENT_TOLERANCE;
+                                                                        diagnostic->numerical_pass =         isfinite(diagnostic->dither_full_gain) &&         isfinite(diagnostic->dither_flat_gain) &&         isfinite(diagnostic->requested_dither_correction) &&         isfinite(diagnostic->template_correlation) &&         isfinite(diagnostic->normalized_fit_rmse);
+                                                                        if (!diagnostic->numerical_pass) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_NUMERICAL;
+                                                                            return -14;
+                                                                        }
+                                                                        diagnostic->valid = 1U;
+                                                                        diagnostic->reason = CAL_DITHER_GAIN_REASON_NONE;
+                                                                        diagnostic->status =         diagnostic->agreement_pass ? CAL_DITHER_GAIN_STATUS_PASS :         CAL_DITHER_GAIN_STATUS_WARNING;
+                                                                        return 0;
+                                                                    }
+                                                                    static void calibration_print_dither_gain_diagnostic(     const calibration_dither_gain_diagnostic_t *diagnostic) {
+                                                                        if (diagnostic == NULL ||         (diagnostic->status == CAL_DITHER_GAIN_STATUS_INVALID &&          diagnostic->reason == CAL_DITHER_GAIN_REASON_NONE))         return;
+                                                                        xil_printf("\r\n-----------------------------------------\r\n");
+                                                                        xil_printf("Dither-Aware Gain Diagnostic\r\n");
+                                                                        xil_printf("-----------------------------------------\r\n");
+                                                                        xil_printf("Complete events          : %lu\r\n",         (unsigned long)diagnostic->complete_event_count);
+                                                                        print_double_value("Mean event polarity",         diagnostic->mean_event_polarity, "");
+                                                                        print_double_value("Separation denominator",         diagnostic->separation_denominator, "");
+                                                                        print_double_value("Template energy",         diagnostic->template_energy, "");
+                                                                        xil_printf("Flat-top samples         : %lu\r\n",         (unsigned long)diagnostic->flat_top_sample_count);
+                                                                        print_double_value("Existing measured gain",         diagnostic->existing_normalized_gain, "");
+                                                                        if (diagnostic->valid) {
+                                                                            print_double_value("Dither full-template gain",             diagnostic->dither_full_gain, "");
+                                                                            print_double_value("Dither flat-top gain",             diagnostic->dither_flat_gain, "");
+                                                                            print_double_value("Requested dither corr.",             diagnostic->requested_dither_correction, "");
+                                                                            print_double_value("Template correlation",             diagnostic->template_correlation, "");
+                                                                            print_double_value("Normalized fit RMSE",             diagnostic->normalized_fit_rmse, "");
+                                                                            print_double_value("Existing-dither delta",             diagnostic->existing_vs_dither_gain, "");
+                                                                        }
+                                                                        else {
+                                                                            xil_printf("Dither full-template gain: INVALID\r\n");
+                                                                            xil_printf("Rejection reason         : %s\r\n",         calibration_dither_gain_reason_name(diagnostic->reason));
+                                                                        }
+                                                                        print_double_value("Tone-fit amplitude",         diagnostic->tone_amplitude_codes, " codes");
+                                                                        print_double_value("Tone fit RMSE",         diagnostic->tone_fit_rmse_codes, " codes");
+                                                                        xil_printf("Gain definition          : %s\r\n",         diagnostic->gain_definition != NULL ?         diagnostic->gain_definition : "normalized measured dither gain");
+                                                                        xil_printf("Dither estimator status  : %s\r\n",         calibration_dither_gain_status_name(diagnostic->status));
+                                                                    }
                                                                     static void calibration_run_timing_alignment_diagnostic(uint32_t frame_count) {
                                                                         static int16_t even_reference[ADC_CHANNEL_SAMPLE_COUNT];
                                                                         static int16_t odd_reference[ADC_CHANNEL_SAMPLE_COUNT];
@@ -3846,9 +4155,25 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                             else {
                                                                                                 const float raw_system_gain = gain_metrics.raw_system_gain;
                                                                                                 const float normalized_gain =                 raw_system_gain / nominal_system_gain;
+                                                                                                calibration_dither_gain_diagnostic_t dither_diagnostic;
                                                                                                 ++batch->accepted;
                                                                                                 ++state->accepted_frame_count;
                                                                                                 if (ADC_CAL_VERBOSE_DEBUG)                 calibration_print_fixed_window(&frame);
+                                                                                                if (calibration_estimate_dither_gain_diagnostic(                 &frame, normalized_gain, nominal_system_gain,                 &dither_diagnostic) == 0 &&             dither_diagnostic.valid) {
+                                                                                                    batch->dither_latest = dither_diagnostic;
+                                                                                                    g_latest_dither_gain_diagnostic = dither_diagnostic;
+                                                                                                    ++batch->dither_valid_estimates;
+                                                                                                    if (dither_diagnostic.status ==                     CAL_DITHER_GAIN_STATUS_PASS)                 ++batch->dither_pass;
+                                                                                                    else                 ++batch->dither_warning;
+                                                                                                    batch->mean_dither_gain +=                 dither_diagnostic.dither_full_gain;
+                                                                                                    batch->mean_dither_flat_gain +=                 dither_diagnostic.dither_flat_gain;
+                                                                                                    batch->mean_existing_dither_delta +=                 dither_diagnostic.existing_vs_dither_gain;
+                                                                                                }
+                                                                                                else {
+                                                                                                    batch->dither_latest = dither_diagnostic;
+                                                                                                    g_latest_dither_gain_diagnostic = dither_diagnostic;
+                                                                                                    ++batch->dither_invalid;
+                                                                                                }
                                                                                                 raw_gain_sum += raw_system_gain;
                                                                                                 gain_sum += normalized_gain;
                                                                                                 gain_square_sum +=                 (double)normalized_gain * (double)normalized_gain;
@@ -3876,6 +4201,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                     print_float_value("Reference mean",                                   gain_metrics.reference_mean, " codes");
                                                                                                     print_float_value("Gain RMSE", gain_metrics.rmse, " codes");
                                                                                                     print_float_value("Correlation", frame.correlation, "");
+                                                                                                    calibration_print_dither_gain_diagnostic(                 &dither_diagnostic);
                                                                                                     xil_printf("Status                  : ACCEPTED\r\n");
                                                                                                 }
                                                                                             }
@@ -3890,6 +4216,11 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                         batch->mean_gain_rmse =         (float)(gain_rmse_sum / (double)batch->accepted);
                                                                                         batch->mean_corrected_adc =         (float)(corrected_adc_sum / (double)batch->accepted);
                                                                                         batch->mean_correlation =         (float)(correlation_sum / (double)batch->accepted);
+                                                                                        if (batch->dither_valid_estimates > 0U) {
+                                                                                            batch->mean_dither_gain /=         (double)batch->dither_valid_estimates;
+                                                                                            batch->mean_dither_flat_gain /=         (double)batch->dither_valid_estimates;
+                                                                                            batch->mean_existing_dither_delta /=         (double)batch->dither_valid_estimates;
+                                                                                        }
                                                                                         return 0;
                                                                                     }
                                                                                     /*  * Publish a fresh representative capture measured with the final coefficient.  * The stored reference remains at its canonical adc -cal scale so a later  * calibration stage can apply its own stage-specific scaling exactly once.  */
@@ -4674,10 +5005,47 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         state->best_gain_correction = state->gain_correction;
                                                                                                         state->failure_reason = "none";
                                                                                                     }
+                                                                                                    static bool calibration_gain_correction_is_at_limit(     float correction) {
+                                                                                                        return isfinite(correction) &&         (fabsf(correction - CALIBRATION_GAIN_CORRECTION_MIN) <= 1.0e-6f ||          fabsf(correction - CALIBRATION_GAIN_CORRECTION_MAX) <= 1.0e-6f);
+                                                                                                    }
+                                                                                                    static bool calibration_gain_correction_requested_out_of_range(     float correction) {
+                                                                                                        return isfinite(correction) &&         (correction < CALIBRATION_GAIN_CORRECTION_MIN ||          correction > CALIBRATION_GAIN_CORRECTION_MAX);
+                                                                                                    }
+                                                                                                    static const char *calibration_existing_gain_loop_status_name(     const calibration_gain_loop_state_t *state) {
+                                                                                                        bool correction_numerical_valid;
+                                                                                                        bool correction_saturated;
+                                                                                                        bool existing_measurements_valid;
+                                                                                                        bool residual_out_of_tolerance;
+                                                                                                        bool pass_measurements_valid;
+                                                                                                        if (state == NULL) return "FAIL";
+                                                                                                        correction_numerical_valid =         isfinite(state->gain_correction) &&         isfinite(state->final_requested_gain_correction);
+                                                                                                        correction_saturated =         state->saturation_occurred ||         calibration_gain_correction_is_at_limit(state->gain_correction) ||         calibration_gain_correction_requested_out_of_range(             state->final_requested_gain_correction);
+                                                                                                        existing_measurements_valid =         state->accepted_frame_count > 0U &&         state->filtered_gain_error_valid &&         isfinite(state->filtered_gain_error) &&         isfinite(state->latest_fitted_gain) &&         state->latest_fitted_gain > FLT_EPSILON &&         isfinite(state->latest_gain_error) &&         isfinite(state->latest_gain_standard_error);
+                                                                                                        residual_out_of_tolerance =         !existing_measurements_valid ||         fabsf(state->filtered_gain_error) > CALIBRATION_GAIN_TOLERANCE;
+                                                                                                        pass_measurements_valid =         correction_numerical_valid &&         existing_measurements_valid &&         fabsf(state->filtered_gain_error) <= CALIBRATION_GAIN_TOLERANCE &&         state->convergence_count >=             CALIBRATION_GAIN_REQUIRED_CONVERGED_FRAMES &&         state->termination_reason != CAL_OFFSET_TERMINATION_ERROR &&         !correction_saturated;
+                                                                                                        if (!correction_numerical_valid) return "FAIL";
+                                                                                                        if (correction_saturated && residual_out_of_tolerance)         return "SATURATED";
+                                                                                                        switch (state->final_status) {
+                                                                                                        case CALIBRATION_GAIN_LOOP_PASS:
+                                                                                                            return pass_measurements_valid ? "PASS" :             correction_saturated ? "SATURATED" : "FAIL";
+                                                                                                        case CALIBRATION_GAIN_LOOP_RUNNING:
+                                                                                                            return existing_measurements_valid ? "RUNNING" : "FAIL";
+                                                                                                        case CALIBRATION_GAIN_LOOP_BEST_AVAILABLE:
+                                                                                                            return correction_saturated && residual_out_of_tolerance ?             "SATURATED" : "NOT CONVERGED";
+                                                                                                        case CALIBRATION_GAIN_LOOP_NOT_CONVERGED:
+                                                                                                        case CALIBRATION_GAIN_LOOP_IDLE:
+                                                                                                            return "NOT CONVERGED";
+                                                                                                        case CALIBRATION_GAIN_LOOP_FAILED:
+                                                                                                        default:
+                                                                                                            return correction_saturated && residual_out_of_tolerance ?             "SATURATED" : "FAIL";
+                                                                                                        }
+                                                                                                    }
                                                                                                     static void calibration_gain_loop_print_summary(     const calibration_gain_loop_state_t *state) {
                                                                                                         if (calibration_compact_output_enabled()) {
                                                                                                             if (state->final_status == CALIBRATION_GAIN_LOOP_PASS) return;
                                                                                                             xil_printf("\r\nGain controller         : FAILED\r\n");
+                                                                                                            xil_printf("Existing gain loop status : %s\r\n",                    calibration_existing_gain_loop_status_name(state));
+                                                                                                            xil_printf("Dither gain status        : %s\r\n",                    calibration_dither_gain_status_name(                        g_latest_dither_gain_diagnostic.status));
                                                                                                             print_float_value("Normalized gain", state->latest_fitted_gain, "");
                                                                                                             print_float_value("Gain error", state->latest_gain_error, "");
                                                                                                             print_float_value("Gain correction", state->gain_correction, "");
@@ -4713,9 +5081,12 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         print_float_value("Controller gain",                       state->latest_controller_gain, "");
                                                                                                         print_float_value("Filter alpha", CALIBRATION_GAIN_FILTER_ALPHA, "");
                                                                                                         xil_printf("Consecutive passes       : %lu\r\n",                (unsigned long)state->convergence_count);
+                                                                                                        xil_printf("Existing gain loop status : %s\r\n",                calibration_existing_gain_loop_status_name(state));
+                                                                                                        xil_printf("Dither gain status        : %s\r\n",                calibration_dither_gain_status_name(                    g_latest_dither_gain_diagnostic.status));
                                                                                                         xil_printf("Termination reason       : %s\r\n",                calibration_offset_termination_name(state->termination_reason));
                                                                                                         xil_printf("Calibration status       : %s\r\n",                calibration_gain_loop_status_name(state->final_status));
                                                                                                         xil_printf("Failure reason           : %s\r\n",                state->failure_reason != NULL ? state->failure_reason : "none");
+                                                                                                        calibration_print_dither_gain_diagnostic(         &g_latest_dither_gain_diagnostic);
                                                                                                         xil_printf("=============================================\r\n");
                                                                                                     }
                                                                                                     static void handle_adc_gain_calibration_status_cmd(void) {
@@ -4734,6 +5105,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         print_float_value("Latest corrected ADC mean",                       state->latest_fitted_offset, " codes");
                                                                                                         print_float_value("Latest correlation", state->latest_correlation, "");
                                                                                                         print_float_value("Latest fitted RMSE", state->latest_rmse, " codes");
+                                                                                                        xil_printf("Existing gain loop status : %s\r\n",                calibration_existing_gain_loop_status_name(state));
+                                                                                                        xil_printf("Dither gain status        : %s\r\n",                calibration_dither_gain_status_name(                    g_latest_dither_gain_diagnostic.status));
                                                                                                         xil_printf("Calibration status     : %s\r\n",                calibration_gain_loop_status_name(state->final_status));
                                                                                                         xil_printf("================================================\r\n");
                                                                                                     }
@@ -4812,6 +5185,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                             print_float_value("Verification error", normalized_gain - 1.0f, "");
                                                                                                             print_float_value("Verification correlation", best.correlation, "");
                                                                                                             print_float_value("Gain correction", gain_correction, "");
+                                                                                                            xil_printf("Existing gain loop status : %s\r\n",            calibration_existing_gain_loop_status_name(state));
+                                                                                                            xil_printf("Dither gain status        : %s\r\n",            calibration_dither_gain_status_name(                g_latest_dither_gain_diagnostic.status));
                                                                                                             xil_printf("Status                  : CONVERGED\r\n");
                                                                                                             xil_printf("\r\nFinal calibrated capture: READY (%lu samples)\r\n",                    (unsigned long)best.analysis_sample_count);
                                                                                                             print_signed_float_value_or_invalid("Post-gain residual check",             state->post_gain_residual_valid ?                 state->post_gain_residual : NAN, " codes");
@@ -4852,6 +5227,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         }
                                                                                                         gain_input = g_pending_calibration_frame;
                                                                                                         calibration_gain_loop_begin_run(state);
+                                                                                                        memset(&g_latest_dither_gain_diagnostic, 0,         sizeof(g_latest_dither_gain_diagnostic));
                                                                                                         if (compact) {
                                                                                                             xil_printf("Offset input status     : %s\r\n",                    gain_input.source_offset_result ==                        CALIBRATION_OFFSET_RESULT_CONVERGED ?                    "CONVERGED" : "PROVISIONAL");
                                                                                                             print_float_value("Fixed offset correction",                           gain_input.software_offset_correction, " codes");
@@ -5015,6 +5391,15 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                                 print_float_value("Correlation", batch.mean_correlation, "");
                                                                                                                 xil_printf("Accepted frames         : %lu/%u\r\n",                        (unsigned long)batch.accepted,                        CALIBRATION_GAIN_BATCH_SIZE);
                                                                                                                 xil_printf("Rejected frames         : %lu/%u\r\n",                        (unsigned long)batch.rejected,                        CALIBRATION_GAIN_BATCH_SIZE);
+                                                                                                                xil_printf("Dither gain frames      : PASS %lu | WARNING %lu | INVALID %lu\r\n",                        (unsigned long)batch.dither_pass,                        (unsigned long)batch.dither_warning,                        (unsigned long)batch.dither_invalid);
+                                                                                                                if (batch.dither_valid_estimates > 0U) {
+                                                                                                                    print_double_value("Mean dither gain",                               batch.mean_dither_gain, "");
+                                                                                                                    print_double_value("Mean dither flat gain",                               batch.mean_dither_flat_gain, "");
+                                                                                                                    print_double_value("Mean existing-dither delta",                               batch.mean_existing_dither_delta, "");
+                                                                                                                }
+                                                                                                                else if (batch.dither_invalid > 0U) {
+                                                                                                                    xil_printf("Dither gain rejection   : %s\r\n",                            calibration_dither_gain_reason_name(                                batch.dither_latest.reason));
+                                                                                                                }
                                                                                                             }
                                                                                                             if (!pass && state->no_improvement_count >=                 CALIBRATION_GAIN_NO_IMPROVEMENT_LIMIT) {
                                                                                                                 state->termination_reason =                 CAL_OFFSET_TERMINATION_NO_IMPROVEMENT;
