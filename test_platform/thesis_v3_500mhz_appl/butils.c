@@ -769,7 +769,35 @@ typedef struct {
 } calibration_offset_stability_record_t;
 
 typedef struct {
+    float sndr_db;
+    float sfdr_db;
+    float thd_db;
+    float enob;
+    double signal_hz;
+    double worst_spur_hz;
+    size_t signal_bin;
+    size_t worst_spur_bin;
+    double signal_power;
+    double noise_distortion_power;
+    double spur_power;
+    double harmonic_power;
+} adc_performance_spectral_metrics_t;
+
+typedef struct {
     uint32_t frame_number;
+    uint32_t iteration;
+    uint32_t cycles;
+    int32_t rotation;
+    uint32_t events_used;
+    int32_t align_n0;
+    float offset_a_codes;
+    float offset_b_codes;
+    float gain_a_codes;
+    float gain_b_codes;
+    float gain_ratio;
+    float skew_a_ps;
+    float skew_b_ps;
+    float skew_mismatch_ps;
     float mean_residual;
     float rmse;
     float correlation;
@@ -781,6 +809,8 @@ typedef struct {
     float gain_corrected_adc_mean;
     float reference_fit_s_error_db;
     float sndr_db;
+    float sfdr_db;
+    float thd_db;
     float enob;
     bool valid;
     bool coherent_sampling;
@@ -799,6 +829,19 @@ typedef struct {
     double signal_power;
     double total_non_dc_power;
     double noise_distortion_power;
+    adc_performance_spectral_metrics_t raw_a;
+    adc_performance_spectral_metrics_t raw_b;
+    adc_performance_spectral_metrics_t cal_a;
+    adc_performance_spectral_metrics_t cal_b;
+    adc_performance_spectral_metrics_t raw_combined;
+    adc_performance_spectral_metrics_t cal_combined;
+    float raw_difference_dbc;
+    float cal_difference_dbc;
+    float cal_dc_difference_codes;
+    float raw_offset_spur_dbc;
+    float raw_image_spur_dbc;
+    float cal_offset_spur_dbc;
+    float cal_image_spur_dbc;
     const char *window_name;
     const char *failure_reason;
 } adc_performance_frame_result_t;
@@ -835,9 +878,20 @@ typedef struct {
     float sndr_db;
     float sndr_stddev;
     float minimum_sndr_db;
+    float sfdr_db;
+    float thd_db;
     float enob;
     float enob_stddev;
     float minimum_enob;
+    float raw_sndr_db;
+    float raw_sfdr_db;
+    float raw_thd_db;
+    float raw_enob;
+    float raw_image_spur_dbc;
+    float cal_image_spur_dbc;
+    float raw_difference_dbc;
+    float cal_difference_dbc;
+    float cal_dc_difference_codes;
     float mean_normalized_gain;
     float normalized_gain_stddev;
     float offset_verification_residual;
@@ -869,7 +923,7 @@ typedef enum {
     ADC_CAL_STAGE_OFFSET,
     ADC_CAL_STAGE_GAIN,
     ADC_CAL_STAGE_SKEW,
-    ADC_CAL_STAGE_VERIFY,
+    ADC_CAL_STAGE_GAIN_VERIFY,
     ADC_CAL_STAGE_PERFORMANCE,
     ADC_CAL_STAGE_COMPLETE,
     ADC_CAL_STAGE_FAILED
@@ -891,6 +945,7 @@ typedef struct {
     bool skew_pass;
     bool gain_verification_pass;
     bool output_valid;
+    bool performance_measurement_available;
     adc_calibration_stage_t stage;
     adc_calibration_stage_t failed_stage;
     adc_calibration_result_t overall_result;
@@ -951,6 +1006,7 @@ void calibration_pending_frame_invalidate(void)
     g_automatic_calibration.valid = false;
     g_automatic_calibration.output_valid = false;
     g_automatic_calibration.final_output.valid = false;
+    g_automatic_calibration.performance_measurement_available = false;
     memset(&g_automatic_calibration.performance, 0,
            sizeof(g_automatic_calibration.performance));
     memset(&g_stored_offset_reference, 0,
@@ -970,6 +1026,7 @@ void calibration_gain_input_frame_invalidate(void)
     g_automatic_calibration.valid = false;
     g_automatic_calibration.output_valid = false;
     g_automatic_calibration.final_output.valid = false;
+    g_automatic_calibration.performance_measurement_available = false;
     memset(&g_automatic_calibration.performance, 0,
            sizeof(g_automatic_calibration.performance));
     memset(&g_pending_calibration_frame, 0,
@@ -1084,6 +1141,26 @@ static int calibration_run_skew_open_loop(
 static void calibration_print_skew_summary(
     const calibration_skew_batch_result_t *batch,
     bool diagnose_mode);
+static int calibration_estimate_skew_frame(
+    const double *channel_a,
+    const double *channel_b,
+    const double *reference,
+    calibration_skew_frame_result_t *result);
+static int calibration_interpolate_i16(
+    const int16_t *samples,
+    size_t count,
+    double position,
+    double *value);
+static int calibration_fit_tone_refined(
+    const double *samples,
+    size_t sample_count,
+    double expected_frequency_hz,
+    double sample_rate_hz,
+    calibration_tone_fit_result_t *fit,
+    double *fitted_waveform,
+    double *residual);
+static bool calibration_tone_fit_parameters_are_finite(
+    const calibration_tone_fit_result_t *fit);
 static int calibration_capture_against_owned_reference(
     const calibration_pending_frame_t *saved,
     bool use_saved_calibration_reference,
@@ -1817,24 +1894,28 @@ static void calibration_automatic_state_reset(void)
     g_automatic_calibration.canonical_reference_phase = -1;
     g_automatic_calibration.gain_correction = 1.0f;
     g_automatic_calibration.final_relative_skew_ps = NAN;
+    g_automatic_calibration.performance_measurement_available = false;
 }
 
 static void calibration_automatic_print_command_help(void)
 {
     xil_printf("\r\nADC calibration commands:\r\n");
     xil_printf("  adc -cal\r\n");
-    xil_printf("      Run complete ADC timing, offset, gain, skew, and validation.\r\n");
+    xil_printf("      Run timing, offset, gain, open-loop skew measurement, and final performance characterization.\r\n");
     xil_printf("\r\nDebug/development stage commands:\r\n");
     xil_printf("  adc -cal timing [frames]  Run timing/reference selection only.\r\n");
     xil_printf("  adc -cal diagnose [frames]\r\n");
     xil_printf("      Run timing tone/dither diagnostics without storing state.\r\n");
     xil_printf("  adc -cal offset           Run offset stage only.\r\n");
     xil_printf("  adc -cal gain             Run gain stage only.\r\n");
-    xil_printf("  adc -cal skew [diagnose]  Measure Channel B-A skew without writes.\r\n");
+    xil_printf("  adc -cal skew             Run open-loop Channel B-A skew measurement.\r\n");
+    xil_printf("  adc -cal skew diagnose    Run verbose open-loop skew characterization.\r\n");
     xil_printf("  adc -cal skew step +/-N   Reserved manual skew step; no write until configured.\r\n");
     xil_printf("  adc -cal stability [frames]\r\n");
     xil_printf("      Characterize fixed-offset capture stability.\r\n");
-    xil_printf("  adc -cal status | reset | help\r\n");
+    xil_printf("  adc -cal status          Display automatic calibration state and latest metrics.\r\n");
+    xil_printf("  adc -cal reset           Reset software coefficients and calibration loop states.\r\n");
+    xil_printf("  adc -cal help            Display this help.\r\n");
 }
 
 static void calibration_print_stage_header(

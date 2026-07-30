@@ -201,7 +201,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             spectrum->dominant_frequency_hz =         (double)spectrum->dominant_bin * sample_rate_hz /         (double)sample_count;
             return spectrum->dominant_bin != 0U ? 0 : -2;
         }
-        /* Goertzel evaluates one bin of an arbitrary-length DFT.  Stage 4 therefore  * analyzes all 800 samples directly and does not need zero padding. */
+        /* Goertzel evaluates one bin of an arbitrary-length DFT.  The performance
+         * stage analyzes all 800 samples directly and does not need zero padding. */
         static double adc_performance_goertzel_power(     const double *windowed_samples, size_t sample_count, size_t bin) {
             const double omega = 6.28318530717958647692 * (double)bin /                          (double)sample_count;
             const double coefficient = 2.0 * cos(omega);
@@ -233,12 +234,184 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             if (value < statistics->minimum) statistics->minimum = value;
             if (value > statistics->maximum) statistics->maximum = value;
         }
+        static void adc_performance_statistics_add_if_finite(     adc_performance_statistics_t *statistics, double value) {
+            if (statistics == NULL || !isfinite(value)) return;
+            adc_performance_statistics_add(statistics, value);
+        }
+        static float adc_performance_statistics_mean_or_nan(     const adc_performance_statistics_t *statistics) {
+            return statistics != NULL && statistics->count > 0U ?         (float)statistics->mean : NAN;
+        }
         static float adc_performance_statistics_stddev(     const adc_performance_statistics_t *statistics) {
             return statistics->count > 1U ?         (float)sqrt(statistics->m2 / (double)(statistics->count - 1U)) :         0.0f;
+        }
+        static void adc_performance_spectral_reset(     adc_performance_spectral_metrics_t *metrics) {
+            if (metrics == NULL) return;
+            memset(metrics, 0, sizeof(*metrics));
+            metrics->sndr_db = NAN;
+            metrics->sfdr_db = NAN;
+            metrics->thd_db = NAN;
+            metrics->enob = NAN;
+            metrics->signal_hz = NAN;
+            metrics->worst_spur_hz = NAN;
+            metrics->signal_power = NAN;
+            metrics->noise_distortion_power = NAN;
+            metrics->spur_power = NAN;
+            metrics->harmonic_power = NAN;
+        }
+        static double adc_performance_blackman_harris7(     size_t index, size_t count) {
+            static const double coefficient[] = {
+                0.27105140069342,
+                -0.43329793923448,
+                0.21812299954311,
+                -0.06592544638803,
+                0.01081174209837,
+                -0.00077658482522,
+                0.00001388721735
+            };
+            double value = 0.0;
+            for (size_t i = 0U; i < sizeof(coefficient) / sizeof(coefficient[0]); ++i) {
+                value += coefficient[i] * cos(         6.28318530717958647692 * (double)i * (double)index /         (double)count);
+            }
+            return value;
+        }
+        static double adc_performance_sum_band_power(     const double *power, size_t power_count, size_t center,     size_t guard) {
+            const size_t first = center > guard ? center - guard : 0U;
+            size_t last = center + guard;
+            double sum = 0.0;
+            if (power == NULL || power_count == 0U) return NAN;
+            if (last >= power_count) last = power_count - 1U;
+            for (size_t bin = first; bin <= last; ++bin) sum += power[bin];
+            return sum;
+        }
+        static int adc_performance_power_spectrum(     const double *samples, size_t sample_count, double *power,     size_t power_count) {
+            static double windowed[CAL_FIXED_WINDOW_LENGTH];
+            double mean = 0.0;
+            double window_square_mean = 0.0;
+            double window_scale;
+            if (samples == NULL || power == NULL ||         sample_count != CAL_FIXED_WINDOW_LENGTH ||         power_count < sample_count / 2U + 1U)         return -1;
+            for (size_t i = 0U; i < sample_count; ++i) {
+                if (!isfinite(samples[i])) return -2;
+                mean += samples[i];
+            }
+            mean /= (double)sample_count;
+            for (size_t i = 0U; i < sample_count; ++i) {
+                const double w = adc_performance_blackman_harris7(i, sample_count);
+                window_square_mean += w * w;
+            }
+            window_scale = sqrt(window_square_mean / (double)sample_count);
+            if (!isfinite(window_scale) || window_scale <= DBL_EPSILON) return -3;
+            for (size_t i = 0U; i < sample_count; ++i) {
+                const double w = adc_performance_blackman_harris7(i, sample_count) /         window_scale;
+                windowed[i] = (samples[i] - mean) * w;
+                if (!isfinite(windowed[i])) return -4;
+            }
+            for (size_t bin = 0U; bin < sample_count / 2U + 1U; ++bin) {
+                const double raw_power = adc_performance_goertzel_power(         windowed, sample_count, bin);
+                power[bin] = raw_power /         ((double)sample_count * (double)sample_count);
+                if (!isfinite(power[bin]) || power[bin] < 0.0) return -5;
+            }
+            return 0;
+        }
+        static int adc_performance_analyse_record(     const double *samples, size_t sample_count, double sample_rate_hz,     adc_performance_spectral_metrics_t *metrics) {
+            static double power[CAL_FIXED_WINDOW_LENGTH / 2U + 1U];
+            const size_t guard = 8U;
+            const size_t dc_bins = 12U;
+            const size_t n_harmonics = 5U;
+            const size_t power_count = sample_count / 2U + 1U;
+            size_t signal_bin = 0U;
+            size_t spur_bin = 0U;
+            double signal_power;
+            double noise_and_distortion = 0.0;
+            double harmonic_power = 0.0;
+            double spur_power;
+            if (metrics == NULL) return -1;
+            adc_performance_spectral_reset(metrics);
+            if (sample_count != CAL_FIXED_WINDOW_LENGTH ||         !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0 ||         adc_performance_power_spectrum(samples, sample_count, power,             power_count) != 0)         return -2;
+            for (size_t bin = dc_bins; bin < power_count; ++bin) {
+                if (power[bin] > power[signal_bin]) signal_bin = bin;
+            }
+            if (signal_bin == 0U) return -3;
+            signal_power = adc_performance_sum_band_power(         power, power_count, signal_bin, guard);
+            if (!isfinite(signal_power) || signal_power <= DBL_EPSILON) return -4;
+            for (size_t bin = dc_bins; bin < power_count; ++bin) {
+                const bool in_signal =         bin + guard >= signal_bin && bin <= signal_bin + guard;
+                if (!in_signal) noise_and_distortion += power[bin];
+            }
+            for (size_t h = 2U; h <= n_harmonics; ++h) {
+                size_t harmonic_bin = h * signal_bin;
+                const size_t folded_period = 2U * (power_count - 1U);
+                if (folded_period == 0U) continue;
+                harmonic_bin %= folded_period;
+                if (harmonic_bin > power_count - 1U)         harmonic_bin = folded_period - harmonic_bin;
+                if (harmonic_bin < dc_bins) continue;
+                harmonic_power += adc_performance_sum_band_power(         power, power_count, harmonic_bin, guard);
+            }
+            {
+                double worst_power = 0.0;
+                for (size_t bin = dc_bins; bin < power_count; ++bin) {
+                    const bool in_signal =         bin + guard >= signal_bin && bin <= signal_bin + guard;
+                    if (!in_signal && power[bin] > worst_power) {
+                        worst_power = power[bin];
+                        spur_bin = bin;
+                    }
+                }
+            }
+            spur_power = adc_performance_sum_band_power(         power, power_count, spur_bin, guard);
+            metrics->signal_bin = signal_bin;
+            metrics->worst_spur_bin = spur_bin;
+            metrics->signal_hz =         (double)signal_bin * sample_rate_hz / (double)sample_count;
+            metrics->worst_spur_hz =         (double)spur_bin * sample_rate_hz / (double)sample_count;
+            metrics->signal_power = signal_power;
+            metrics->noise_distortion_power = noise_and_distortion;
+            metrics->spur_power = spur_power;
+            metrics->harmonic_power = harmonic_power;
+            metrics->sndr_db =         noise_and_distortion > 0.0 ?         (float)(10.0 * log10(signal_power / noise_and_distortion)) :         INFINITY;
+            metrics->sfdr_db =         spur_power > 0.0 ?         (float)(10.0 * log10(signal_power / spur_power)) : INFINITY;
+            metrics->thd_db =         harmonic_power > 0.0 ?         (float)(10.0 * log10(harmonic_power / signal_power)) :         -INFINITY;
+            metrics->enob = (metrics->sndr_db - 1.76f) / 6.02f;
+            return isfinite(metrics->signal_hz) &&         isfinite(metrics->worst_spur_hz) &&         isfinite(metrics->signal_power) &&         isfinite(metrics->noise_distortion_power) ? 0 : -5;
+        }
+        static int adc_performance_channel_difference_dbc(     const double *a, const double *b, size_t sample_count,     double sample_rate_hz, double input_frequency_hz,     float *difference_dbc, float *dc_difference_codes) {
+            static double pa[CAL_FIXED_WINDOW_LENGTH / 2U + 1U];
+            static double pd[CAL_FIXED_WINDOW_LENGTH / 2U + 1U];
+            static double difference[CAL_FIXED_WINDOW_LENGTH];
+            const size_t power_count = sample_count / 2U + 1U;
+            const size_t guard = 8U;
+            size_t input_bin;
+            double carrier;
+            double residual;
+            double mean_a = 0.0;
+            double mean_b = 0.0;
+            if (a == NULL || b == NULL || difference_dbc == NULL ||         dc_difference_codes == NULL ||         sample_count != CAL_FIXED_WINDOW_LENGTH ||         !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0 ||         !isfinite(input_frequency_hz) || input_frequency_hz <= 0.0)         return -1;
+            input_bin = (size_t)lround(input_frequency_hz /         (sample_rate_hz / (double)sample_count));
+            if (input_bin >= power_count) input_bin = power_count - 1U;
+            for (size_t i = 0U; i < sample_count; ++i) {
+                difference[i] = a[i] - b[i];
+                mean_a += a[i];
+                mean_b += b[i];
+            }
+            if (adc_performance_power_spectrum(a, sample_count, pa, power_count) != 0 ||         adc_performance_power_spectrum(difference, sample_count, pd,             power_count) != 0)         return -2;
+            carrier = adc_performance_sum_band_power(         pa, power_count, input_bin, guard);
+            residual = adc_performance_sum_band_power(         pd, power_count, input_bin, guard);
+            *difference_dbc =         carrier > 0.0 && residual > 0.0 ?         (float)(10.0 * log10(residual / carrier)) : -INFINITY;
+            *dc_difference_codes =         (float)(mean_a / (double)sample_count - mean_b / (double)sample_count);
+            return 0;
         }
         static void adc_performance_frame_result_reset(     adc_performance_frame_result_t *result, uint32_t frame_number) {
             memset(result, 0, sizeof(*result));
             result->frame_number = frame_number;
+            result->iteration = frame_number;
+            result->cycles = frame_number * CAL_FIXED_WINDOW_LENGTH;
+            result->rotation = 0;
+            result->align_n0 = -1;
+            result->offset_a_codes = NAN;
+            result->offset_b_codes = NAN;
+            result->gain_a_codes = NAN;
+            result->gain_b_codes = NAN;
+            result->gain_ratio = NAN;
+            result->skew_a_ps = NAN;
+            result->skew_b_ps = NAN;
+            result->skew_mismatch_ps = NAN;
             result->mean_residual = NAN;
             result->rmse = NAN;
             result->correlation = NAN;
@@ -250,12 +423,27 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             result->gain_corrected_adc_mean = NAN;
             result->reference_fit_s_error_db = NAN;
             result->sndr_db = NAN;
+            result->sfdr_db = NAN;
+            result->thd_db = NAN;
             result->enob = NAN;
             result->sample_rate_hz = NAN;
             result->expected_fundamental_hz = NAN;
             result->expected_fundamental_bin = NAN;
             result->detected_fundamental_hz = NAN;
             result->cycles_in_window = NAN;
+            adc_performance_spectral_reset(&result->raw_a);
+            adc_performance_spectral_reset(&result->raw_b);
+            adc_performance_spectral_reset(&result->cal_a);
+            adc_performance_spectral_reset(&result->cal_b);
+            adc_performance_spectral_reset(&result->raw_combined);
+            adc_performance_spectral_reset(&result->cal_combined);
+            result->raw_difference_dbc = NAN;
+            result->cal_difference_dbc = NAN;
+            result->cal_dc_difference_codes = NAN;
+            result->raw_offset_spur_dbc = NAN;
+            result->raw_image_spur_dbc = NAN;
+            result->cal_offset_spur_dbc = NAN;
+            result->cal_image_spur_dbc = NAN;
             result->window_name = "UNAVAILABLE";
             result->failure_reason = "performance frame not evaluated";
         }
@@ -457,13 +645,107 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             result->failure_reason = "none";
             return 0;
         }
+        static int adc_evaluate_uploaded_performance_row(     const calibration_pending_frame_t *saved_output,     const calibration_frame_workspace_t *workspace,     const calibration_aligned_frame_t *frame,     float final_gain_correction, float final_offset_correction,     double sample_rate_hz, double expected_fundamental_hz,     adc_performance_frame_result_t *result) {
+            static double raw_a[CAL_FIXED_WINDOW_LENGTH];
+            static double raw_b[CAL_FIXED_WINDOW_LENGTH];
+            static double cal_a[CAL_FIXED_WINDOW_LENGTH];
+            static double cal_b[CAL_FIXED_WINDOW_LENGTH];
+            static double ref[CAL_FIXED_WINDOW_LENGTH];
+            static double ref_tone[CAL_FIXED_WINDOW_LENGTH];
+            static double dither_template[CAL_FIXED_WINDOW_LENGTH];
+            calibration_tone_fit_result_t ref_fit;
+            calibration_skew_frame_result_t skew;
+            double dither_gain_a = 0.0;
+            double dither_gain_b = 0.0;
+            float raw_dc_difference_codes = NAN;
+            size_t phase_offset;
+            size_t source_count;
+            const int16_t *source_a;
+            const int16_t *source_b;
+            if (saved_output == NULL || workspace == NULL || frame == NULL ||         result == NULL || !frame->frame_valid ||         !isfinite(final_gain_correction) || final_gain_correction <= 0.0f ||         !isfinite(final_offset_correction) ||         !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0 ||         saved_output->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||         frame->calibration_window_length != CAL_FIXED_WINDOW_LENGTH)         return -1;
+            result->offset_a_codes = final_offset_correction;
+            result->offset_b_codes = final_offset_correction;
+            phase_offset = frame->selected_reference_phase == 1 ? 1U : 0U;
+            if (phase_offset >= saved_output->alignment_reference_count) return -2;
+            source_count = saved_output->alignment_reference_count - phase_offset;
+            source_a = workspace->channel_a + phase_offset;
+            source_b = workspace->channel_b + phase_offset;
+            for (size_t i = 0U; i < CAL_FIXED_WINDOW_LENGTH; ++i) {
+                const size_t reference_index = saved_output->calibration_window_start + i;
+                const double source_position =         (double)reference_index + (double)frame->total_lag;
+                if (calibration_interpolate_i16(source_a, source_count,         source_position, &raw_a[i]) != 0 ||         calibration_interpolate_i16(source_b, source_count,         source_position, &raw_b[i]) != 0)         return -3;
+                /* The production controller currently owns one shared software
+                 * offset and one shared software gain.  Both physical channels
+                 * use those frozen coefficients for performance
+                 * characterization; channel-specific dither/skew values below
+                 * are diagnostic estimates only. */
+                cal_a[i] = (double)final_gain_correction *         calibration_apply_offset_correction(raw_a[i], final_offset_correction);
+                cal_b[i] = (double)final_gain_correction *         calibration_apply_offset_correction(raw_b[i], final_offset_correction);
+                ref[i] = frame->aligned_reference_samples[i];
+                if (!isfinite(cal_a[i]) || !isfinite(cal_b[i]) ||         !isfinite(ref[i])) return -4;
+            }
+            if (calibration_estimate_skew_frame(cal_a, cal_b, ref, &skew) == 0 &&         skew.valid) {
+                dither_gain_a = skew.channel[0].pulse_gain;
+                dither_gain_b = skew.channel[1].pulse_gain;
+                result->events_used = skew.complete_event_count;
+                result->align_n0 =         (int32_t)lround(g_stored_offset_reference.timing_diagnostics.dither_n0_fractional);
+                result->gain_a_codes = (float)dither_gain_a;
+                result->gain_b_codes = (float)dither_gain_b;
+                result->gain_ratio =         dither_gain_a > DBL_EPSILON ?         (float)(dither_gain_b / dither_gain_a) : NAN;
+                result->skew_a_ps = (float)skew.channel[0].skew_full_ps;
+                result->skew_b_ps = (float)skew.channel[1].skew_full_ps;
+                result->skew_mismatch_ps = (float)skew.relative_skew_ps;
+            }
+            if (calibration_fit_tone_refined(         ref, CAL_FIXED_WINDOW_LENGTH, expected_fundamental_hz,         sample_rate_hz, &ref_fit, ref_tone, dither_template) == 0 &&         calibration_tone_fit_parameters_are_finite(&ref_fit) &&         isfinite(dither_gain_a) && isfinite(dither_gain_b)) {
+                for (size_t i = 0U; i < CAL_FIXED_WINDOW_LENGTH; ++i) {
+                    cal_a[i] -= dither_gain_a * dither_template[i];
+                    cal_b[i] -= dither_gain_b * dither_template[i];
+                    raw_a[i] -= dither_gain_a * dither_template[i] /         (double)final_gain_correction;
+                    raw_b[i] -= dither_gain_b * dither_template[i] /         (double)final_gain_correction;
+                }
+            }
+            if (adc_performance_analyse_record(         raw_a, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->raw_a) != 0 ||         adc_performance_analyse_record(         raw_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->raw_b) != 0 ||         adc_performance_analyse_record(         cal_a, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->cal_a) != 0 ||         adc_performance_analyse_record(         cal_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         &result->cal_b) != 0)         return -5;
+            /* Current FPGA capture mode presents Channel A and Channel B as
+             * parallel same-instant records.  Until a real A/B interleaved
+             * output stream is available, uploaded-project-compatible
+             * "combined" columns mirror Channel A. */
+            result->raw_combined = result->raw_a;
+            result->cal_combined = result->cal_a;
+            if (adc_performance_channel_difference_dbc(         raw_a, raw_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         expected_fundamental_hz, &result->raw_difference_dbc,         &raw_dc_difference_codes) != 0 ||         adc_performance_channel_difference_dbc(         cal_a, cal_b, CAL_FIXED_WINDOW_LENGTH, sample_rate_hz,         expected_fundamental_hz, &result->cal_difference_dbc,         &result->cal_dc_difference_codes) != 0)         return -6;
+            result->raw_offset_spur_dbc = NAN;
+            result->raw_image_spur_dbc = result->raw_difference_dbc;
+            result->cal_offset_spur_dbc = NAN;
+            result->cal_image_spur_dbc = result->cal_difference_dbc;
+            result->sndr_db = result->cal_combined.sndr_db;
+            result->sfdr_db = result->cal_combined.sfdr_db;
+            result->thd_db = result->cal_combined.thd_db;
+            result->enob = result->cal_combined.enob;
+            result->detected_fundamental_hz = result->cal_combined.signal_hz;
+            result->fundamental_bin = result->cal_combined.signal_bin;
+            result->signal_power = result->cal_combined.signal_power;
+            result->noise_distortion_power =         result->cal_combined.noise_distortion_power;
+            result->total_non_dc_power =         result->cal_combined.signal_power +         result->cal_combined.noise_distortion_power;
+            result->window_name = "BLACKMAN_HARRIS_7";
+            return 0;
+        }
         static int adc_evaluate_performance_batch(     const calibration_pending_frame_t *saved_output,     float final_gain_correction,     float final_offset_correction,     float nominal_system_gain,     double expected_fundamental_hz,     float offset_verification_residual,     float offset_verification_standard_error,     float post_gain_residual,     float post_gain_residual_standard_error,     adc_performance_result_t *result) {
             static calibration_frame_workspace_t workspace;
             adc_performance_statistics_t residual_statistics;
             adc_performance_statistics_t rmse_statistics;
             adc_performance_statistics_t correlation_statistics;
             adc_performance_statistics_t sndr_statistics;
+            adc_performance_statistics_t sfdr_statistics;
+            adc_performance_statistics_t thd_statistics;
             adc_performance_statistics_t enob_statistics;
+            adc_performance_statistics_t raw_sndr_statistics;
+            adc_performance_statistics_t raw_sfdr_statistics;
+            adc_performance_statistics_t raw_thd_statistics;
+            adc_performance_statistics_t raw_enob_statistics;
+            adc_performance_statistics_t raw_image_statistics;
+            adc_performance_statistics_t cal_image_statistics;
+            adc_performance_statistics_t raw_difference_statistics;
+            adc_performance_statistics_t cal_difference_statistics;
+            adc_performance_statistics_t cal_dc_difference_statistics;
             adc_performance_statistics_t normalized_gain_statistics;
             const bool previous_quiet_capture = g_quiet_calibration_capture;
             if (result == NULL) return -1;
@@ -480,9 +762,20 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             result->sndr_db = NAN;
             result->sndr_stddev = NAN;
             result->minimum_sndr_db = NAN;
+            result->sfdr_db = NAN;
+            result->thd_db = NAN;
             result->enob = NAN;
             result->enob_stddev = NAN;
             result->minimum_enob = NAN;
+            result->raw_sndr_db = NAN;
+            result->raw_sfdr_db = NAN;
+            result->raw_thd_db = NAN;
+            result->raw_enob = NAN;
+            result->raw_image_spur_dbc = NAN;
+            result->cal_image_spur_dbc = NAN;
+            result->raw_difference_dbc = NAN;
+            result->cal_difference_dbc = NAN;
+            result->cal_dc_difference_codes = NAN;
             result->mean_normalized_gain = NAN;
             result->normalized_gain_stddev = NAN;
             result->offset_verification_residual = offset_verification_residual;
@@ -513,9 +806,23 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             adc_performance_statistics_init(&rmse_statistics);
             adc_performance_statistics_init(&correlation_statistics);
             adc_performance_statistics_init(&sndr_statistics);
+            adc_performance_statistics_init(&sfdr_statistics);
+            adc_performance_statistics_init(&thd_statistics);
             adc_performance_statistics_init(&enob_statistics);
+            adc_performance_statistics_init(&raw_sndr_statistics);
+            adc_performance_statistics_init(&raw_sfdr_statistics);
+            adc_performance_statistics_init(&raw_thd_statistics);
+            adc_performance_statistics_init(&raw_enob_statistics);
+            adc_performance_statistics_init(&raw_image_statistics);
+            adc_performance_statistics_init(&cal_image_statistics);
+            adc_performance_statistics_init(&raw_difference_statistics);
+            adc_performance_statistics_init(&cal_difference_statistics);
+            adc_performance_statistics_init(&cal_dc_difference_statistics);
             adc_performance_statistics_init(&normalized_gain_statistics);
-            /* The owned-reference capture path performs the same local alignment,      * fixed-window mapping, offset correction, and gain correction used by      * final gain verification.  Stage 4 only reads the frozen coefficients. */
+            /* The owned-reference capture path performs the same local alignment,
+             * fixed-window mapping, offset correction, and gain correction used by
+             * final gain verification.  Performance measurement only reads the
+             * frozen coefficients. */
             g_quiet_calibration_capture = true;
             for (uint32_t frame_number = 1U;
             frame_number <= ADC_PERFORMANCE_FRAMES;
@@ -529,6 +836,17 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                 status = calibration_capture_against_owned_reference(             saved_output, true, final_gain_correction,             final_offset_correction, saved_output->analysis_reference_scale,             &workspace, &frame, &reason);
                 if (status == 0 && frame.frame_valid) {
                     status = adc_evaluate_performance_frame(                 &frame, frame_number, final_gain_correction,                 final_offset_correction, nominal_system_gain,                 saved_output->effective_sample_rate_hz,                 expected_fundamental_hz, frame_result);
+                    if (status == 0 && frame_result->valid &&
+                        adc_evaluate_uploaded_performance_row(
+                            saved_output, &workspace, &frame,
+                            final_gain_correction, final_offset_correction,
+                            saved_output->effective_sample_rate_hz,
+                            expected_fundamental_hz, frame_result) != 0) {
+                        frame_result->valid = false;
+                        frame_result->failure_reason =
+                            "uploaded-style performance metrics failed";
+                        status = -6;
+                    }
                 }
                 else {
                     frame_result->failure_reason = reason != NULL ?                 reason : "performance capture or alignment failed";
@@ -538,8 +856,19 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                     adc_performance_statistics_add(                 &residual_statistics, frame_result->mean_residual);
                     adc_performance_statistics_add(                 &rmse_statistics, frame_result->rmse);
                     adc_performance_statistics_add(                 &correlation_statistics, frame_result->correlation);
-                    adc_performance_statistics_add(                 &sndr_statistics, frame_result->sndr_db);
-                    adc_performance_statistics_add(                 &enob_statistics, frame_result->enob);
+                    adc_performance_statistics_add_if_finite(                 &sndr_statistics, frame_result->sndr_db);
+                    adc_performance_statistics_add_if_finite(                 &sfdr_statistics, frame_result->sfdr_db);
+                    adc_performance_statistics_add_if_finite(                 &thd_statistics, frame_result->thd_db);
+                    adc_performance_statistics_add_if_finite(                 &enob_statistics, frame_result->enob);
+                    adc_performance_statistics_add_if_finite(                 &raw_sndr_statistics,                 frame_result->raw_combined.sndr_db);
+                    adc_performance_statistics_add_if_finite(                 &raw_sfdr_statistics,                 frame_result->raw_combined.sfdr_db);
+                    adc_performance_statistics_add_if_finite(                 &raw_thd_statistics,                 frame_result->raw_combined.thd_db);
+                    adc_performance_statistics_add_if_finite(                 &raw_enob_statistics,                 frame_result->raw_combined.enob);
+                    adc_performance_statistics_add_if_finite(                 &raw_image_statistics,                 frame_result->raw_image_spur_dbc);
+                    adc_performance_statistics_add_if_finite(                 &cal_image_statistics,                 frame_result->cal_image_spur_dbc);
+                    adc_performance_statistics_add_if_finite(                 &raw_difference_statistics,                 frame_result->raw_difference_dbc);
+                    adc_performance_statistics_add_if_finite(                 &cal_difference_statistics,                 frame_result->cal_difference_dbc);
+                    adc_performance_statistics_add_if_finite(                 &cal_dc_difference_statistics,                 frame_result->cal_dc_difference_codes);
                     adc_performance_statistics_add(                 &normalized_gain_statistics,                 frame_result->normalized_gain);
                 }
                 if (ADC_CAL_VERBOSE_DEBUG) {
@@ -575,12 +904,23 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             result->rmse_stddev =         adc_performance_statistics_stddev(&rmse_statistics);
             result->correlation = (float)correlation_statistics.mean;
             result->minimum_correlation = (float)correlation_statistics.minimum;
-            result->sndr_db = (float)sndr_statistics.mean;
+            result->sndr_db = adc_performance_statistics_mean_or_nan(         &sndr_statistics);
             result->sndr_stddev =         adc_performance_statistics_stddev(&sndr_statistics);
-            result->minimum_sndr_db = (float)sndr_statistics.minimum;
-            result->enob = (float)enob_statistics.mean;
+            result->minimum_sndr_db = sndr_statistics.count > 0U ?         (float)sndr_statistics.minimum : NAN;
+            result->sfdr_db = adc_performance_statistics_mean_or_nan(         &sfdr_statistics);
+            result->thd_db = adc_performance_statistics_mean_or_nan(         &thd_statistics);
+            result->enob = adc_performance_statistics_mean_or_nan(         &enob_statistics);
             result->enob_stddev =         adc_performance_statistics_stddev(&enob_statistics);
-            result->minimum_enob = (float)enob_statistics.minimum;
+            result->minimum_enob = enob_statistics.count > 0U ?         (float)enob_statistics.minimum : NAN;
+            result->raw_sndr_db = adc_performance_statistics_mean_or_nan(         &raw_sndr_statistics);
+            result->raw_sfdr_db = adc_performance_statistics_mean_or_nan(         &raw_sfdr_statistics);
+            result->raw_thd_db = adc_performance_statistics_mean_or_nan(         &raw_thd_statistics);
+            result->raw_enob = adc_performance_statistics_mean_or_nan(         &raw_enob_statistics);
+            result->raw_image_spur_dbc = adc_performance_statistics_mean_or_nan(         &raw_image_statistics);
+            result->cal_image_spur_dbc = adc_performance_statistics_mean_or_nan(         &cal_image_statistics);
+            result->raw_difference_dbc = adc_performance_statistics_mean_or_nan(         &raw_difference_statistics);
+            result->cal_difference_dbc = adc_performance_statistics_mean_or_nan(         &cal_difference_statistics);
+            result->cal_dc_difference_codes = adc_performance_statistics_mean_or_nan(         &cal_dc_difference_statistics);
             result->mean_normalized_gain = (float)normalized_gain_statistics.mean;
             result->normalized_gain_stddev =         adc_performance_statistics_stddev(&normalized_gain_statistics);
             result->offset_residual_difference =         isfinite(offset_verification_residual) ?         result->mean_residual - offset_verification_residual : NAN;
@@ -589,10 +929,95 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                 result->offset_difference_z_like =             result->combined_offset_standard_error > FLT_EPSILON ?             fabsf(result->offset_residual_difference) /                 result->combined_offset_standard_error : NAN;
             }
             result->reference_metrics_valid =         isfinite(result->mean_residual) &&         isfinite(result->residual_stddev) &&         isfinite(result->residual_standard_error) &&         isfinite(result->residual_minimum) &&         isfinite(result->residual_maximum) &&         isfinite(result->rmse) && isfinite(result->rmse_stddev) &&         isfinite(result->correlation) &&         isfinite(result->minimum_correlation) &&         isfinite(result->mean_normalized_gain) &&         isfinite(result->normalized_gain_stddev);
-            result->spectral_metrics_valid =         isfinite(result->sndr_db) && isfinite(result->sndr_stddev) &&         isfinite(result->minimum_sndr_db) && isfinite(result->enob) &&         isfinite(result->enob_stddev) && isfinite(result->minimum_enob);
+            result->spectral_metrics_valid =         sndr_statistics.count > 0U && enob_statistics.count > 0U &&         isfinite(result->sndr_db) && isfinite(result->sndr_stddev) &&         isfinite(result->minimum_sndr_db) && isfinite(result->enob) &&         isfinite(result->enob_stddev) && isfinite(result->minimum_enob);
             result->valid =         result->frames_valid >= ADC_PERFORMANCE_MIN_VALID_FRAMES &&         result->reference_metrics_valid && result->spectral_metrics_valid;
             result->failure_reason = result->valid ? "none" :         result->frames_valid < ADC_PERFORMANCE_MIN_VALID_FRAMES ?         "insufficient valid performance frames" :         "invalid aggregate performance metrics";
             return result->valid ? 0 : -5;
+        }
+        static void adc_print_performance_csv_number(double value) {
+            if (isfinite(value)) print_double_inline(value);
+            else xil_printf("nan");
+        }
+        static void adc_print_performance_csv_spectral_fields(     const adc_performance_spectral_metrics_t *metrics) {
+            if (metrics == NULL) {
+                xil_printf("nan,nan,nan,nan,nan,nan");
+                return;
+            }
+            adc_print_performance_csv_number(metrics->sndr_db);
+            xil_printf(",");
+            adc_print_performance_csv_number(metrics->sfdr_db);
+            xil_printf(",");
+            adc_print_performance_csv_number(metrics->enob);
+            xil_printf(",");
+            adc_print_performance_csv_number(metrics->thd_db);
+            xil_printf(",");
+            adc_print_performance_csv_number(metrics->signal_hz);
+            xil_printf(",");
+            adc_print_performance_csv_number(metrics->worst_spur_hz);
+        }
+        static void adc_print_performance_csv_row(     const adc_performance_frame_result_t *frame) {
+            if (frame == NULL) return;
+            xil_printf("performance_measurement,%lu,%lu,%lu,%ld,%lu,%ld,",                (unsigned long)frame->frame_number,                (unsigned long)frame->iteration,                (unsigned long)frame->cycles,                (long)frame->rotation,                (unsigned long)frame->events_used,                (long)frame->align_n0);
+            adc_print_performance_csv_number(frame->offset_a_codes);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->offset_b_codes);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->gain_a_codes);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->gain_b_codes);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->gain_ratio);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->skew_a_ps);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->skew_b_ps);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->skew_mismatch_ps);
+            xil_printf(",");
+            adc_print_performance_csv_spectral_fields(&frame->raw_a);
+            xil_printf(",");
+            adc_print_performance_csv_spectral_fields(&frame->raw_b);
+            xil_printf(",");
+            adc_print_performance_csv_spectral_fields(&frame->cal_a);
+            xil_printf(",");
+            adc_print_performance_csv_spectral_fields(&frame->cal_b);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->raw_difference_dbc);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->cal_difference_dbc);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->cal_dc_difference_codes);
+            xil_printf(",");
+            adc_print_performance_csv_spectral_fields(&frame->raw_combined);
+            xil_printf(",");
+            adc_print_performance_csv_spectral_fields(&frame->cal_combined);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->raw_offset_spur_dbc);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->raw_image_spur_dbc);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->cal_offset_spur_dbc);
+            xil_printf(",");
+            adc_print_performance_csv_number(frame->cal_image_spur_dbc);
+            xil_printf(",%lu,%s\r\n", frame->valid ? 1UL : 0UL,                frame->valid ? "none" :                frame->failure_reason != NULL ? frame->failure_reason : "unknown");
+        }
+        static void adc_print_performance_csv(     const adc_performance_result_t *result) {
+            if (result == NULL) return;
+            xil_printf("\r\nPerformance CSV:\r\n");
+            xil_printf("stage,stage_iteration,iteration,cycles,rotation,events_used,align_n0,");
+            xil_printf("offset_a_codes,offset_b_codes,gain_a_codes,gain_b_codes,gain_ratio,");
+            xil_printf("skew_a_ps,skew_b_ps,skew_mismatch_ps,");
+            xil_printf("raw_a_sndr_db,raw_a_sfdr_db,raw_a_enob,raw_a_thd_db,raw_a_signal_hz,raw_a_worst_spur_hz,");
+            xil_printf("raw_b_sndr_db,raw_b_sfdr_db,raw_b_enob,raw_b_thd_db,raw_b_signal_hz,raw_b_worst_spur_hz,");
+            xil_printf("cal_a_sndr_db,cal_a_sfdr_db,cal_a_enob,cal_a_thd_db,cal_a_signal_hz,cal_a_worst_spur_hz,");
+            xil_printf("cal_b_sndr_db,cal_b_sfdr_db,cal_b_enob,cal_b_thd_db,cal_b_signal_hz,cal_b_worst_spur_hz,");
+            xil_printf("raw_difference_dbc,cal_difference_dbc,cal_dc_difference_codes,");
+            xil_printf("raw_sndr_db,raw_sfdr_db,raw_enob,raw_thd_db,raw_signal_hz,raw_worst_spur_hz,");
+            xil_printf("cal_sndr_db,cal_sfdr_db,cal_enob,cal_thd_db,cal_signal_hz,cal_worst_spur_hz,");
+            xil_printf("raw_offset_spur_dbc,raw_image_spur_dbc,cal_offset_spur_dbc,cal_image_spur_dbc,valid,rejection_reason\r\n");
+            for (uint32_t i = 0U; i < result->frames_attempted; ++i) {
+                adc_print_performance_csv_row(&result->frames[i]);
+            }
         }
         static void adc_print_performance_result(     const adc_performance_result_t *result) {
             const adc_performance_frame_result_t *diagnostic = NULL;
@@ -613,11 +1038,26 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
             print_float_value_2("Mean SNDR",         result->spectral_metrics_valid ? result->sndr_db : NAN, " dB");
             print_float_value_2("SNDR std dev",         result->spectral_metrics_valid ? result->sndr_stddev : NAN, " dB");
             print_float_value_2("Minimum SNDR",         result->spectral_metrics_valid ?             result->minimum_sndr_db : NAN, " dB");
+            print_float_value_2("Mean SFDR",         result->spectral_metrics_valid ? result->sfdr_db : NAN, " dB");
+            print_float_value_2("Mean THD",         result->spectral_metrics_valid ? result->thd_db : NAN, " dB");
             xil_printf("\r\n");
             print_float_value_2("Mean ENOB",         result->spectral_metrics_valid ? result->enob : NAN, " bits");
             print_float_value_2("ENOB std dev",         result->spectral_metrics_valid ? result->enob_stddev : NAN,         " bits");
             print_float_value_2("Minimum ENOB",         result->spectral_metrics_valid ? result->minimum_enob : NAN,         " bits");
-            xil_printf("\r\nStatus                  : %s\r\n",                result->valid ? "VALID" : "INVALID");
+            xil_printf("\r\n");
+            print_float_value_2("Raw combined SNDR",         result->spectral_metrics_valid ? result->raw_sndr_db : NAN, " dB");
+            print_float_value_2("Cal combined SNDR",         result->spectral_metrics_valid ? result->sndr_db : NAN, " dB");
+            print_float_value_2("Raw combined SFDR",         result->spectral_metrics_valid ? result->raw_sfdr_db : NAN, " dB");
+            print_float_value_2("Cal combined SFDR",         result->spectral_metrics_valid ? result->sfdr_db : NAN, " dB");
+            print_float_value_2("Raw image spur",         result->spectral_metrics_valid ? result->raw_image_spur_dbc : NAN, " dBc");
+            print_float_value_2("Cal image spur",         result->spectral_metrics_valid ? result->cal_image_spur_dbc : NAN, " dBc");
+            print_float_value_2("Raw difference",         result->spectral_metrics_valid ? result->raw_difference_dbc : NAN, " dBc");
+            print_float_value_2("Cal difference",         result->spectral_metrics_valid ? result->cal_difference_dbc : NAN, " dBc");
+            print_float_value_or_invalid("Cal DC difference",         result->spectral_metrics_valid ? result->cal_dc_difference_codes : NAN, " codes");
+            xil_printf("Combined behavior      : Channel A alias; parallel A/B capture is not interleaved\r\n");
+            xil_printf("Applied corrections    : shared software offset and gain used for both channels\r\n");
+            xil_printf("\r\nMeasurement status      : %s\r\n",                result->valid ? "VALID" : "INVALID");
+            adc_print_performance_csv(result);
             if (ADC_CAL_VERBOSE_DEBUG) {
                 for (uint32_t i = 0U;
                 i < result->frames_attempted;
@@ -649,6 +1089,10 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                 print_float_value_or_invalid("  Residual difference z-like",             result->offset_difference_z_like, "");
                 print_float_value_or_invalid("  Mean normalized gain",             result->mean_normalized_gain, "");
                 print_float_value_or_invalid("  Normalized gain std dev",             result->normalized_gain_stddev, "");
+                xil_printf("  Combined fields       : raw_combined/cal_combined mirror Channel A in the current parallel same-instant hardware mode\r\n");
+                xil_printf("  Interleaved analysis  : deferred until a real A/B interleaved output stream is available\r\n");
+                xil_printf("  A/B correction model  : one shared production offset correction and one shared production gain correction\r\n");
+                xil_printf("  Diagnostic estimates  : channel dither gain and skew values are not separately applied corrections\r\n");
                 if (diagnostic != NULL) {
                     xil_printf("\r\nFirst valid frame spectral diagnostics:\r\n");
                     xil_printf("  Frame                 : %lu\r\n",                 (unsigned long)diagnostic->frame_number);
@@ -670,6 +1114,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                     print_double_value("  Total non-DC power",                 diagnostic->total_non_dc_power, "");
                     print_double_value("  Noise+distortion power",                 diagnostic->noise_distortion_power, "");
                     print_float_value_2("  SNDR",                 diagnostic->sndr_db, " dB");
+                    print_float_value_2("  SFDR",                 diagnostic->sfdr_db, " dB");
+                    print_float_value_2("  THD",                 diagnostic->thd_db, " dB");
                     print_float_value_2("  ENOB",                 diagnostic->enob, " bits");
                     xil_printf("\r\nFirst valid frame reference-path audit:\r\n");
                     print_float_value_or_invalid("  Raw reference mean",                 diagnostic->raw_reference_mean, " codes");
@@ -1375,7 +1821,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                 case ADC_CAL_STAGE_OFFSET: return "OFFSET";
                                                                 case ADC_CAL_STAGE_GAIN: return "GAIN";
                                                                 case ADC_CAL_STAGE_SKEW: return "SKEW";
-                                                                case ADC_CAL_STAGE_VERIFY: return "VERIFY";
+                                                                case ADC_CAL_STAGE_GAIN_VERIFY: return "GAIN_VERIFY";
                                                                 case ADC_CAL_STAGE_PERFORMANCE: return "PERFORMANCE";
                                                                 case ADC_CAL_STAGE_COMPLETE: return "COMPLETE";
                                                                 case ADC_CAL_STAGE_FAILED: return "FAILED";
@@ -1464,7 +1910,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                         }
                                                         static const char *calibration_gain_stage_status(     const adc_automatic_calibration_state_t *state) {
                                                             if (state->gain_pass && state->gain_verification_pass)         return "CONVERGED";
-                                                            if (state->active && (state->stage == ADC_CAL_STAGE_GAIN ||                           state->stage == ADC_CAL_STAGE_VERIFY))         return "RUNNING";
+                                                            if (state->active && (state->stage == ADC_CAL_STAGE_GAIN ||                           state->stage == ADC_CAL_STAGE_GAIN_VERIFY))         return "RUNNING";
                                                             if (state->failed_stage == ADC_CAL_STAGE_GAIN) return "FAILED";
                                                             return "NOT RUN";
                                                         }
@@ -1476,9 +1922,8 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                             return "NOT RUN";
                                                         }
                                                         static const char *calibration_performance_status(     const adc_automatic_calibration_state_t *state) {
-                                                            if (state->performance.valid) return "VALID";
+                                                            if (state->performance_measurement_available)         return state->performance.valid ? "VALID" : "INVALID";
                                                             if (state->active && state->stage == ADC_CAL_STAGE_PERFORMANCE)         return "RUNNING";
-                                                            if (state->stage == ADC_CAL_STAGE_COMPLETE) return "INVALID";
                                                             return "NOT RUN";
                                                         }
                                                         static void calibration_automatic_print_summary(void) {
@@ -1522,11 +1967,14 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                 print_float_value_or_invalid("Mean correlation",             state->performance.reference_metrics_valid ?             state->performance.correlation : NAN, "");
                                                                 print_float_value_2("Mean SNDR",             state->performance.spectral_metrics_valid ?             state->performance.sndr_db : NAN, " dB");
                                                                 print_float_value_2("Mean ENOB",             state->performance.spectral_metrics_valid ?             state->performance.enob : NAN, " bits");
+                                                                if (state->performance_measurement_available &&             !state->performance.valid) {
+                                                                    xil_printf("Performance reason      : %s\r\n",                 state->performance.failure_reason != NULL ?                 state->performance.failure_reason : "unknown");
+                                                                }
                                                             }
                                                             xil_printf("\r\nTiming                  : %s\r\n",                calibration_timing_stage_status(state));
                                                             xil_printf("Offset                  : %s\r\n",                calibration_offset_result_name(state->offset_result));
                                                             xil_printf("Gain                    : %s\r\n",                calibration_gain_stage_status(state));
-                                                            xil_printf("Skew                    : %s\r\n",                calibration_skew_stage_summary_status(state));
+                                                            xil_printf("Open-loop skew          : %s\r\n",                calibration_skew_stage_summary_status(state));
                                                             xil_printf("Performance             : %s\r\n",                calibration_performance_status(state));
                                                             xil_printf("Overall calibration     : %s\r\n",                state->active ? "RUNNING" :                calibration_automatic_result_name(state->overall_result));
                                                             xil_printf("Output usable           : %s\r\n",                state->valid && state->output_valid ? "YES" : "NO");
@@ -4466,10 +4914,12 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                     static void calibration_print_skew_summary(     const calibration_skew_batch_result_t *batch, bool diagnose_mode) {
                                                                         if (batch == NULL) return;
                                                                         xil_printf("\r\n-----------------------------------------\r\n");
-                                                                        xil_printf("Skew Calibration Summary\r\n");
+                                                                        xil_printf("Open-Loop Skew Measurement Summary\r\n");
                                                                         xil_printf("-----------------------------------------\r\n");
                                                                         xil_printf("Reference channel        : Channel A\r\n");
-                                                                        xil_printf("Adjusted channel         : Channel B\r\n");
+                                                                        xil_printf("Measured channel         : Channel B\r\n");
+                                                                        xil_printf("Register writes          : NONE\r\n");
+                                                                        xil_printf("Actuator status          : skew correction unavailable; measurement only\r\n");
                                                                         print_double_value("Initial relative skew",         batch->initial_relative_skew_samples, " samples");
                                                                         print_double_value("Initial relative skew",         batch->initial_relative_skew_samples *         (1.0e12 / adc_get_effective_sample_rate_hz()), " ps");
                                                                         print_double_value("Final relative skew",         batch->final_relative_skew_samples, " samples");
@@ -4516,9 +4966,9 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         }
                                                                         adc_sweep_active = 1;
                                                                         g_quiet_calibration_capture = true;
-                                                                        if (compact) calibration_print_stage_header(4U, "Skew Calibration");
+                                                                        if (compact) calibration_print_stage_header(4U, "Open-Loop Skew Measurement");
                                                                         if (calibration_run_skew_open_loop(&batch, diagnose_mode) != 0 &&         batch.stage_status == CAL_SKEW_STAGE_FAIL) {
-                                                                            xil_printf("Skew calibration cannot run.\r\n");
+                                                                            xil_printf("Open-loop skew measurement cannot run.\r\n");
                                                                         }
                                                                         g_quiet_calibration_capture = previous_quiet_capture;
                                                                         adc_sweep_active = 0;
@@ -6374,9 +6824,6 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         g_automatic_calibration.failed_stage = failed_stage;
                                                                                                         g_automatic_calibration.overall_result = ADC_CAL_RESULT_FAILED;
                                                                                                         g_automatic_calibration.failure_reason = reason;
-                                                                                                        calibration_print_stage_header(4U, "Performance Evaluation");
-                                                                                                        xil_printf("Status                  : NOT RUN\r\n");
-                                                                                                        xil_printf("Reason                  : no usable calibrated output\r\n");
                                                                                                         calibration_automatic_print_summary();
                                                                                                     }
                                                                                                     void handle_adc_calibration_cmd(uint32_t frame_count) {
@@ -6384,6 +6831,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         calibration_gain_loop_state_t *gain_state;
                                                                                                         calibration_skew_batch_result_t skew_batch;
                                                                                                         float final_normalized_gain;
+                                                                                                        int performance_status;
                                                                                                         if (adc_sweep_active) {
                                                                                                             ERR("Another automatic ADC capture is already in progress.");
                                                                                                             return;
@@ -6448,7 +6896,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         gain_state = calibration_gain_loop_state();
                                                                                                         g_automatic_calibration.gain_correction = gain_state->gain_correction;
                                                                                                         g_automatic_calibration.nominal_system_gain =         gain_state->nominal_system_gain;
-                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_VERIFY;
+                                                                                                        g_automatic_calibration.stage = ADC_CAL_STAGE_GAIN_VERIFY;
                                                                                                         final_normalized_gain =         gain_state->nominal_system_gain > FLT_EPSILON ?         g_pending_calibration_frame.metrics.measured_gain /             gain_state->nominal_system_gain : NAN;
                                                                                                         if (g_pending_calibration_frame.valid &&         isfinite(final_normalized_gain)) {
                                                                                                             g_automatic_calibration.final_normalized_gain =             final_normalized_gain;
@@ -6480,9 +6928,9 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                             xil_printf("  Status                : CONVERGED\r\n");
                                                                                                         }
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_SKEW;
-                                                                                                        calibration_print_stage_header(4U, "Skew Calibration");
+                                                                                                        calibration_print_stage_header(4U, "Open-Loop Skew Measurement");
                                                                                                         if (calibration_run_skew_open_loop(&skew_batch, false) != 0 &&         skew_batch.stage_status == CAL_SKEW_STAGE_FAIL) {
-                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_SKEW,             skew_batch.failure_reason != NULL ?                 skew_batch.failure_reason : "skew calibration failed");
+                                                                                                            calibration_automatic_fail(             ADC_CAL_STAGE_SKEW,             skew_batch.failure_reason != NULL ?                 skew_batch.failure_reason : "skew measurement failed");
                                                                                                             return;
                                                                                                         }
                                                                                                         calibration_print_skew_summary(&skew_batch, false);
@@ -6490,12 +6938,21 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                                                         g_automatic_calibration.skew_pass =         skew_batch.stage_status == CAL_SKEW_STAGE_PASS;
                                                                                                         if (!g_automatic_calibration.skew_pass) {
                                                                                                             xil_printf("\r\nWARNING: Skew stage is diagnostic-only in this build.\r\n");
-                                                                                                            xil_printf("Continuing to final validation without delay-register updates.\r\n");
+                                                                                                            xil_printf("No skew register writes were performed.\r\n");
+                                                                                                            xil_printf("Continuing to performance measurement without delay-register updates.\r\n");
                                                                                                         }
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_PERFORMANCE;
-                                                                                                        calibration_print_stage_header(5U, "Final Validation");
-                                                                                                        (void)adc_evaluate_performance_batch(         &g_automatic_calibration.final_output,         gain_state->gain_correction,         gain_state->fixed_offset_correction,         gain_state->nominal_system_gain,         g_stored_offset_reference.reference_frequency_hz,         offset_state->verification_residual,         offset_state->verification_standard_error,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual : NAN,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual_standard_error : NAN,         &g_automatic_calibration.performance);
+                                                                                                        calibration_print_stage_header(5U, "Performance Measurement");
+                                                                                                        performance_status = adc_evaluate_performance_batch(         &g_automatic_calibration.final_output,         gain_state->gain_correction,         gain_state->fixed_offset_correction,         gain_state->nominal_system_gain,         g_stored_offset_reference.reference_frequency_hz,         offset_state->verification_residual,         offset_state->verification_standard_error,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual : NAN,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual_standard_error : NAN,         &g_automatic_calibration.performance);
+                                                                                                        g_automatic_calibration.performance_measurement_available = true;
                                                                                                         adc_print_performance_result(&g_automatic_calibration.performance);
+                                                                                                        if (performance_status == 0 &&         g_automatic_calibration.performance.valid) {
+                                                                                                            xil_printf("Performance measurement: VALID\r\n");
+                                                                                                        }
+                                                                                                        else {
+                                                                                                            xil_printf("Performance measurement: INVALID\r\n");
+                                                                                                            xil_printf("Performance reason      : %s\r\n",             g_automatic_calibration.performance.failure_reason != NULL ?             g_automatic_calibration.performance.failure_reason : "unknown");
+                                                                                                        }
                                                                                                         g_automatic_calibration.active = false;
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_COMPLETE;
                                                                                                         g_automatic_calibration.overall_result =         (offset_state->stage_result ==              CALIBRATION_OFFSET_RESULT_PROVISIONAL ||          !g_automatic_calibration.skew_pass) ?         ADC_CAL_RESULT_PROVISIONAL : ADC_CAL_RESULT_PASS;

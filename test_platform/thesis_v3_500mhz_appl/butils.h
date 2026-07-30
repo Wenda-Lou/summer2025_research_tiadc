@@ -54,15 +54,27 @@
  *
  *              back                          Return to UART command prompt
  *
- *          -cal [frames]                    Measurement-only calibration against
- *                                           the uploaded DAC TXT (default 10)
+ *          -cal                             Run timing, offset, gain,
+ *                                           open-loop skew measurement, and
+ *                                           final performance characterization
+ *          -cal timing [frames]             Run timing/reference selection only
+ *          -cal diagnose [frames]           Run timing tone/dither diagnostics
+ *                                           without storing calibration state
  *          -cal offset                      Run software ADC offset calibration
- *          -cal gain                        Run standalone software gain calibration
- *                                           using uploaded DAC TXT alignment
- *          -cal status                      Display separate software gain and
- *                                           offset states and latest metrics
- *          -cal reset                       Reset both software coefficients
- *                                           and both loop states
+ *          -cal gain                        Run software ADC gain calibration
+ *          -cal skew                        Run open-loop Channel B-A skew
+ *                                           measurement without register writes
+ *          -cal skew diagnose               Run verbose open-loop skew
+ *                                           characterization
+ *          -cal skew step +/-N              Reserved manual skew step; no write
+ *                                           until actuator registers are verified
+ *          -cal stability [frames]          Characterize fixed-offset capture
+ *                                           stability
+ *          -cal status                      Display automatic calibration state
+ *                                           and latest stage metrics
+ *          -cal reset                       Reset software coefficients and
+ *                                           calibration loop states
+ *          -cal help                        Display ADC calibration command help
  *
  *          -ref                             Display uploaded reference status
  *                                           and buffer information
