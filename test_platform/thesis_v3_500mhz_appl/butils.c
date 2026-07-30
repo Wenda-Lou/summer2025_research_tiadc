@@ -211,6 +211,39 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #ifndef CAL_DITHER_GAIN_AGREEMENT_TOLERANCE
 #define CAL_DITHER_GAIN_AGREEMENT_TOLERANCE          0.10
 #endif
+#ifndef CAL_SKEW_BATCH_SIZE
+#define CAL_SKEW_BATCH_SIZE                          10U
+#endif
+#ifndef CAL_SKEW_MIN_ACCEPTED_FRAMES
+#define CAL_SKEW_MIN_ACCEPTED_FRAMES                 3U
+#endif
+#ifndef CAL_SKEW_REQUIRED_CONVERGED_BATCHES
+#define CAL_SKEW_REQUIRED_CONVERGED_BATCHES          3U
+#endif
+#ifndef CAL_SKEW_TOLERANCE_SAMPLES
+#define CAL_SKEW_TOLERANCE_SAMPLES                   0.01
+#endif
+#ifndef CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES
+#define CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES             0.25
+#endif
+#ifndef CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES
+#define CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES       0.03
+#endif
+#ifndef CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES
+#define CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES      0.015
+#endif
+#ifndef CAL_SKEW_MAX_BATCH_STD_SAMPLES
+#define CAL_SKEW_MAX_BATCH_STD_SAMPLES               0.02
+#endif
+#ifndef CAL_SKEW_DERIVATIVE_ENERGY_FLOOR
+#define CAL_SKEW_DERIVATIVE_ENERGY_FLOOR             1.0e-6
+#endif
+#ifndef CAL_SKEW_EDGE_DERIVATIVE_FRACTION
+#define CAL_SKEW_EDGE_DERIVATIVE_FRACTION            0.35
+#endif
+#ifndef CAL_SKEW_MIN_EDGE_SAMPLES
+#define CAL_SKEW_MIN_EDGE_SAMPLES                    2U
+#endif
 
 _Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
                "ADC test configuration sample count mismatch");
@@ -377,6 +410,107 @@ typedef struct {
     double tone_only_correlation;
     const char *gain_definition;
 } calibration_dither_gain_diagnostic_t;
+
+typedef enum {
+    CAL_SKEW_ESTIMATOR_INVALID = 0,
+    CAL_SKEW_ESTIMATOR_PASS,
+    CAL_SKEW_ESTIMATOR_WARNING
+} calibration_skew_estimator_status_t;
+
+typedef enum {
+    CAL_SKEW_STAGE_PASS = 0,
+    CAL_SKEW_STAGE_RUNNING,
+    CAL_SKEW_STAGE_SATURATED,
+    CAL_SKEW_STAGE_NOT_CONVERGED,
+    CAL_SKEW_STAGE_FAIL
+} calibration_skew_stage_status_t;
+
+typedef enum {
+    CAL_SKEW_REASON_NONE = 0,
+    CAL_SKEW_REASON_PREREQUISITE,
+    CAL_SKEW_REASON_CAPTURE,
+    CAL_SKEW_REASON_CONTEXT,
+    CAL_SKEW_REASON_TONE_FIT,
+    CAL_SKEW_REASON_DITHER_ALIGNMENT,
+    CAL_SKEW_REASON_TOO_FEW_EVENTS,
+    CAL_SKEW_REASON_POLARITY_IMBALANCE,
+    CAL_SKEW_REASON_TEMPLATE,
+    CAL_SKEW_REASON_DERIVATIVE,
+    CAL_SKEW_REASON_GAIN,
+    CAL_SKEW_REASON_EDGE_DISAGREEMENT,
+    CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE,
+    CAL_SKEW_REASON_NUMERICAL,
+    CAL_SKEW_REASON_ACTUATOR
+} calibration_skew_reject_reason_t;
+
+typedef struct {
+    uint8_t valid;
+    calibration_skew_estimator_status_t status;
+    calibration_skew_reject_reason_t reason;
+    calibration_tone_fit_result_t tone;
+    double pulse_gain;
+    double skew_full_samples;
+    double skew_rising_samples;
+    double skew_falling_samples;
+    double skew_full_ps;
+    double skew_rising_ps;
+    double skew_falling_ps;
+    uint32_t rising_edge_samples;
+    uint32_t falling_edge_samples;
+} calibration_skew_channel_estimate_t;
+
+typedef struct {
+    uint8_t valid;
+    calibration_skew_estimator_status_t estimator_status;
+    calibration_skew_stage_status_t stage_status;
+    calibration_skew_reject_reason_t reason;
+    calibration_skew_channel_estimate_t channel[2];
+    double relative_skew_samples;
+    double relative_skew_ps;
+    double relative_rising_skew_samples;
+    double relative_falling_skew_samples;
+    double edge_disagreement_samples;
+    double edge_disagreement_ps;
+    double mean_event_polarity;
+    double separation_denominator;
+    double pulse_energy;
+    double derivative_energy;
+    double max_abs_derivative;
+    uint32_t complete_event_count;
+    uint32_t discarded_boundary_event_count;
+    size_t profile_count;
+    int m_first;
+    int m_last;
+    const char *rejection_reason;
+} calibration_skew_frame_result_t;
+
+typedef struct {
+    calibration_skew_stage_status_t stage_status;
+    calibration_skew_estimator_status_t estimator_status;
+    calibration_skew_reject_reason_t reason;
+    uint32_t accepted_frames;
+    uint32_t rejected_frames;
+    uint32_t consecutive_passes;
+    double initial_relative_skew_samples;
+    double final_relative_skew_samples;
+    double best_relative_skew_samples;
+    double final_relative_skew_ps;
+    double best_relative_skew_ps;
+    double median_relative_skew_samples;
+    double median_relative_skew_ps;
+    double relative_skew_std_samples;
+    double relative_skew_std_ps;
+    double rising_skew_ps;
+    double falling_skew_ps;
+    double edge_disagreement_ps;
+    uint8_t saturated;
+    int requested_delay_steps;
+    int applied_delay_steps;
+    int initial_delay_register;
+    int final_delay_register;
+    const char *failure_reason;
+    calibration_skew_frame_result_t latest_frame;
+} calibration_skew_batch_result_t;
 
 typedef struct {
     uint8_t valid;
@@ -734,6 +868,7 @@ typedef enum {
     ADC_CAL_STAGE_TIMING,
     ADC_CAL_STAGE_OFFSET,
     ADC_CAL_STAGE_GAIN,
+    ADC_CAL_STAGE_SKEW,
     ADC_CAL_STAGE_VERIFY,
     ADC_CAL_STAGE_PERFORMANCE,
     ADC_CAL_STAGE_COMPLETE,
@@ -753,6 +888,7 @@ typedef struct {
     bool timing_pass;
     bool offset_pass;
     bool gain_pass;
+    bool skew_pass;
     bool gain_verification_pass;
     bool output_valid;
     adc_calibration_stage_t stage;
@@ -773,6 +909,7 @@ typedef struct {
     float nominal_system_gain;
     float final_normalized_gain;
     float gain_verification_error;
+    double final_relative_skew_ps;
     const char *failure_reason;
     adc_performance_result_t performance;
     calibration_pending_frame_t final_output;
@@ -864,6 +1001,8 @@ static void handle_adc_offset_stability_cmd(uint32_t frame_count);
 static void handle_adc_timing_calibration_stage_cmd(uint32_t frame_count);
 static void handle_adc_gain_calibration_loop_cmd(void);
 static void handle_adc_gain_calibration_status_cmd(void);
+static void handle_adc_skew_calibration_cmd(bool diagnose_mode);
+static void handle_adc_skew_step_cmd(int requested_steps);
 static int adc_run_timing_calibration(uint32_t frame_count);
 static void calibration_automatic_state_reset(void);
 static void calibration_automatic_print_command_help(void);
@@ -933,6 +1072,18 @@ static const char *calibration_dither_gain_reason_name(
     calibration_dither_gain_reason_t reason);
 static void calibration_print_dither_gain_diagnostic(
     const calibration_dither_gain_diagnostic_t *diagnostic);
+static const char *calibration_skew_estimator_status_name(
+    calibration_skew_estimator_status_t status);
+static const char *calibration_skew_stage_status_name(
+    calibration_skew_stage_status_t status);
+static const char *calibration_skew_reason_name(
+    calibration_skew_reject_reason_t reason);
+static int calibration_run_skew_open_loop(
+    calibration_skew_batch_result_t *batch,
+    bool diagnose_mode);
+static void calibration_print_skew_summary(
+    const calibration_skew_batch_result_t *batch,
+    bool diagnose_mode);
 static int calibration_capture_against_owned_reference(
     const calibration_pending_frame_t *saved,
     bool use_saved_calibration_reference,
@@ -1665,19 +1816,22 @@ static void calibration_automatic_state_reset(void)
     g_automatic_calibration.calibration_channel = -1;
     g_automatic_calibration.canonical_reference_phase = -1;
     g_automatic_calibration.gain_correction = 1.0f;
+    g_automatic_calibration.final_relative_skew_ps = NAN;
 }
 
 static void calibration_automatic_print_command_help(void)
 {
     xil_printf("\r\nADC calibration commands:\r\n");
     xil_printf("  adc -cal\r\n");
-    xil_printf("      Run complete ADC timing, offset, and gain calibration.\r\n");
+    xil_printf("      Run complete ADC timing, offset, gain, skew, and validation.\r\n");
     xil_printf("\r\nDebug/development stage commands:\r\n");
     xil_printf("  adc -cal timing [frames]  Run timing/reference selection only.\r\n");
     xil_printf("  adc -cal diagnose [frames]\r\n");
     xil_printf("      Run timing tone/dither diagnostics without storing state.\r\n");
     xil_printf("  adc -cal offset           Run offset stage only.\r\n");
     xil_printf("  adc -cal gain             Run gain stage only.\r\n");
+    xil_printf("  adc -cal skew [diagnose]  Measure Channel B-A skew without writes.\r\n");
+    xil_printf("  adc -cal skew step +/-N   Reserved manual skew step; no write until configured.\r\n");
     xil_printf("  adc -cal stability [frames]\r\n");
     xil_printf("      Characterize fixed-offset capture stability.\r\n");
     xil_printf("  adc -cal status | reset | help\r\n");
@@ -1686,7 +1840,7 @@ static void calibration_automatic_print_command_help(void)
 static void calibration_print_stage_header(
     uint32_t stage_number, const char *stage_name)
 {
-    xil_printf("\r\nStage %lu/4: %s\r\n",
+    xil_printf("\r\nStage %lu/5: %s\r\n",
                (unsigned long)stage_number, stage_name);
     xil_printf("-----------------------------------------\r\n");
 }
@@ -1826,6 +1980,42 @@ void handle_adc_cmd(char* line)
             handle_adc_gain_calibration_loop_cmd();
             return;
         }
+        if (strcmp(token, "skew") == 0) {
+            token = strtok(NULL, " ");
+            if (token == NULL) {
+                handle_adc_skew_calibration_cmd(false);
+                return;
+            }
+            if (strcmp(token, "diagnose") == 0 ||
+                strcmp(token, "open") == 0) {
+                if (strtok(NULL, " ") != NULL) {
+                    ERR("Use adc -cal skew diagnose.");
+                    return;
+                }
+                handle_adc_skew_calibration_cmd(true);
+                return;
+            }
+            if (strcmp(token, "step") == 0) {
+                char *endptr = NULL;
+                long parsed;
+                token = strtok(NULL, " ");
+                if (token == NULL) {
+                    ERR("Use adc -cal skew step +/-N.");
+                    return;
+                }
+                parsed = strtol(token, &endptr, 0);
+                if (endptr == token || *endptr != '\0' ||
+                    parsed < INT_MIN || parsed > INT_MAX ||
+                    strtok(NULL, " ") != NULL) {
+                    ERR("Use adc -cal skew step +/-N.");
+                    return;
+                }
+                handle_adc_skew_step_cmd((int)parsed);
+                return;
+            }
+            ERR("Use adc -cal skew [diagnose] or adc -cal skew step +/-N.");
+            return;
+        }
         if (strcmp(token, "help") == 0 || strcmp(token, "?") == 0) {
             if (strtok(NULL, " ") != NULL) {
                 ERR("Use adc -cal help.");
@@ -1906,7 +2096,7 @@ void handle_adc_cmd(char* line)
             ERR("Use adc -ref or adc -ref diagnose.");
         }
     }else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames|timing|diagnose|gain|offset|stability|status|reset|help], -ref, or -ref diagnose)", option);
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames|timing|diagnose|gain|offset|skew|stability|status|reset|help], -ref, or -ref diagnose)", option);
     }
 }
 
