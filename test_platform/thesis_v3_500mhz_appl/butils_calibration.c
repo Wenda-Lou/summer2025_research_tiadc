@@ -1961,15 +1961,20 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                     if (calibration_align_dither_residual(dither_reference, residual,             sample_count, final_alignment) != 0)         return -5;
                                                                     return 0;
                                                                 }
-                                                                static void calibration_count_dither_events(     const double *dither_reference,     size_t sample_count,     size_t fixed_window_start,     size_t fixed_window_length,     uint32_t *complete_count,     double *spacing_samples) {
+                                                                static void calibration_count_dither_events(     const double *dither_reference,     size_t sample_count,     size_t fixed_window_start,     size_t fixed_window_length,     uint32_t *complete_count,     double *spacing_samples,     uint32_t *partial_window_count,     uint32_t *total_count,     uint8_t *indices_valid) {
                                                                     double max_abs = 0.0;
                                                                     double last_center = NAN;
                                                                     double spacing_sum = 0.0;
                                                                     uint32_t spacing_count = 0U;
                                                                     uint32_t count = 0U;
+                                                                    uint32_t partial_count = 0U;
+                                                                    uint32_t event_count = 0U;
                                                                     const size_t fixed_window_end = fixed_window_start + fixed_window_length;
                                                                     if (complete_count != NULL) *complete_count = 0U;
                                                                     if (spacing_samples != NULL) *spacing_samples = NAN;
+                                                                    if (partial_window_count != NULL) *partial_window_count = 0U;
+                                                                    if (total_count != NULL) *total_count = 0U;
+                                                                    if (indices_valid != NULL) *indices_valid = 0U;
                                                                     if (dither_reference == NULL || sample_count == 0U ||         fixed_window_start >= sample_count ||         fixed_window_end > sample_count)         return;
                                                                     for (size_t i = 0U;
                                                                     i < sample_count;
@@ -1994,17 +1999,24 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                             }
                                                                             if (weight_sum > DBL_EPSILON) {
                                                                                 const double center = weighted_sum / weight_sum;
+                                                                                const bool overlaps_window =         start < fixed_window_end && i > fixed_window_start;
+                                                                                const bool complete_inside_window =         start >= fixed_window_start && i <= fixed_window_end;
+                                                                                ++event_count;
                                                                                 if (isfinite(last_center)) {
                                                                                     spacing_sum += center - last_center;
                                                                                     ++spacing_count;
                                                                                 }
                                                                                 last_center = center;
-                                                                                if (start >= fixed_window_start && i <= fixed_window_end)                     ++count;
+                                                                                if (complete_inside_window)                     ++count;
+                                                                                else if (overlaps_window)                     ++partial_count;
                                                                             }
                                                                         }
                                                                     }
                                                                     if (complete_count != NULL) *complete_count = count;
                                                                     if (spacing_samples != NULL && spacing_count > 0U)         *spacing_samples = spacing_sum / (double)spacing_count;
+                                                                    if (partial_window_count != NULL) *partial_window_count = partial_count;
+                                                                    if (total_count != NULL) *total_count = event_count;
+                                                                    if (indices_valid != NULL) *indices_valid = 1U;
                                                                 }
                                                                 static int calibration_compute_timing_diagnostics(     const int16_t *alignment_reference,     const int16_t *channel_a,     const int16_t *channel_b,     size_t sample_count,     int selected_channel,     double expected_tone_hz,     double adc_sample_rate_hz,     double existing_lag,     size_t fixed_window_start,     size_t fixed_window_length,     calibration_timing_diagnostics_t *diagnostics) {
                                                                     static double reference_as_double[ADC_CHANNEL_SAMPLE_COUNT];
@@ -2035,6 +2047,11 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         diagnostics->dither_event_spacing_samples = NAN;
                                                                         diagnostics->dither_derived_lag = NAN;
                                                                         diagnostics->alignment_disagreement_samples = NAN;
+                                                                        diagnostics->dither_event_indices_valid = 0U;
+                                                                        diagnostics->validation.channel_a_n0 = NAN;
+                                                                        diagnostics->validation.channel_b_n0 = NAN;
+                                                                        diagnostics->validation.common_selected_n0 = NAN;
+                                                                        diagnostics->validation.channel_n0_disagreement_samples = NAN;
                                                                         if (alignment_reference == NULL || channel_a == NULL || channel_b == NULL ||         sample_count == 0U || sample_count > ADC_CHANNEL_SAMPLE_COUNT ||         selected_channel < 0 || selected_channel > 1 ||         !isfinite(expected_tone_hz) || expected_tone_hz <= 0.0 ||         !isfinite(adc_sample_rate_hz) || adc_sample_rate_hz <= 0.0 ||         !isfinite(existing_lag)) {
                                                                             diagnostics->status_text = "invalid input";
                                                                             return -1;
@@ -2094,25 +2111,143 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         diagnostics->dither_align_margin =         diagnostics->channel[(size_t)common_channel].align_margin;
                                                                         diagnostics->dither_derived_lag =         diagnostics->channel[(size_t)common_channel].derived_lag;
                                                                         diagnostics->alignment_disagreement_samples =         calibration_wrap_lag(existing_lag - diagnostics->dither_derived_lag,                              sample_count);
-                                                                        diagnostics->alignment_methods_consistent =         isfinite(diagnostics->alignment_disagreement_samples) &&         fabs(diagnostics->alignment_disagreement_samples) <=             CAL_DITHER_CONSISTENCY_TOLERANCE_SAMPLES;
-                                                                        calibration_count_dither_events(         dither_reference, sample_count, fixed_window_start,         fixed_window_length, &diagnostics->complete_dither_event_count,         &diagnostics->dither_event_spacing_samples);
+                                                                        diagnostics->alignment_methods_consistent =         isfinite(diagnostics->alignment_disagreement_samples) &&         fabs(diagnostics->alignment_disagreement_samples) <=             CAL_EXISTING_DITHER_LAG_TOLERANCE_SAMPLES;
+                                                                        calibration_count_dither_events(         dither_reference, sample_count, fixed_window_start,         fixed_window_length, &diagnostics->complete_dither_event_count,         &diagnostics->dither_event_spacing_samples,         &diagnostics->partial_dither_event_count,         &diagnostics->total_dither_event_count,         &diagnostics->dither_event_indices_valid);
                                                                         diagnostics->valid = 1U;
                                                                         diagnostics->status_text = "diagnostic only";
                                                                         return 0;
                                                                     }
-                                                                    static void calibration_print_timing_diagnostics_compact(     const calibration_timing_diagnostics_t *diagnostics) {
-                                                                        if (diagnostics == NULL || !diagnostics->valid) {
-                                                                            xil_printf("Tone/dither diagnostics : UNAVAILABLE\r\n");
+                                                                    static const char *calibration_validation_status_text(     calibration_timing_validation_status_t status) {
+                                                                        switch (status) {
+                                                                        case CAL_TIMING_VALIDATION_PASS:
+                                                                            return "PASS";
+                                                                        case CAL_TIMING_VALIDATION_WARNING:
+                                                                            return "WARNING";
+                                                                        case CAL_TIMING_VALIDATION_FAIL:
+                                                                        default:
+                                                                            return "FAIL";
+                                                                        }
+                                                                    }
+                                                                    static double calibration_dither_n0_value(     const calibration_dither_channel_alignment_t *alignment) {
+                                                                        if (alignment == NULL || !alignment->valid ||         !isfinite(alignment->n0_integer) ||         !isfinite(alignment->n0_fractional))         return NAN;
+                                                                        return alignment->n0_integer + alignment->n0_fractional;
+                                                                    }
+                                                                    static bool calibration_tone_fit_parameters_are_finite(     const calibration_tone_fit_result_t *fit) {
+                                                                        return fit != NULL && fit->valid &&         isfinite(fit->fitted_frequency_hz) &&         isfinite(fit->expected_frequency_hz) &&         isfinite(fit->frequency_error_hz) &&         isfinite(fit->cosine_coefficient) &&         isfinite(fit->sine_coefficient) &&         isfinite(fit->amplitude) &&         isfinite(fit->phase_rad) &&         isfinite(fit->dc_offset_codes) &&         isfinite(fit->rmse) &&         isfinite(fit->tone_only_correlation);
+                                                                    }
+                                                                    static bool calibration_dither_alignment_values_are_finite(     const calibration_dither_channel_alignment_t *alignment) {
+                                                                        return alignment != NULL && alignment->valid &&         isfinite(alignment->n0_integer) &&         isfinite(alignment->n0_fractional) &&         isfinite(alignment->sign) &&         isfinite(alignment->peak) &&         isfinite(alignment->second_peak) &&         isfinite(alignment->peak_ratio) &&         isfinite(alignment->align_margin) &&         isfinite(alignment->derived_lag);
+                                                                    }
+                                                                    static bool calibration_fixed_window_is_valid(     const calibration_aligned_frame_t *frame) {
+                                                                        if (frame == NULL ||         frame->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||         frame->alignment_reference_count == 0U)         return false;
+                                                                        if (frame->calibration_window_start > frame->alignment_reference_count)         return false;
+                                                                        return frame->calibration_window_length <=             frame->alignment_reference_count - frame->calibration_window_start;
+                                                                    }
+                                                                    static void calibration_validate_timing_alignment(     const calibration_aligned_frame_t *frame,     calibration_timing_diagnostics_t *diagnostics) {
+                                                                        calibration_timing_validation_t *validation;
+                                                                        bool tone_finite;
+                                                                        bool selected_dither_finite = false;
+                                                                        bool numerical_pass;
+                                                                        bool all_new_checks_pass;
+                                                                        double channel_a_n0;
+                                                                        double channel_b_n0;
+                                                                        double common_n0;
+                                                                        if (diagnostics == NULL) return;
+                                                                        validation = &diagnostics->validation;
+                                                                        memset(validation, 0, sizeof(*validation));
+                                                                        validation->channel_a_n0 = NAN;
+                                                                        validation->channel_b_n0 = NAN;
+                                                                        validation->common_selected_n0 = NAN;
+                                                                        validation->channel_n0_disagreement_samples = NAN;
+                                                                        validation->numerical_reason = "validation not evaluated";
+                                                                        validation->existing_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->tone_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->dither_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->channel_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->existing_dither_status = CAL_TIMING_VALIDATION_WARNING;
+                                                                        validation->window_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->numerical_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->overall_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        if (frame == NULL) {
+                                                                            validation->numerical_reason = "missing timing frame";
+                                                                            validation->valid = 1U;
                                                                             return;
                                                                         }
-                                                                        print_float_value_or_invalid("Existing correlation",         g_stored_offset_reference.valid ?             g_stored_offset_reference.correlation : NAN, "");
-                                                                        print_double_value("Tone-only correlation",         diagnostics->tone.tone_only_correlation, "");
-                                                                        print_double_value("Fitted tone frequency",         diagnostics->tone.fitted_frequency_hz / 1.0e6, " MHz");
-                                                                        print_double_value("Dither align margin",         diagnostics->dither_align_margin, "");
-                                                                        print_double_value("Alignment disagreement",         diagnostics->alignment_disagreement_samples, " samples");
-                                                                        xil_printf("Timing diagnostic status: %s\r\n",         diagnostics->alignment_methods_consistent ? "CONSISTENT" :         "DIAGNOSTIC DISAGREEMENT");
+                                                                        validation->existing_status =         frame->frame_valid && frame->timing.accepted &&         frame->timing.reject_reason == CAL_TIMING_REJECT_NONE &&         isfinite(frame->correlation) &&         frame->correlation >= CAL_TIMING_MIN_CORRELATION &&         isfinite(frame->fractional_lag) &&         fabsf(frame->fractional_lag) <= CAL_TIMING_MAX_ABS_FRAC_LAG &&         frame->timing.analysis_samples >= CAL_TIMING_MIN_ANALYSIS_SAMPLES &&         (frame->canonical_reference_phase == 0 ||          frame->canonical_reference_phase == 1) &&         calibration_fixed_window_is_valid(frame) ?         CAL_TIMING_VALIDATION_PASS : CAL_TIMING_VALIDATION_FAIL;
+                                                                        if (!diagnostics->valid) {
+                                                                            validation->numerical_reason =         diagnostics->status_text != NULL ?         diagnostics->status_text : "tone/dither diagnostics unavailable";
+                                                                            validation->valid = 1U;
+                                                                            validation->overall_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                            return;
+                                                                        }
+                                                                        tone_finite = calibration_tone_fit_parameters_are_finite(         &diagnostics->tone);
+                                                                        validation->tone_status =         tone_finite && diagnostics->tone.rmse <=             CAL_TONE_VALIDATION_MAX_RMSE_CODES &&         diagnostics->tone.tone_only_correlation >=             CAL_TONE_VALIDATION_MIN_CORRELATION ?         CAL_TIMING_VALIDATION_PASS : CAL_TIMING_VALIDATION_FAIL;
+                                                                        if (diagnostics->selected_common_channel >= 0 &&         diagnostics->selected_common_channel < 2) {
+                                                                            selected_dither_finite =         calibration_dither_alignment_values_are_finite(             &diagnostics->channel[(size_t)diagnostics->selected_common_channel]);
+                                                                        }
+                                                                        validation->dither_status =         selected_dither_finite &&         diagnostics->complete_dither_event_count >=             CAL_DITHER_VALIDATION_MIN_COMPLETE_EVENTS &&         diagnostics->dither_align_margin >=             CAL_DITHER_VALIDATION_MIN_MARGIN &&         diagnostics->dither_peak_ratio >=             CAL_DITHER_VALIDATION_MIN_PEAK_RATIO ?         CAL_TIMING_VALIDATION_PASS : CAL_TIMING_VALIDATION_FAIL;
+                                                                        channel_a_n0 = calibration_dither_n0_value(         &diagnostics->channel[0]);
+                                                                        channel_b_n0 = calibration_dither_n0_value(         &diagnostics->channel[1]);
+                                                                        common_n0 =         (diagnostics->selected_common_channel >= 0 &&          diagnostics->selected_common_channel < 2) ?         calibration_dither_n0_value(             &diagnostics->channel[(size_t)diagnostics->selected_common_channel]) :         NAN;
+                                                                        validation->channel_a_n0 = channel_a_n0;
+                                                                        validation->channel_b_n0 = channel_b_n0;
+                                                                        validation->common_selected_n0 = common_n0;
+                                                                        if (isfinite(channel_a_n0) && isfinite(channel_b_n0) &&         frame->alignment_reference_count > 0U) {
+                                                                            validation->channel_n0_disagreement_samples =         fabs(calibration_wrap_lag(channel_a_n0 - channel_b_n0,             frame->alignment_reference_count));
+                                                                        }
+                                                                        validation->channel_status =         isfinite(validation->channel_n0_disagreement_samples) &&         validation->channel_n0_disagreement_samples <=             CAL_DITHER_CHANNEL_N0_TOLERANCE_SAMPLES ?         CAL_TIMING_VALIDATION_PASS : CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->existing_dither_status =         isfinite(diagnostics->alignment_disagreement_samples) &&         fabs(diagnostics->alignment_disagreement_samples) <=             CAL_EXISTING_DITHER_LAG_TOLERANCE_SAMPLES ?         CAL_TIMING_VALIDATION_PASS : CAL_TIMING_VALIDATION_WARNING;
+                                                                        validation->window_partial_event_count =         diagnostics->partial_dither_event_count;
+                                                                        validation->total_dither_event_count =         diagnostics->total_dither_event_count;
+                                                                        validation->dither_event_indices_valid =         diagnostics->dither_event_indices_valid;
+                                                                        validation->window_status =         calibration_fixed_window_is_valid(frame) &&         diagnostics->dither_event_indices_valid &&         diagnostics->complete_dither_event_count >=             CAL_DITHER_VALIDATION_MIN_COMPLETE_EVENTS &&         diagnostics->partial_dither_event_count == 0U ?         CAL_TIMING_VALIDATION_PASS : CAL_TIMING_VALIDATION_FAIL;
+                                                                        numerical_pass =         tone_finite && selected_dither_finite &&         diagnostics->dither_event_indices_valid &&         isfinite(frame->correlation) &&         isfinite(frame->fractional_lag) &&         isfinite(frame->total_lag) &&         isfinite(diagnostics->dither_derived_lag) &&         isfinite(diagnostics->alignment_disagreement_samples);
+                                                                        if (diagnostics->channel[0].valid)         numerical_pass = numerical_pass &&             calibration_dither_alignment_values_are_finite(                 &diagnostics->channel[0]);
+                                                                        if (diagnostics->channel[1].valid)         numerical_pass = numerical_pass &&             calibration_dither_alignment_values_are_finite(                 &diagnostics->channel[1]);
+                                                                        validation->numerical_status =         numerical_pass ? CAL_TIMING_VALIDATION_PASS :         CAL_TIMING_VALIDATION_FAIL;
+                                                                        validation->numerical_reason =         numerical_pass ? "finite metrics and valid event indices" :         "non-finite metric, failed frequency search, or invalid event index";
+                                                                        all_new_checks_pass =         validation->tone_status == CAL_TIMING_VALIDATION_PASS &&         validation->dither_status == CAL_TIMING_VALIDATION_PASS &&         validation->channel_status == CAL_TIMING_VALIDATION_PASS &&         validation->existing_dither_status == CAL_TIMING_VALIDATION_PASS &&         validation->window_status == CAL_TIMING_VALIDATION_PASS &&         validation->numerical_status == CAL_TIMING_VALIDATION_PASS;
+                                                                        if (validation->existing_status != CAL_TIMING_VALIDATION_PASS ||         validation->numerical_status != CAL_TIMING_VALIDATION_PASS) {
+                                                                            validation->overall_status = CAL_TIMING_VALIDATION_FAIL;
+                                                                        }
+                                                                        else if (all_new_checks_pass) {
+                                                                            validation->overall_status = CAL_TIMING_VALIDATION_PASS;
+                                                                        }
+                                                                        else {
+                                                                            validation->overall_status = CAL_TIMING_VALIDATION_WARNING;
+                                                                        }
+                                                                        validation->valid = 1U;
+                                                                    }
+                                                                    static void calibration_print_timing_diagnostics_compact(     const calibration_timing_diagnostics_t *diagnostics) {
+                                                                        const calibration_timing_validation_t *validation;
+                                                                        if (diagnostics == NULL || !diagnostics->validation.valid) {
+                                                                            xil_printf("----------------------------------------\r\n");
+                                                                            xil_printf("Timing Alignment Summary\r\n");
+                                                                            xil_printf("----------------------------------------\r\n");
+                                                                            xil_printf("Existing correlation    : FAIL\r\n");
+                                                                            xil_printf("Tone fit                : FAIL\r\n");
+                                                                            xil_printf("Dither alignment        : FAIL\r\n");
+                                                                            xil_printf("Channel consistency     : FAIL\r\n");
+                                                                            xil_printf("Window validation       : FAIL\r\n");
+                                                                            xil_printf("Numerical validation    : FAIL\r\n");
+                                                                            xil_printf("Overall status          : FAIL\r\n");
+                                                                            return;
+                                                                        }
+                                                                        validation = &diagnostics->validation;
+                                                                        xil_printf("----------------------------------------\r\n");
+                                                                        xil_printf("Timing Alignment Summary\r\n");
+                                                                        xil_printf("----------------------------------------\r\n");
+                                                                        xil_printf("Existing correlation    : %s\r\n",         calibration_validation_status_text(             validation->existing_status));
+                                                                        xil_printf("Tone fit                : %s\r\n",         calibration_validation_status_text(             validation->tone_status));
+                                                                        xil_printf("Dither alignment        : %s\r\n",         calibration_validation_status_text(             validation->dither_status));
+                                                                        xil_printf("Channel consistency     : %s\r\n",         calibration_validation_status_text(             validation->channel_status));
+                                                                        xil_printf("Existing/dither check   : %s\r\n",         calibration_validation_status_text(             validation->existing_dither_status));
+                                                                        xil_printf("Window validation       : %s\r\n",         calibration_validation_status_text(             validation->window_status));
+                                                                        xil_printf("Numerical validation    : %s\r\n",         calibration_validation_status_text(             validation->numerical_status));
+                                                                        xil_printf("Overall status          : %s\r\n",         calibration_validation_status_text(             validation->overall_status));
                                                                     }
                                                                     static void calibration_print_timing_diagnostics_detail(     const calibration_aligned_frame_t *frame,     const calibration_timing_diagnostics_t *diagnostics) {
+                                                                        const calibration_timing_validation_t *validation =         diagnostics != NULL && diagnostics->validation.valid ?         &diagnostics->validation : NULL;
                                                                         if (frame == NULL || diagnostics == NULL) return;
                                                                         xil_printf("\r\n========== Timing Alignment Diagnostics ==========\r\n");
                                                                         xil_printf("\r\nA. Existing timing result\r\n");
@@ -2128,11 +2263,16 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                             xil_printf("Fixed window            : UNAVAILABLE\r\n");
                                                                         }
                                                                         xil_printf("Existing status         : %s\r\n",         frame->frame_valid ? "ACCEPTED" : "REJECTED");
+                                                                        if (validation != NULL) {
+                                                                            xil_printf("Existing validation     : %s\r\n",         calibration_validation_status_text(             validation->existing_status));
+                                                                        }
                                                                         if (diagnostics->valid) {
                                                                             xil_printf("\r\nB. Tone fitting\r\n");
+                                                                            if (validation != NULL) {
+                                                                                xil_printf("Tone-fit validation     : %s\r\n",         calibration_validation_status_text(             validation->tone_status));
+                                                                            }
                                                                             print_double_value("Expected frequency",             diagnostics->tone.expected_frequency_hz / 1.0e6, " MHz");
-                                                                            print_double_value("Initial frequency",             diagnostics->initial_tone.fitted_frequency_hz / 1.0e6, " MHz");
-                                                                            print_double_value("Refined frequency",             diagnostics->tone.fitted_frequency_hz / 1.0e6, " MHz");
+                                                                            print_double_value("Fitted frequency",             diagnostics->tone.fitted_frequency_hz / 1.0e6, " MHz");
                                                                             print_double_value("Frequency error",             diagnostics->tone.frequency_error_hz, " Hz");
                                                                             print_double_value("Cos coefficient",             diagnostics->tone.cosine_coefficient, " codes");
                                                                             print_double_value("Sin coefficient",             diagnostics->tone.sine_coefficient, " codes");
@@ -2142,6 +2282,9 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                             print_double_value("RMSE",             diagnostics->tone.rmse, " codes");
                                                                             print_double_value("Tone-only correlation",             diagnostics->tone.tone_only_correlation, "");
                                                                             xil_printf("\r\nC. Dither alignment\r\n");
+                                                                            if (validation != NULL) {
+                                                                                xil_printf("Dither validation       : %s\r\n",         calibration_validation_status_text(             validation->dither_status));
+                                                                            }
                                                                             for (size_t channel = 0U;
                                                                             channel < 2U;
                                                                             ++channel) {
@@ -2162,17 +2305,52 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                             print_double_value("Dither peak ratio",             diagnostics->dither_peak_ratio, "");
                                                                             print_double_value("Dither margin",             diagnostics->dither_align_margin, "");
                                                                             xil_printf("Complete dither events : %lu\r\n",             (unsigned long)diagnostics->complete_dither_event_count);
+                                                                            xil_printf("Partial window events  : %lu\r\n",             (unsigned long)diagnostics->partial_dither_event_count);
                                                                             print_double_value("Event spacing",             diagnostics->dither_event_spacing_samples, " samples");
-                                                                            xil_printf("\r\nD. Cross-check\r\n");
+                                                                            xil_printf("\r\nD. Channel consistency\r\n");
+                                                                            if (validation != NULL) {
+                                                                                print_double_value("Channel A n0",             validation->channel_a_n0, " samples");
+                                                                                print_double_value("Channel B n0",             validation->channel_b_n0, " samples");
+                                                                                print_double_value("Common selected n0",             validation->common_selected_n0, " samples");
+                                                                                print_double_value("Channel disagreement",             validation->channel_n0_disagreement_samples, " samples");
+                                                                                print_double_value("Channel tolerance",             CAL_DITHER_CHANNEL_N0_TOLERANCE_SAMPLES, " samples");
+                                                                                xil_printf("Channel status         : %s\r\n",         calibration_validation_status_text(             validation->channel_status));
+                                                                            }
+                                                                            xil_printf("\r\nE. Existing vs dither alignment\r\n");
                                                                             print_double_value("Existing lag",             frame->total_lag, " samples");
                                                                             print_double_value("Dither-derived lag",             diagnostics->dither_derived_lag, " samples");
                                                                             print_double_value("Wrapped disagreement",             diagnostics->alignment_disagreement_samples, " samples");
-                                                                            print_double_value("Consistency tolerance",             CAL_DITHER_CONSISTENCY_TOLERANCE_SAMPLES, " samples");
-                                                                            xil_printf("Consistency status     : %s\r\n",             diagnostics->alignment_methods_consistent ? "CONSISTENT" :             "DISAGREE");
+                                                                            print_double_value("Consistency tolerance",             CAL_EXISTING_DITHER_LAG_TOLERANCE_SAMPLES, " samples");
+                                                                            if (validation != NULL) {
+                                                                                xil_printf("Consistency status     : %s\r\n",         calibration_validation_status_text(             validation->existing_dither_status));
+                                                                            }
+                                                                            else {
+                                                                                xil_printf("Consistency status     : %s\r\n",             diagnostics->alignment_methods_consistent ? "CONSISTENT" :             "DISAGREE");
+                                                                            }
+                                                                            if (validation != NULL) {
+                                                                                xil_printf("\r\nF. Window validation\r\n");
+                                                                                xil_printf("Minimum events required: %lu\r\n",             (unsigned long)CAL_DITHER_VALIDATION_MIN_COMPLETE_EVENTS);
+                                                                                xil_printf("Complete events        : %lu\r\n",             (unsigned long)diagnostics->complete_dither_event_count);
+                                                                                xil_printf("Partial window events  : %lu\r\n",             (unsigned long)validation->window_partial_event_count);
+                                                                                xil_printf("Event indices valid    : %s\r\n",             validation->dither_event_indices_valid ? "YES" : "NO");
+                                                                                xil_printf("Window status          : %s\r\n",         calibration_validation_status_text(             validation->window_status));
+                                                                                xil_printf("\r\nG. Numerical validation\r\n");
+                                                                                xil_printf("Numerical status       : %s\r\n",         calibration_validation_status_text(             validation->numerical_status));
+                                                                                xil_printf("Numerical reason       : %s\r\n",             validation->numerical_reason != NULL ?             validation->numerical_reason : "unknown");
+                                                                                xil_printf("\r\nOverall recommendation  : %s\r\n",         calibration_validation_status_text(             validation->overall_status));
+                                                                            }
                                                                         }
                                                                         else {
                                                                             xil_printf("\r\nTone/dither diagnostics : UNAVAILABLE\r\n");
                                                                             xil_printf("Diagnostic reason       : %s\r\n",             diagnostics->status_text != NULL ?             diagnostics->status_text : "unknown");
+                                                                            if (validation != NULL) {
+                                                                                xil_printf("Tone fit                : %s\r\n",         calibration_validation_status_text(             validation->tone_status));
+                                                                                xil_printf("Dither alignment        : %s\r\n",         calibration_validation_status_text(             validation->dither_status));
+                                                                                xil_printf("Channel consistency     : %s\r\n",         calibration_validation_status_text(             validation->channel_status));
+                                                                                xil_printf("Window validation       : %s\r\n",         calibration_validation_status_text(             validation->window_status));
+                                                                                xil_printf("Numerical validation    : %s\r\n",         calibration_validation_status_text(             validation->numerical_status));
+                                                                                xil_printf("Overall recommendation  : %s\r\n",         calibration_validation_status_text(             validation->overall_status));
+                                                                            }
                                                                         }
                                                                         xil_printf("No calibration coefficients were updated by diagnostics.\r\n");
                                                                         xil_printf("==================================================\r\n");
@@ -2224,12 +2402,14 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                             xil_printf("\r\n---------- Diagnostic frame %lu ----------\r\n",             (unsigned long)frame_index);
                                                                             if (adc_capture_frame() != XST_SUCCESS) {
                                                                                 frame.rejection_reason = "DMA capture failed";
+                                                                                calibration_validate_timing_alignment(                 &frame, &frame.timing_diagnostics);
                                                                                 calibration_print_timing_diagnostics_detail(                 &frame, &frame.timing_diagnostics);
                                                                                 continue;
                                                                             }
                                                                             frame.capture_succeeded = true;
                                                                             if (adc_reconstruct_channels(RxBufferPtr, DMA_CMD_BUF_SIZE,                 channel_a, ADC_CHANNEL_SAMPLE_COUNT,                 channel_b, ADC_CHANNEL_SAMPLE_COUNT,                 &reconstructed_count) != 0 ||             reconstructed_count != reference_count) {
                                                                                 frame.rejection_reason = "sample reconstruction failed";
+                                                                                calibration_validate_timing_alignment(                 &frame, &frame.timing_diagnostics);
                                                                                 calibration_print_timing_diagnostics_detail(                 &frame, &frame.timing_diagnostics);
                                                                                 continue;
                                                                             }
@@ -2258,6 +2438,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                             frame.reference_frequency_hz = analysis.reference_frequency_hz;
                                                                             frame.adc_frequency_hz = analysis.adc_frequency_hz;
                                                                             frame.timing = analysis.timing;
+                                                                            frame.alignment_reference_count = reconstructed_count;
                                                                             frame.calibration_window_start = window_start;
                                                                             frame.calibration_window_length =             reference_count >= CAL_FIXED_WINDOW_LENGTH ?             CAL_FIXED_WINDOW_LENGTH : reference_count;
                                                                             frame.valid_analysis_sample_count = frame.calibration_window_length;
@@ -2268,6 +2449,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                             else {
                                                                                 frame.timing_diagnostics.status_text =                 "legacy timing did not identify a reference/channel";
                                                                             }
+                                                                            calibration_validate_timing_alignment(             &frame, &frame.timing_diagnostics);
                                                                             calibration_print_timing_diagnostics_detail(             &frame, &frame.timing_diagnostics);
                                                                         }
                                                                         g_quiet_calibration_capture = previous_quiet_capture;
@@ -2543,6 +2725,7 @@ static int calibration_build_adc_reference_from_raw_dac(     const int16_t *raw_
                                                                         }
                                                                         frame->frame_valid = true;
                                                                         frame->rejection_reason = "none";
+                                                                        calibration_validate_timing_alignment(         frame, &frame->timing_diagnostics);
                                                                         return 0;
                                                                     }
                                                                     static int calibration_pending_frame_is_compatible(const char **reason) {

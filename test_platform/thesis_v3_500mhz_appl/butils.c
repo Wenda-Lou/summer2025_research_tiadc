@@ -139,9 +139,56 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_DITHER_PEAK_GUARD_SAMPLES                8U
 #define CAL_DITHER_EVENT_THRESHOLD_FRACTION         0.25
 #define CAL_DITHER_CONSISTENCY_TOLERANCE_SAMPLES    1.0
+#ifndef CAL_TONE_VALIDATION_MAX_RMSE_CODES
+#define CAL_TONE_VALIDATION_MAX_RMSE_CODES        512.0
+#endif
+#ifndef CAL_TONE_VALIDATION_MIN_CORRELATION
+#define CAL_TONE_VALIDATION_MIN_CORRELATION       CAL_DAC_REF_MIN_CORRELATION
+#endif
+#ifndef CAL_DITHER_VALIDATION_MIN_MARGIN
+#define CAL_DITHER_VALIDATION_MIN_MARGIN            6.0
+#endif
+#ifndef CAL_DITHER_VALIDATION_MIN_PEAK_RATIO
+#define CAL_DITHER_VALIDATION_MIN_PEAK_RATIO        1.10
+#endif
+#ifndef CAL_DITHER_VALIDATION_MIN_COMPLETE_EVENTS
+#define CAL_DITHER_VALIDATION_MIN_COMPLETE_EVENTS   1U
+#endif
+#ifndef CAL_DITHER_CHANNEL_N0_TOLERANCE_SAMPLES
+#define CAL_DITHER_CHANNEL_N0_TOLERANCE_SAMPLES     1.0
+#endif
+#ifndef CAL_EXISTING_DITHER_LAG_TOLERANCE_SAMPLES
+#define CAL_EXISTING_DITHER_LAG_TOLERANCE_SAMPLES   CAL_DITHER_CONSISTENCY_TOLERANCE_SAMPLES
+#endif
 
 _Static_assert(ADC_VALID_SAMPLE_COUNT == ADC_TEST_CAPTURE_SAMPLES,
                "ADC test configuration sample count mismatch");
+
+typedef enum {
+    CAL_TIMING_VALIDATION_FAIL = 0,
+    CAL_TIMING_VALIDATION_PASS,
+    CAL_TIMING_VALIDATION_WARNING
+} calibration_timing_validation_status_t;
+
+typedef struct {
+    uint8_t valid;
+    calibration_timing_validation_status_t existing_status;
+    calibration_timing_validation_status_t tone_status;
+    calibration_timing_validation_status_t dither_status;
+    calibration_timing_validation_status_t channel_status;
+    calibration_timing_validation_status_t existing_dither_status;
+    calibration_timing_validation_status_t window_status;
+    calibration_timing_validation_status_t numerical_status;
+    calibration_timing_validation_status_t overall_status;
+    double channel_a_n0;
+    double channel_b_n0;
+    double common_selected_n0;
+    double channel_n0_disagreement_samples;
+    uint32_t window_partial_event_count;
+    uint32_t total_dither_event_count;
+    uint8_t dither_event_indices_valid;
+    const char *numerical_reason;
+} calibration_timing_validation_t;
 
 typedef struct {
     uint8_t valid;
@@ -188,6 +235,10 @@ typedef struct {
     double dither_derived_lag;
     double alignment_disagreement_samples;
     uint8_t alignment_methods_consistent;
+    uint32_t partial_dither_event_count;
+    uint32_t total_dither_event_count;
+    uint8_t dither_event_indices_valid;
+    calibration_timing_validation_t validation;
     const char *status_text;
 } calibration_timing_diagnostics_t;
 
@@ -687,6 +738,9 @@ static void calibration_print_timing_diagnostics_compact(
 static void calibration_print_timing_diagnostics_detail(
     const calibration_aligned_frame_t *frame,
     const calibration_timing_diagnostics_t *diagnostics);
+static void calibration_validate_timing_alignment(
+    const calibration_aligned_frame_t *frame,
+    calibration_timing_diagnostics_t *diagnostics);
 static int calibration_capture_against_owned_reference(
     const calibration_pending_frame_t *saved,
     bool use_saved_calibration_reference,
