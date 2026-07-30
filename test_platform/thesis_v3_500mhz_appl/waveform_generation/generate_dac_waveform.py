@@ -12,9 +12,9 @@ integer per line, with a record length divisible by 256.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
-import argparse
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +26,7 @@ import numpy as np
 
 # Desired main tone frequency in Hz. The generator selects the nearest
 # coherent bin for the configured output length.
-TONE_FREQUENCY_HZ = 100_000_000.0
+TONE_FREQUENCY_HZ = 350_000_000.0
 
 # Sine-wave peak level in dBFS.
 # Examples:
@@ -39,21 +39,19 @@ SINE_PEAK_DBFS = -1.5
 # Initial phase of the sine wave.
 SINE_PHASE_DEG = 0.0
 
-# Enable or disable periodic dither.
-ENABLE_DITHER = False
+# The only switch needed to select the output waveform:
+#   False = coherent sine only
+#   True  = coherent sine plus balanced impulse dither
+ENABLE_DITHER = True
 
-# Dither RMS level in dBFS. Used only when ENABLE_DITHER is True.
-DITHER_RMS_DBFS = -35.0
-
-# Dither frequency band in Hz.
-DITHER_LOW_HZ = 5e6
-DITHER_HIGH_HZ = 600e6
-
-# Fixed seed makes the dither exactly reproducible.
-DITHER_SEED = 1234
-
-# Output TXT filename.
-OUTPUT_FILE = Path("sine_100MHz_2p6GSPS.txt")
+# Impulse-dither settings copied from calibration_loop/dither.py. All lengths
+# are in DAC samples.
+DITHER_PERIOD_DAC = 256
+DITHER_POSITION_DAC = 96
+DITHER_EDGE_DAC = 16
+DITHER_TOP_DAC = 32
+DITHER_SCALE_LSB = 2_000.0
+DITHER_SEED = 20_260_725
 
 # Reserve a small number of codes to protect against rounding/clipping.
 HEADROOM_CODES = 16
@@ -67,12 +65,17 @@ ADC_SAMPLE_RATE_HZ = 1_450_000_000.0
 DAC_SAMPLE_RATE_HZ = 2_600_000_000.0
 ADC_FRAME_SAMPLES = 2_032
 DAC_TO_ADC_RATE_RATIO = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ
+GENERATED_SAMPLES_DIR = Path(__file__).resolve().parent / "generated_samples"
 
 # The ADC and DAC rates are not an integer ratio. Generate a periodic file
 # whose length is compatible with both the analysis-frame bookkeeping and the
 # AD9164 downloader's 256-sample alignment requirement.
 DAC_FILE_ALIGNMENT_SAMPLES = 256
 NUM_SAMPLES = math.lcm(ADC_FRAME_SAMPLES, DAC_FILE_ALIGNMENT_SAMPLES)
+# One normal record contains an odd number of 256-sample dither slots. Use two
+# records in dither mode so the slots retain the existing frame/alignment
+# constraints and the +1/-1 polarity sequence can be exactly balanced.
+DITHER_NUM_SAMPLES = 2 * NUM_SAMPLES
 INT16_MIN = -32_768
 INT16_MAX = 32_767
 
@@ -111,62 +114,87 @@ def generate_coherent_sine(
     )
 
 
-def dbfs_rms_to_codes(dbfs: float) -> float:
-    full_scale_sine_rms = INT16_MAX / math.sqrt(2.0)
-    return full_scale_sine_rms * 10.0 ** (dbfs / 20.0)
+def raised_cosine_impulse(
+    sample_offsets: np.ndarray,
+    edge_samples: int,
+    top_samples: int,
+) -> np.ndarray:
+    """Return the calibration-loop raised-cosine impulse on the DAC grid."""
+    t = np.asarray(sample_offsets, dtype=np.float64)
+    total = 2 * edge_samples + top_samples
+    impulse = np.zeros_like(t)
+
+    rise = (t >= 0.0) & (t < edge_samples)
+    top = (t >= edge_samples) & (t < edge_samples + top_samples)
+    fall = (t >= edge_samples + top_samples) & (t < total)
+
+    impulse[rise] = 0.5 * (
+        1.0 - np.cos(np.pi * t[rise] / edge_samples)
+    )
+    impulse[top] = 1.0
+    impulse[fall] = 0.5 * (
+        1.0 - np.cos(np.pi * (total - t[fall]) / edge_samples)
+    )
+    return impulse
 
 
-def generate_periodic_bandlimited_dither(
-    num_samples: int,
-    sample_rate_hz: float,
-    rms_amplitude: float,
-    low_frequency_hz: float,
-    high_frequency_hz: float,
+def balanced_polarity_sequence(
+    event_count: int,
     seed: int,
 ) -> np.ndarray:
-    if rms_amplitude <= 0.0:
-        return np.zeros(num_samples, dtype=np.float64)
-
-    nyquist_hz = sample_rate_hz / 2.0
-
-    if low_frequency_hz < 0.0:
-        raise ValueError("DITHER_LOW_HZ cannot be negative.")
-
-    if not low_frequency_hz < high_frequency_hz <= nyquist_hz:
+    """Return a deterministic sequence with equal numbers of +1 and -1."""
+    if event_count <= 0 or event_count % 2:
         raise ValueError(
-            "DITHER_HIGH_HZ must exceed DITHER_LOW_HZ and not exceed Nyquist."
+            "The impulse-dither event count must be positive and even."
         )
 
-    bin_spacing_hz = sample_rate_hz / num_samples
-    first_bin = max(1, int(math.ceil(low_frequency_hz / bin_spacing_hz)))
-    last_bin = min(
-        num_samples // 2 - 1,
-        int(math.floor(high_frequency_hz / bin_spacing_hz)),
+    half = event_count // 2
+    polarity = np.concatenate([np.ones(half), -np.ones(half)])
+    rng = np.random.RandomState(seed)
+    rng.shuffle(polarity)
+    return polarity.astype(np.float64)
+
+
+def generate_periodic_impulse_dither(
+    num_samples: int,
+    period_samples: int,
+    position_samples: int,
+    edge_samples: int,
+    top_samples: int,
+    amplitude_codes: float,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build the calibration-loop balanced impulse dither at the DAC rate."""
+    if period_samples <= 0 or num_samples % period_samples:
+        raise ValueError(
+            "Dither waveform length must contain whole dither periods."
+        )
+    if edge_samples <= 0 or top_samples <= 0:
+        raise ValueError("Dither edge and flat-top lengths must be positive.")
+    if position_samples < 0:
+        raise ValueError("Dither position cannot be negative.")
+
+    pulse_samples = 2 * edge_samples + top_samples
+    if position_samples + pulse_samples > period_samples:
+        raise ValueError("The impulse must fit completely inside its period.")
+    if amplitude_codes < 0.0:
+        raise ValueError("Dither amplitude cannot be negative.")
+
+    event_count = num_samples // period_samples
+    polarity = balanced_polarity_sequence(event_count, seed)
+    pulse_shape = raised_cosine_impulse(
+        np.arange(pulse_samples, dtype=np.float64),
+        edge_samples,
+        top_samples,
     )
 
-    if first_bin > last_bin:
-        raise ValueError("The selected dither band contains no coherent bins.")
+    dither = np.zeros(num_samples, dtype=np.float64)
+    for event_index, sign in enumerate(polarity):
+        start = event_index * period_samples + position_samples
+        stop = start + pulse_samples
+        dither[start:stop] = sign * amplitude_codes * pulse_shape
 
-    rng = np.random.default_rng(seed)
-    spectrum = np.zeros(num_samples // 2 + 1, dtype=np.complex128)
-
-    bin_count = last_bin - first_bin + 1
-    spectrum[first_bin:last_bin + 1] = (
-        rng.normal(size=bin_count)
-        + 1j * rng.normal(size=bin_count)
-    )
-
-    spectrum[0] = 0.0
-    spectrum[-1] = 0.0
-
-    dither = np.fft.irfft(spectrum, n=num_samples)
-    dither -= np.mean(dither)
-
-    current_rms = float(np.sqrt(np.mean(dither**2)))
-    if current_rms <= 0.0:
-        raise RuntimeError("Generated dither has zero RMS.")
-
-    return dither * (rms_amplitude / current_rms)
+    return dither, polarity
 
 
 def scale_to_avoid_clipping(
@@ -187,18 +215,106 @@ def scale_to_avoid_clipping(
     return waveform * scale, scale
 
 
+def frequency_filename_label(frequency_hz: float) -> str:
+    """Return a filesystem-friendly MHz label from the requested frequency."""
+    frequency_mhz = frequency_hz / 1e6
+    label = f"{frequency_mhz:.9f}".rstrip("0").rstrip(".")
+    return label.replace("-", "minus").replace(".", "p")
+
+
+def output_path_for_frequency(
+    frequency_hz: float,
+    dither_enabled: bool,
+) -> Path:
+    """Return a frequency-named path without replacing an existing bundle."""
+    frequency_label = frequency_filename_label(frequency_hz)
+    mode_suffix = "impulse_dither" if dither_enabled else "non_dither"
+    stem = f"sine_{frequency_label}MHz_2p6GSPS_{mode_suffix}"
+
+    sequence_number = 0
+    while True:
+        numbered_suffix = (
+            "" if sequence_number == 0 else f"_{sequence_number:03d}"
+        )
+        txt_file = GENERATED_SAMPLES_DIR / (
+            f"{stem}{numbered_suffix}.txt"
+        )
+        companion_files = (
+            txt_file,
+            txt_file.with_suffix(".png"),
+            txt_file.with_suffix(txt_file.suffix + ".json"),
+        )
+        if not any(path.exists() for path in companion_files):
+            return txt_file
+        sequence_number += 1
+
+
+def plot_generated_txt(
+    txt_file: Path,
+    sample_rate_hz: float,
+    dither_enabled: bool,
+) -> Path:
+    """Read the generated TXT and save a full-record and detail PNG plot."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    samples = np.loadtxt(txt_file, dtype=np.int16, ndmin=1)
+    if samples.size == 0:
+        raise RuntimeError(f"Cannot plot empty waveform file: {txt_file}")
+
+    sample_indices = np.arange(samples.size)
+    time_us = sample_indices / sample_rate_hz * 1e6
+    detail_count = min(samples.size, 1_024)
+    mode_label = "Impulse dither enabled" if dither_enabled else "No dither"
+
+    figure, (full_axis, detail_axis) = plt.subplots(
+        2,
+        1,
+        figsize=(12, 7),
+        constrained_layout=True,
+    )
+    full_axis.plot(time_us, samples, linewidth=0.5)
+    full_axis.set_title(f"Generated DAC waveform - {mode_label}")
+    full_axis.set_xlabel("Time (us)")
+    full_axis.set_ylabel("DAC code")
+    full_axis.grid(True, alpha=0.3)
+
+    detail_axis.plot(
+        sample_indices[:detail_count],
+        samples[:detail_count],
+        linewidth=0.8,
+    )
+    detail_axis.set_title(f"First {detail_count} samples")
+    detail_axis.set_xlabel("Sample index")
+    detail_axis.set_ylabel("DAC code")
+    detail_axis.grid(True, alpha=0.3)
+
+    png_file = txt_file.with_suffix(".png")
+    figure.savefig(png_file, dpi=150)
+    plt.close(figure)
+    return png_file
+
+
 def main() -> None:
+    num_samples = DITHER_NUM_SAMPLES if ENABLE_DITHER else NUM_SAMPLES
+
     tone_bin = nearest_coherent_bin(
         requested_frequency_hz=TONE_FREQUENCY_HZ,
         sample_rate_hz=DAC_SAMPLE_RATE_HZ,
-        num_samples=NUM_SAMPLES,
+        num_samples=num_samples,
     )
 
     actual_tone_hz = (
-        tone_bin * DAC_SAMPLE_RATE_HZ / NUM_SAMPLES
+        tone_bin * DAC_SAMPLE_RATE_HZ / num_samples
+    )
+    output_file = output_path_for_frequency(
+        TONE_FREQUENCY_HZ,
+        ENABLE_DITHER,
     )
 
-    if NUM_SAMPLES % DAC_FILE_ALIGNMENT_SAMPLES != 0:
+    if num_samples % DAC_FILE_ALIGNMENT_SAMPLES != 0:
         raise RuntimeError(
             f"DAC file length must be divisible by "
             f"{DAC_FILE_ALIGNMENT_SAMPLES}."
@@ -209,25 +325,25 @@ def main() -> None:
     )
 
     sine = generate_coherent_sine(
-        num_samples=NUM_SAMPLES,
+        num_samples=num_samples,
         tone_bin=tone_bin,
         peak_amplitude=sine_peak_codes,
         phase_deg=SINE_PHASE_DEG,
     )
 
     if ENABLE_DITHER:
-        dither_rms_codes = dbfs_rms_to_codes(DITHER_RMS_DBFS)
-
-        dither = generate_periodic_bandlimited_dither(
-            num_samples=NUM_SAMPLES,
-            sample_rate_hz=DAC_SAMPLE_RATE_HZ,
-            rms_amplitude=dither_rms_codes,
-            low_frequency_hz=DITHER_LOW_HZ,
-            high_frequency_hz=DITHER_HIGH_HZ,
+        dither, polarity = generate_periodic_impulse_dither(
+            num_samples=num_samples,
+            period_samples=DITHER_PERIOD_DAC,
+            position_samples=DITHER_POSITION_DAC,
+            edge_samples=DITHER_EDGE_DAC,
+            top_samples=DITHER_TOP_DAC,
+            amplitude_codes=DITHER_SCALE_LSB,
             seed=DITHER_SEED,
         )
     else:
-        dither = np.zeros(NUM_SAMPLES, dtype=np.float64)
+        dither = np.zeros(num_samples, dtype=np.float64)
+        polarity = np.empty(0, dtype=np.float64)
 
     combined = sine + dither
     combined, applied_scale = scale_to_avoid_clipping(
@@ -237,34 +353,51 @@ def main() -> None:
 
     waveform = np.rint(combined).astype(np.int16)
 
-    if waveform.size != NUM_SAMPLES:
+    if waveform.size != num_samples:
         raise RuntimeError("Generated waveform has the wrong sample count.")
 
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    np.savetxt(OUTPUT_FILE, waveform, fmt="%d")
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    np.savetxt(output_file, waveform, fmt="%d")
+    plot_file = plot_generated_txt(
+        txt_file=output_file,
+        sample_rate_hz=DAC_SAMPLE_RATE_HZ,
+        dither_enabled=ENABLE_DITHER,
+    )
 
     metadata = {
-        "output_file": str(OUTPUT_FILE),
+        "output_file": str(output_file),
+        "plot_file": str(plot_file),
         "dac_sample_rate_hz": DAC_SAMPLE_RATE_HZ,
         "adc_sample_rate_hz": ADC_SAMPLE_RATE_HZ,
         "dac_to_adc_rate_ratio": DAC_TO_ADC_RATE_RATIO,
         "adc_frame_samples": ADC_FRAME_SAMPLES,
-        "periodic_dac_file_samples": NUM_SAMPLES,
+        "periodic_dac_file_samples": num_samples,
         "dac_file_alignment_samples": DAC_FILE_ALIGNMENT_SAMPLES,
         "adc_tone_bin": actual_tone_hz * ADC_FRAME_SAMPLES /
         ADC_SAMPLE_RATE_HZ,
-        "num_samples": NUM_SAMPLES,
+        "num_samples": num_samples,
         "requested_tone_hz": TONE_FREQUENCY_HZ,
         "actual_tone_hz": actual_tone_hz,
         "tone_bin": tone_bin,
-        "bin_spacing_hz": DAC_SAMPLE_RATE_HZ / NUM_SAMPLES,
+        "bin_spacing_hz": DAC_SAMPLE_RATE_HZ / num_samples,
         "sine_peak_dbfs": SINE_PEAK_DBFS,
         "sine_phase_deg": SINE_PHASE_DEG,
         "dither_enabled": ENABLE_DITHER,
-        "dither_rms_dbfs": DITHER_RMS_DBFS if ENABLE_DITHER else None,
-        "dither_low_hz": DITHER_LOW_HZ if ENABLE_DITHER else None,
-        "dither_high_hz": DITHER_HIGH_HZ if ENABLE_DITHER else None,
+        "dither_type": (
+            "balanced random-polarity raised-cosine impulse"
+            if ENABLE_DITHER else None
+        ),
+        "dither_period_dac": DITHER_PERIOD_DAC if ENABLE_DITHER else None,
+        "dither_position_dac": (
+            DITHER_POSITION_DAC if ENABLE_DITHER else None
+        ),
+        "dither_edge_dac": DITHER_EDGE_DAC if ENABLE_DITHER else None,
+        "dither_top_dac": DITHER_TOP_DAC if ENABLE_DITHER else None,
+        "dither_scale_lsb": DITHER_SCALE_LSB if ENABLE_DITHER else None,
         "dither_seed": DITHER_SEED if ENABLE_DITHER else None,
+        "dither_event_count": int(polarity.size),
+        "dither_polarity_sum": float(np.sum(polarity)),
+        "dither_polarity": polarity.astype(int).tolist(),
         "anti_clipping_scale": applied_scale,
         "minimum_code": int(waveform.min()),
         "maximum_code": int(waveform.max()),
@@ -275,8 +408,8 @@ def main() -> None:
         "periodic_by_construction": True,
     }
 
-    metadata_file = OUTPUT_FILE.with_suffix(
-        OUTPUT_FILE.suffix + ".json"
+    metadata_file = output_file.with_suffix(
+        output_file.suffix + ".json"
     )
     metadata_file.write_text(
         json.dumps(metadata, indent=2),
@@ -284,9 +417,10 @@ def main() -> None:
     )
 
     print("Waveform generated successfully")
-    print(f"TXT file            : {OUTPUT_FILE}")
+    print(f"TXT file            : {output_file}")
+    print(f"PNG plot            : {plot_file}")
     print(f"Metadata file       : {metadata_file}")
-    print(f"Number of samples   : {NUM_SAMPLES}")
+    print(f"Number of samples   : {num_samples}")
     print(f"Requested frequency : {TONE_FREQUENCY_HZ / 1e6:.9f} MHz")
     print(f"Actual frequency    : {actual_tone_hz / 1e6:.9f} MHz")
     print(f"Coherent tone bin   : {tone_bin}")
@@ -314,10 +448,6 @@ if __name__ == "__main__":
         if args.frequencies_mhz:
             for frequency_mhz in args.frequencies_mhz:
                 TONE_FREQUENCY_HZ = frequency_mhz * 1e6
-                frequency_label = f"{frequency_mhz:g}".replace(".", "p")
-                OUTPUT_FILE = Path(
-                    f"sine_{frequency_label}MHz_2p6GSPS.txt"
-                )
                 main()
         else:
             main()
