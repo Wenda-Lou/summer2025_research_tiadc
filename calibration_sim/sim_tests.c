@@ -16,6 +16,7 @@
 #include "timing_alignment.h"
 
 #include <errno.h>
+#include <float.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -730,6 +731,1274 @@ static int unit_dither_estimator_direct(sim_assert_context_t *ctx)
     return 1;
 }
 
+static int load_i16_text_waveform(
+    const char *path,
+    int16_t *samples,
+    size_t capacity,
+    size_t *sample_count)
+{
+    FILE *file;
+    size_t count = 0U;
+    long value;
+    if (sample_count != NULL) *sample_count = 0U;
+    if (path == NULL || samples == NULL || sample_count == NULL) return -1;
+    file = fopen(path, "r");
+    if (file == NULL) return -2;
+    while (fscanf(file, "%ld", &value) == 1) {
+        if (count >= capacity || value < INT16_MIN || value > INT16_MAX) {
+            fclose(file);
+            return -3;
+        }
+        samples[count++] = (int16_t)value;
+    }
+    if (!feof(file)) {
+        fclose(file);
+        return -4;
+    }
+    fclose(file);
+    *sample_count = count;
+    return count > 0U ? 0 : -5;
+}
+
+static int load_u8_csv_capture(
+    const char *path,
+    uint8_t *bytes,
+    size_t capacity,
+    size_t *byte_count)
+{
+    FILE *file;
+    char header[64];
+    size_t count = 0U;
+    long value;
+    if (byte_count != NULL) *byte_count = 0U;
+    if (path == NULL || bytes == NULL || byte_count == NULL) return -1;
+    file = fopen(path, "r");
+    if (file == NULL) return -2;
+    if (fgets(header, sizeof(header), file) == NULL ||
+        strncmp(header, "byte", 4U) != 0) {
+        fclose(file);
+        return -3;
+    }
+    while (fscanf(file, "%ld", &value) == 1) {
+        if (count >= capacity || value < 0L || value > 255L) {
+            fclose(file);
+            return -4;
+        }
+        bytes[count++] = (uint8_t)value;
+    }
+    if (!feof(file)) {
+        fclose(file);
+        return -5;
+    }
+    fclose(file);
+    *byte_count = count;
+    return count > 0U ? 0 : -6;
+}
+
+static int remove_known_tone(
+    const int16_t *samples,
+    size_t sample_count,
+    double frequency_hz,
+    double sample_rate_hz,
+    double *residual)
+{
+    double normal[3][4] = {{0.0}};
+    double coefficients[3];
+    if (samples == NULL || residual == NULL || sample_count < 3U ||
+        !isfinite(frequency_hz) || frequency_hz <= 0.0 ||
+        !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0) return -1;
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double phase = 2.0 * M_PI * frequency_hz *
+            (double)i / sample_rate_hz;
+        const double basis[3] = {cos(phase), sin(phase), 1.0};
+        for (size_t row = 0U; row < 3U; ++row) {
+            for (size_t col = 0U; col < 3U; ++col) {
+                normal[row][col] += basis[row] * basis[col];
+            }
+            normal[row][3] += basis[row] * (double)samples[i];
+        }
+    }
+    for (size_t pivot = 0U; pivot < 3U; ++pivot) {
+        size_t best = pivot;
+        for (size_t row = pivot + 1U; row < 3U; ++row) {
+            if (fabs(normal[row][pivot]) > fabs(normal[best][pivot])) {
+                best = row;
+            }
+        }
+        if (fabs(normal[best][pivot]) <= DBL_EPSILON) return -2;
+        if (best != pivot) {
+            for (size_t col = pivot; col < 4U; ++col) {
+                const double swap = normal[pivot][col];
+                normal[pivot][col] = normal[best][col];
+                normal[best][col] = swap;
+            }
+        }
+        {
+            const double divisor = normal[pivot][pivot];
+            for (size_t col = pivot; col < 4U; ++col) {
+                normal[pivot][col] /= divisor;
+            }
+        }
+        for (size_t row = 0U; row < 3U; ++row) {
+            const double factor = normal[row][pivot];
+            if (row == pivot) continue;
+            for (size_t col = pivot; col < 4U; ++col) {
+                normal[row][col] -= factor * normal[pivot][col];
+            }
+        }
+    }
+    for (size_t i = 0U; i < 3U; ++i) coefficients[i] = normal[i][3];
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double phase = 2.0 * M_PI * frequency_hz *
+            (double)i / sample_rate_hz;
+        residual[i] = (double)samples[i] -
+            coefficients[0] * cos(phase) -
+            coefficients[1] * sin(phase) - coefficients[2];
+    }
+    return 0;
+}
+
+static int make_scaled_dac_capture(
+    const int16_t *raw_dac,
+    size_t raw_sample_count,
+    int16_t *capture,
+    size_t sample_count,
+    double dac_samples_per_adc_sample,
+    double lag_samples,
+    double scale)
+{
+    static int16_t unscaled[SIM_ADC_CHANNEL_SAMPLES];
+    if (sample_count > SIM_ADC_CHANNEL_SAMPLES) return -1;
+    if (adc_cal_dither_resample_dac_reference(
+            raw_dac, raw_sample_count, dac_samples_per_adc_sample,
+            -lag_samples * dac_samples_per_adc_sample,
+            unscaled, sample_count) != 0) return -2;
+    for (size_t i = 0U; i < sample_count; ++i) {
+        double value = scale * (double)unscaled[i];
+        if (value > (double)INT16_MAX) value = (double)INT16_MAX;
+        if (value < (double)INT16_MIN) value = (double)INT16_MIN;
+        capture[i] = (int16_t)lrint(value);
+    }
+    return 0;
+}
+
+static int unit_dither_detection_validation(sim_assert_context_t *ctx)
+{
+    adc_cal_dither_validation_config_t config;
+    adc_cal_dither_validation_input_t input;
+    adc_cal_dither_validation_result_t validation;
+    adc_cal_dither_peak_config_t peak_config;
+    adc_cal_dither_peak_result_t peaks;
+    adc_cal_dither_event_summary_t events;
+    adc_cal_dither_periodic_difference_t periodic_difference;
+    double scores[512];
+    double template_samples[1016];
+    const double canonical_wrapped_origin = fmod(1010.633698, 1016.0);
+    const double derived_lag = 5.366302;
+    double frame1_existing_n0 = fmod(-70.832, 1016.0);
+    double frame1_dither_n0 = fmod(-220.672, 1016.0);
+    double frame3_n0_a = fmod(-311.284, 1016.0);
+    double frame3_n0_b = fmod(133.715, 1016.0);
+
+    if (frame1_existing_n0 < 0.0) frame1_existing_n0 += 1016.0;
+    if (frame1_dither_n0 < 0.0) frame1_dither_n0 += 1016.0;
+    if (frame3_n0_a < 0.0) frame3_n0_a += 1016.0;
+    if (frame3_n0_b < 0.0) frame3_n0_b += 1016.0;
+
+    adc_cal_dither_validation_default_config(&config);
+    config.minimum_complete_events = 3U;
+    memset(&input, 0, sizeof(input));
+    input.selected_channel_valid = 1;
+    input.channel_a_available = 1;
+    input.channel_b_available = 1;
+    input.channel_a_valid = 1;
+    input.channel_b_valid = 1;
+    input.existing_comparison_required = 1;
+    input.channel_disagreement_samples = 0.10;
+    input.existing_disagreement_samples = 0.18;
+    input.complete_event_count = 5U;
+    input.event_indices_valid = 1;
+    input.numerical_values_finite = 1;
+    input.independent_peak_ratio = 1.50;
+
+    /* Strong unique peak. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.confidence,
+                      ADC_CAL_DITHER_CONFIDENCE_STRONG);
+    SIM_ASSERT_EQ_INT(ctx, validation.recommendation,
+                      ADC_CAL_DITHER_RECOMMEND_ACCEPT);
+
+    /* Weak peak confidence does not invalidate consistent detection. */
+    input.independent_peak_ratio = 1.135748;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.confidence,
+                      ADC_CAL_DITHER_CONFIDENCE_WEAK);
+    SIM_ASSERT_EQ_INT(ctx, validation.recommendation,
+                      ADC_CAL_DITHER_RECOMMEND_ACCEPT_WITH_WARNING);
+
+    /* A jointly constrained candidate may be smaller than an isolated peak;
+     * peak uniqueness remains advisory after structural checks pass. */
+    input.independent_peak_ratio = 0.70;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.recommendation,
+                      ADC_CAL_DITHER_RECOMMEND_ACCEPT_WITH_WARNING);
+    SIM_ASSERT_EQ_INT(ctx, validation.reason,
+                      ADC_CAL_DITHER_VALIDATION_PEAK_BELOW_WEAK);
+    input.independent_peak_ratio = 1.135748;
+
+    /* Independent consistency failures are structural failures. */
+    input.channel_disagreement_samples = 1.01;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, !validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.confidence,
+                      ADC_CAL_DITHER_CONFIDENCE_WEAK);
+    SIM_ASSERT_EQ_INT(ctx, validation.reason,
+                      ADC_CAL_DITHER_VALIDATION_CHANNEL_DISAGREEMENT);
+    input.channel_disagreement_samples = 0.10;
+    input.existing_disagreement_samples = 1.01;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, !validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.confidence,
+                      ADC_CAL_DITHER_CONFIDENCE_WEAK);
+    SIM_ASSERT_EQ_INT(ctx, validation.reason,
+                      ADC_CAL_DITHER_VALIDATION_EXISTING_DISAGREEMENT);
+    input.existing_disagreement_samples = 0.18;
+
+    /* A rejected existing estimator is not a structural dither reference. */
+    input.existing_comparison_required = 0;
+    input.existing_disagreement_samples = NAN;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.reason,
+                      ADC_CAL_DITHER_VALIDATION_PEAK_BELOW_STRONG);
+    input.existing_comparison_required = 1;
+    input.existing_disagreement_samples = 0.18;
+
+    /* Requiring a joint pair reports the selection failure explicitly. */
+    input.joint_pair_required = 1;
+    input.joint_pair_valid = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, !validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.reason,
+                      ADC_CAL_DITHER_VALIDATION_NO_CONSISTENT_PAIR);
+    input.joint_pair_valid = 1;
+
+    /* A periodic-family duplicate is not the independent second peak. */
+    memset(scores, 0, sizeof(scores));
+    scores[20] = 1.0;
+    scores[163] = 0.95;
+    scores[80] = 0.50;
+    adc_cal_dither_peak_default_config(&peak_config);
+    peak_config.periodic_exclusion_width_samples = 3.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_independent_peaks(
+        scores, 512U, 142.79, &peak_config, &peaks), 0);
+    SIM_ASSERT_EQ_INT(ctx, peaks.raw_second_index, 163U);
+    SIM_ASSERT_EQ_INT(ctx, peaks.independent_second_index, 80U);
+    SIM_ASSERT_NEAR(ctx, peaks.raw_peak_ratio, 1.0 / 0.95, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, peaks.independent_peak_ratio, 2.0, 1.0e-12);
+
+    /* Invalid spacing preserves the legacy local-guard second peak. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_independent_peaks(
+        scores, 512U, NAN, &peak_config, &peaks), 0);
+    SIM_ASSERT_EQ_INT(ctx, peaks.raw_second_index, 163U);
+    SIM_ASSERT_EQ_INT(ctx, peaks.independent_second_index, 163U);
+
+    /* Periodic exclusion checks the alternate frame lift as well. */
+    memset(scores, 0, sizeof(scores));
+    scores[20] = 1.0;
+    scores[389] = 0.95;
+    scores[80] = 0.50;
+    peak_config.periodic_exclusion_width_samples = 1.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_independent_peaks(
+        scores, 512U, 142.793, &peak_config, &peaks), 0);
+    SIM_ASSERT_EQ_INT(ctx, peaks.raw_second_index, 389U);
+    SIM_ASSERT_EQ_INT(ctx, peaks.independent_second_index, 80U);
+
+    /* Timing origins are compared modulo the measured impulse spacing. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        70.832, 220.672, 142.791, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, -1);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.signed_difference_samples,
+                    -7.049, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    7.049, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        frame1_existing_n0, frame1_dither_n0, 142.791, 1016.0,
+        &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.frame_offset, 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, 1);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    7.049, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        5.366301, 5.259356, 142.791, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, 0);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.signed_difference_samples,
+                    0.106945, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        311.284, -133.715, 142.793, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, 3);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    16.620, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        70.832, 213.623, 142.791, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        -117.095, 311.284, 142.793, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, -3);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        1.0, 2.0, NAN, 0.0, &periodic_difference),
+        ADC_CAL_DITHER_ERR_NUMERICAL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        1.0, 2.0, 0.0, 0.0, &periodic_difference),
+        ADC_CAL_DITHER_ERR_NUMERICAL);
+    SIM_ASSERT_TRUE(ctx, !periodic_difference.valid);
+    SIM_ASSERT_TRUE(ctx, isnan(periodic_difference.signed_difference_samples));
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        1.0, 2.0, -142.793, 0.0, &periodic_difference),
+        ADC_CAL_DITHER_ERR_NUMERICAL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        1.0, 2.0, DBL_EPSILON, 0.0, &periodic_difference),
+        ADC_CAL_DITHER_ERR_NUMERICAL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        1.0, 2.0, INFINITY, 0.0, &periodic_difference),
+        ADC_CAL_DITHER_ERR_NUMERICAL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        NAN, 2.0, 142.793, 1016.0, &periodic_difference),
+        ADC_CAL_DITHER_ERR_NUMERICAL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        71.3965, 0.0, 142.793, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, 1);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.signed_difference_samples,
+                    -71.3965, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        -71.3965, 0.0, 142.793, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, -1);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.signed_difference_samples,
+                    71.3965, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        1.0, 2.0, 142.793, -1.0, &periodic_difference),
+        ADC_CAL_DITHER_ERR_NUMERICAL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        1.0, 2.0, 142.793, 0.0, NULL), ADC_CAL_DITHER_ERR_NULL);
+
+    /* Canonical frame origins expose periodic equivalence hidden by signed lag. */
+    SIM_ASSERT_NEAR(ctx, frame3_n0_a, 704.716, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, frame3_n0_b, 133.715, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        frame3_n0_a, frame3_n0_b, 142.793, 1016.0,
+        &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.frame_offset, 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, 4);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.171, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        0.1, 1015.9, 142.793, 1016.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.frame_offset, 1);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, 0);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.signed_difference_samples,
+                    0.2, 1.0e-9);
+
+    /* Wrapped n0 is diagnostic phase; event scanning still finds earlier events. */
+    memset(template_samples, 0, sizeof(template_samples));
+    for (size_t center = 80U; center < 900U; center += 143U) {
+        template_samples[center - 1U] = 0.5;
+        template_samples[center] = 1.0;
+        template_samples[center + 1U] = 0.5;
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_summarize_events(
+        template_samples, 1016U, 0U, 1016U, 0.25, &events), 0);
+    SIM_ASSERT_TRUE(ctx, canonical_wrapped_origin > 1000.0);
+    SIM_ASSERT_NEAR(ctx, fmod(canonical_wrapped_origin + derived_lag,
+                              1016.0), 0.0, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, events.complete_count, 6U);
+    SIM_ASSERT_NEAR(ctx, events.first_complete_center, 80.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, events.last_complete_center, 795.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, events.spacing_samples, 143.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        events.last_complete_center, events.first_complete_center,
+        events.spacing_samples, 0.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.frame_offset, 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset,
+                      (int32_t)events.complete_count - 1);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx,
+        fmod(events.first_complete_center + derived_lag +
+             canonical_wrapped_origin, 1016.0),
+        events.first_complete_center, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        fmod(events.last_complete_center + 300.0, 1016.0),
+        fmod(events.first_complete_center + 300.0, 1016.0),
+        events.spacing_samples, 1016.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.frame_offset, 1);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset,
+                      (int32_t)events.complete_count - 1);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-12);
+
+    /* Ordered event spans use the known forward frame lift. This avoids an
+     * ambiguous complementary offset when frame length is an exact multiple
+     * of event spacing. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        19.0, 400.0, 127.0, 1016.0, &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.frame_offset, 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, -3);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        19.0 + 1016.0, 400.0, 127.0, 0.0,
+        &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.frame_offset, 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, 5);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        canonical_wrapped_origin,
+        canonical_wrapped_origin - events.spacing_samples,
+        events.spacing_samples, 1016.0, &periodic_difference), 0);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-9);
+
+    /* Non-finite metrics and too few complete events are invalid. */
+    input.independent_peak_ratio = NAN;
+    input.complete_event_count = 5U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, !validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.reason,
+                      ADC_CAL_DITHER_VALIDATION_NUMERICAL);
+    input.independent_peak_ratio = 1.50;
+    input.complete_event_count = 2U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &input, &config, &validation), 0);
+    SIM_ASSERT_TRUE(ctx, !validation.structural_valid);
+    SIM_ASSERT_EQ_INT(ctx, validation.reason,
+                      ADC_CAL_DITHER_VALIDATION_TOO_FEW_EVENTS);
+    return 1;
+}
+
+static adc_cal_dither_peak_candidate_t make_joint_candidate(
+    double origin_samples,
+    double peak,
+    double margin)
+{
+    adc_cal_dither_peak_candidate_t candidate;
+    memset(&candidate, 0, sizeof(candidate));
+    candidate.valid = 1;
+    candidate.wrapped_origin_samples = origin_samples;
+    candidate.lag_samples = -origin_samples;
+    candidate.peak = peak;
+    candidate.absolute_peak = fabs(peak);
+    candidate.raw_second_peak = 0.5 * peak;
+    candidate.independent_second_peak = 0.5 * peak;
+    candidate.raw_peak_ratio = 2.0;
+    candidate.independent_peak_ratio = 2.0;
+    candidate.margin = margin;
+    candidate.confidence = ADC_CAL_DITHER_CONFIDENCE_STRONG;
+    return candidate;
+}
+
+static int unit_dither_joint_alignment(sim_assert_context_t *ctx)
+{
+    adc_cal_dither_peak_candidate_t channel_a[4];
+    adc_cal_dither_peak_candidate_t channel_b[4];
+    adc_cal_dither_peak_candidate_t extracted[4];
+    adc_cal_dither_joint_config_t joint_config;
+    adc_cal_dither_joint_result_t joint;
+    adc_cal_dither_peak_config_t peak_config;
+    adc_cal_dither_validation_config_t validation_config;
+    adc_cal_dither_periodic_difference_t difference;
+    adc_cal_dither_coordinate_mapping_t mapping;
+    adc_cal_dither_peak_candidate_t refined_candidate;
+    double scores[64];
+    double capture_samples[4] = {10.0, 20.0, -5.0, 8.0};
+    double refined_tone[4] = {8.0, 17.0, -6.0, 8.5};
+    double dither_residual[4];
+    double adc_position;
+    double event_phase;
+    double expected_origin;
+    double detected_origin;
+    size_t extracted_count = 0U;
+
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_build_tone_removed_residual(
+        capture_samples, refined_tone, 4U, dither_residual), 0);
+    SIM_ASSERT_NEAR(ctx, dither_residual[0], 2.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, dither_residual[1], 3.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, dither_residual[2], 1.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, dither_residual[3], -0.5, 1.0e-12);
+
+    /* Existing and dither lags share the full-reference origin. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_lag_to_wrapped_origin(
+        13.007470, 1016.0, &expected_origin), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_lag_to_wrapped_origin(
+        13.007470, 1016.0, &detected_origin), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        expected_origin, detected_origin, 142.791120, 1016.0,
+        &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+                    0.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_lag_to_wrapped_origin(
+        353.548673, 1016.0, &detected_origin), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        expected_origin, detected_origin, 142.791120, 1016.0,
+        &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+                    38.496803, 1.0e-6);
+
+    /* A nonzero reference-event phase is derived, never hard-coded. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_reference_event_phase(
+        181.291120, 0.0, 142.791120, &event_phase), 0);
+    SIM_ASSERT_NEAR(ctx, event_phase, 38.5, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_lag_to_wrapped_origin(
+        13.0 + event_phase, 1016.0, &expected_origin), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_lag_to_wrapped_origin(
+        51.5, 1016.0, &detected_origin), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        expected_origin, detected_origin, 142.791120, 1016.0,
+        &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+                    0.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_reference_event_phase(
+        214.175561, 0.0, 142.791120, &event_phase), 0);
+    SIM_ASSERT_NEAR(ctx, event_phase, 71.384441, 1.0e-9);
+
+    /* Raw DAC metadata converts into the selected resampled ADC phase. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_dac_position_to_adc_position(
+        181.25, 2600.0 / 1450.0, 1.0, 0.25, &adc_position), 0);
+    SIM_ASSERT_NEAR(ctx, adc_position,
+                    180.0 / (2600.0 / 1450.0), 1.0e-12);
+
+    /* Fixed-window coordinates do not change the full-frame lag origin. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_map_reference_position(
+        214.175561, 108.0, 353.548673, 1016.0, &mapping), 0);
+    SIM_ASSERT_NEAR(ctx, mapping.window_relative_position_samples,
+                    106.175561, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, mapping.capture_unwrapped_position_samples,
+                    567.724234, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, mapping.capture_wrapped_position_samples,
+                    567.724234, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, mapping.capture_frame_wraps, 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_map_reference_position(
+        785.329304, 108.0, 353.548673, 1016.0, &mapping), 0);
+    SIM_ASSERT_NEAR(ctx, mapping.capture_unwrapped_position_samples,
+                    1138.877977, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, mapping.capture_wrapped_position_samples,
+                    122.877977, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, mapping.capture_frame_wraps, 1);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_map_reference_position(
+        10.0, 108.0, -30.0, 1016.0, &mapping), 0);
+    SIM_ASSERT_NEAR(ctx, mapping.capture_wrapped_position_samples,
+                    996.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, mapping.capture_frame_wraps, -1);
+
+    /* Independent maxima disagree, but a second-ranked candidate forms the
+     * jointly consistent pair and agrees with the existing timing family. */
+    channel_a[0] = make_joint_candidate(100.0, 1.0, 5.0);
+    channel_a[1] = make_joint_candidate(250.0, 0.8, 4.0);
+    channel_b[0] = make_joint_candidate(150.0, 1.0, 5.0);
+    channel_b[1] = make_joint_candidate(300.2, 0.8, 4.0);
+    adc_cal_dither_joint_default_config(&joint_config);
+    joint_config.use_expected_origin = 1;
+    joint_config.expected_origin_samples = 100.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 2U, channel_b, 2U, 100.0, 1016.0,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_EQ_INT(ctx, joint.channel_a_candidate, 0U);
+    SIM_ASSERT_EQ_INT(ctx, joint.channel_b_candidate, 1U);
+    SIM_ASSERT_TRUE(ctx, joint.existing_consistent);
+    SIM_ASSERT_NEAR(ctx,
+        joint.channel_difference.absolute_difference_samples,
+        0.2, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, joint.channel_difference.event_offset, -2);
+    SIM_ASSERT_NEAR(ctx, joint.consensus_origin_samples,
+        100.0888888888889, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, joint.consensus_lag_samples,
+        -100.0888888888889, 1.0e-9);
+
+    channel_b[0] = make_joint_candidate(150.0, 1.0, 5.0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 1U, channel_b, 1U, 100.0, 1016.0,
+        &joint_config, &joint), ADC_CAL_DITHER_ERR_NO_EVENTS);
+    SIM_ASSERT_TRUE(ctx, !joint.valid);
+
+    /* Polarity is deliberately unconstrained because reconstruction applies
+     * no channel sign normalization. Both observed combinations are usable. */
+    channel_a[0] = make_joint_candidate(100.0, 1.0, 5.0);
+    channel_b[0] = make_joint_candidate(100.2, 0.9, 5.0);
+    joint_config.use_expected_origin = 0;
+    joint_config.polarity_policy = ADC_CAL_DITHER_POLARITY_UNCONSTRAINED;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 1U, channel_b, 1U, 100.0, 1016.0,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_TRUE(ctx, joint.same_polarity);
+    channel_b[0].peak = -channel_b[0].peak;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 1U, channel_b, 1U, 100.0, 1016.0,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_TRUE(ctx, !joint.same_polarity);
+    joint_config.polarity_policy = ADC_CAL_DITHER_POLARITY_SAME;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 1U, channel_b, 1U, 100.0, 1016.0,
+        &joint_config, &joint), ADC_CAL_DITHER_ERR_NO_EVENTS);
+    joint_config.polarity_policy = ADC_CAL_DITHER_POLARITY_INVERTED;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 1U, channel_b, 1U, 100.0, 1016.0,
+        &joint_config, &joint), 0);
+
+    /* Candidate extraction retains sub-sample lag after periodic reduction. */
+    memset(scores, 0, sizeof(scores));
+    scores[19] = 0.8;
+    scores[20] = 1.0;
+    scores[21] = 0.9;
+    scores[50] = 0.5;
+    adc_cal_dither_peak_default_config(&peak_config);
+    peak_config.local_exclusion_samples = 2U;
+    peak_config.maximum_candidates = 4U;
+    adc_cal_dither_validation_default_config(&validation_config);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_peak_candidates(
+        scores, 64U, 16.0, &peak_config, &validation_config,
+        extracted, 4U, &extracted_count), 0);
+    SIM_ASSERT_TRUE(ctx, extracted_count >= 2U);
+    SIM_ASSERT_EQ_INT(ctx, extracted[0].index, 20U);
+    SIM_ASSERT_NEAR(ctx, extracted[0].fractional_offset_samples,
+                    1.0 / 6.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, extracted[0].lag_samples,
+                     20.0 + 1.0 / 6.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, extracted[0].global_strongest_peak, 1.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, extracted[0].global_strongest_index, 20U);
+    SIM_ASSERT_NEAR(ctx, extracted[1].global_strongest_peak, 1.0, 1.0e-12);
+    memset(&refined_candidate, 0, sizeof(refined_candidate));
+    refined_candidate.valid = 1;
+    refined_candidate.coarse_index = 20U;
+    refined_candidate.coarse_fractional_offset_samples = 0.1;
+    refined_candidate.coarse_lag_samples = 20.1;
+    refined_candidate.index = 20U;
+    refined_candidate.fractional_offset_samples = 0.1;
+    refined_candidate.lag_samples = 20.1;
+    refined_candidate.wrapped_origin_samples = 43.9;
+    refined_candidate.peak = 0.8;
+    memset(scores, 0, sizeof(scores));
+    scores[19] = 0.7;
+    scores[20] = 1.0;
+    scores[21] = 0.9;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_refine_candidate_lags(
+        scores, 64U, 2U, &refined_candidate, 1U), 0);
+    SIM_ASSERT_EQ_INT(ctx, refined_candidate.coarse_index, 20U);
+    SIM_ASSERT_NEAR(ctx, refined_candidate.coarse_lag_samples, 20.1, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, refined_candidate.lag_samples, 20.25, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, refined_candidate.peak, 0.8, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        extracted[0].wrapped_origin_samples,
+        extracted[0].wrapped_origin_samples + 16.0,
+        16.0, 64.0, &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+                    0.0, 1.0e-12);
+
+    /* Previously passing hardware residuals remain inside tolerance. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        5.366301, 5.259356, 142.791120, 0.0, &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+                    0.106945, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        5.187736, 5.366301, 142.791120, 0.0, &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+                     0.178565, 1.0e-9);
+
+    /* Existing timing is a hard feasibility constraint.  The strongest pair
+     * is rejected and a lower-ranked fractional pair is selected. */
+    channel_a[0] = make_joint_candidate(120.0, 1.0, 5.0);
+    channel_b[0] = make_joint_candidate(121.0, 1.0, 5.0);
+    channel_a[1] = make_joint_candidate(300.25, 0.8, 4.0);
+    channel_b[1] = make_joint_candidate(500.40, 0.75, 4.0);
+    channel_a[1].fractional_offset_samples = -0.25;
+    channel_a[1].lag_samples = -300.25;
+    channel_b[1].fractional_offset_samples = -0.40;
+    channel_b[1].lag_samples = -500.40;
+    adc_cal_dither_joint_default_config(&joint_config);
+    joint_config.use_expected_origin = 1;
+    joint_config.expected_origin_samples = 100.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 2U, channel_b, 2U, 100.0, 1016.0,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_EQ_INT(ctx, joint.channel_a_candidate, 1U);
+    SIM_ASSERT_EQ_INT(ctx, joint.channel_b_candidate, 1U);
+    SIM_ASSERT_NEAR(ctx, channel_a[joint.channel_a_candidate].lag_samples,
+        -300.25, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, channel_b[joint.channel_b_candidate].lag_samples,
+        -500.40, 1.0e-12);
+    /* Deterministic tie/rank behavior is stable on a repeated search. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 2U, channel_b, 2U, 100.0, 1016.0,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_EQ_INT(ctx, joint.channel_a_candidate, 1U);
+    SIM_ASSERT_EQ_INT(ctx, joint.channel_b_candidate, 1U);
+
+    /* Latest hardware geometry: A/B are within one sample, but neither is
+     * within the one-sample existing family.  Preserve the valid A/B pair and
+     * expose the independent existing-timing failure separately. */
+    channel_a[0] = make_joint_candidate(
+        fmod(-22.0 + 1016.0, 1016.0), 0.288871, 3.0);
+    channel_b[0] = make_joint_candidate(
+        fmod(-23.0 + 1016.0, 1016.0), 0.312686, 3.0);
+    joint_config.expected_origin_samples =
+        fmod(-36.927791 + 1016.0, 1016.0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        channel_a[0].wrapped_origin_samples,
+        joint_config.expected_origin_samples,
+        142.791120, 1016.0, &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+        1.534369, 1.0e-5);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        channel_b[0].wrapped_origin_samples,
+        joint_config.expected_origin_samples,
+        142.791120, 1016.0, &difference), 0);
+    SIM_ASSERT_NEAR(ctx, difference.absolute_difference_samples,
+        2.534369, 1.0e-5);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        channel_a, 1U, channel_b, 1U, 142.791120, 1016.0,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_TRUE(ctx, joint.valid);
+    SIM_ASSERT_TRUE(ctx, !joint.existing_consistent);
+    SIM_ASSERT_NEAR(ctx,
+        joint.channel_difference.absolute_difference_samples,
+        1.0, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, joint.channel_a_existing_residual_samples,
+        1.534369, 1.0e-5);
+    SIM_ASSERT_NEAR(ctx, joint.channel_b_existing_residual_samples,
+        2.534369, 1.0e-5);
+    return 1;
+}
+
+static double test_dither_correlation_lag(
+    const double *template_samples,
+    const double *capture_samples,
+    size_t count,
+    adc_cal_dither_correlation_mode_t mode)
+{
+    double scores[256];
+    adc_cal_dither_peak_candidate_t candidate;
+    adc_cal_dither_peak_config_t peak_config;
+    adc_cal_dither_validation_config_t confidence_config;
+    size_t candidate_count = 0U;
+
+    if (count > 256U || adc_cal_dither_compute_circular_scores(
+            template_samples, capture_samples, count, mode, scores) != 0) {
+        return NAN;
+    }
+    adc_cal_dither_peak_default_config(&peak_config);
+    peak_config.maximum_candidates = 1U;
+    adc_cal_dither_validation_default_config(&confidence_config);
+    if (adc_cal_dither_find_peak_candidates(
+            scores, count, 0.0, &peak_config, &confidence_config,
+            &candidate, 1U, &candidate_count) != 0 ||
+        candidate_count != 1U) {
+        return NAN;
+    }
+    return candidate.lag_samples;
+}
+
+static double test_dither_timing_lag(
+    const double *template_samples,
+    const double *capture_samples,
+    size_t count)
+{
+    double scores[256];
+    adc_cal_dither_peak_candidate_t candidate;
+    adc_cal_dither_peak_config_t peak_config;
+    adc_cal_dither_validation_config_t confidence_config;
+    size_t candidate_count = 0U;
+    if (count > 256U || adc_cal_dither_compute_timing_scores(
+            template_samples, capture_samples, count,
+            ADC_CAL_DITHER_DEFAULT_ENERGY_SCORE_WEIGHT,
+            ADC_CAL_DITHER_DEFAULT_EDGE_SCORE_WEIGHT, scores) != 0) {
+        return NAN;
+    }
+    adc_cal_dither_peak_default_config(&peak_config);
+    peak_config.maximum_candidates = 1U;
+    adc_cal_dither_validation_default_config(&confidence_config);
+    if (adc_cal_dither_find_peak_candidates(
+            scores, count, 0.0, &peak_config, &confidence_config,
+            &candidate, 1U, &candidate_count) != 0 ||
+        candidate_count != 1U) {
+        return NAN;
+    }
+    return candidate.lag_samples;
+}
+
+static int unit_dither_correlation_coordinates(sim_assert_context_t *ctx)
+{
+    enum { count = 128 };
+    double ideal[count] = {0.0};
+    double rectangle[count] = {0.0};
+    double shaped[count] = {0.0};
+    double capture[count] = {0.0};
+    double random_template[count] = {0.0};
+    double random_capture[count] = {0.0};
+    double direct_scores[count];
+    double energy_scores[count];
+    double edge_scores[count];
+    double timing_scores[count];
+    double anchor_delay = NAN;
+    double adc_even = NAN;
+    double adc_odd = NAN;
+    double expected_lag = NAN;
+    adc_cal_dither_lag_offsets_t offsets;
+    adc_cal_dither_coordinate_mapping_t mapping;
+    adc_cal_dither_periodic_difference_t before;
+    adc_cal_dither_periodic_difference_t after;
+    const double fractional_lag = 9.25;
+
+    /* A direct circular score aligns T[i] with C[i+lag].  It reports the
+     * physical impulse shift, not L-1, (L-1)/2, pulse start, or pulse center. */
+    ideal[11] = 1.0;
+    capture[28] = 1.0;
+    SIM_ASSERT_NEAR(ctx, test_dither_correlation_lag(
+        ideal, capture, count, ADC_CAL_DITHER_CORRELATION_SIGNED),
+        17.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_template_anchor_delay(
+        ideal, count, ADC_CAL_DITHER_CORRELATION_SIGNED, &anchor_delay), 0);
+    SIM_ASSERT_NEAR(ctx, anchor_delay, 0.0, 1.0e-12);
+
+    memset(capture, 0, sizeof(capture));
+    for (size_t i = 20U; i < 28U; ++i) rectangle[i] = 1.0;
+    for (size_t i = 0U; i < count; ++i) {
+        capture[(i + 13U) % count] = rectangle[i];
+    }
+    SIM_ASSERT_NEAR(ctx, test_dither_correlation_lag(
+        rectangle, capture, count, ADC_CAL_DITHER_CORRELATION_SIGNED),
+        13.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_template_anchor_delay(
+        rectangle, count, ADC_CAL_DITHER_CORRELATION_ENERGY,
+        &anchor_delay), 0);
+    SIM_ASSERT_NEAR(ctx, anchor_delay, 0.0, 1.0e-12);
+
+    memset(capture, 0, sizeof(capture));
+    for (size_t i = 0U; i < 11U; ++i) {
+        shaped[40U + i] = 1.0 - fabs((double)i - 5.0) / 6.0;
+    }
+    for (size_t n = 0U; n < count; ++n) {
+        double source = (double)n - fractional_lag;
+        long lower = (long)floor(source);
+        const double fraction = source - (double)lower;
+        while (lower < 0) lower += count;
+        capture[n] = (1.0 - fraction) * shaped[(size_t)lower % count] +
+            fraction * shaped[((size_t)lower + 1U) % count];
+    }
+    SIM_ASSERT_NEAR(ctx, test_dither_correlation_lag(
+        shaped, capture, count, ADC_CAL_DITHER_CORRELATION_SIGNED),
+        fractional_lag, 0.08);
+    SIM_ASSERT_NEAR(ctx, test_dither_timing_lag(
+        shaped, capture, count), fractional_lag, 0.08);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+        shaped, shaped, count, ADC_CAL_DITHER_CORRELATION_ENERGY,
+        energy_scores), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+        shaped, shaped, count, ADC_CAL_DITHER_CORRELATION_EDGE_ENERGY,
+        edge_scores), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_timing_scores(
+        shaped, shaped, count,
+        ADC_CAL_DITHER_DEFAULT_ENERGY_SCORE_WEIGHT,
+        ADC_CAL_DITHER_DEFAULT_EDGE_SCORE_WEIGHT, timing_scores), 0);
+    SIM_ASSERT_TRUE(ctx, 1.0 - edge_scores[1] >
+        1.0 - energy_scores[1]);
+    SIM_ASSERT_TRUE(ctx, 1.0 - timing_scores[1] >
+        1.0 - energy_scores[1]);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+        shaped, capture, count, ADC_CAL_DITHER_CORRELATION_SIGNED,
+        direct_scores), 0);
+    /* Explicit reversed-template convolution at output n+L-1 is the same
+     * dot product; the production API has already removed that raw index. */
+    {
+        double direct_numerator = 0.0;
+        double template_mean = 0.0;
+        double capture_mean = 0.0;
+        double template_power = 0.0;
+        double capture_power = 0.0;
+        for (size_t i = 0U; i < count; ++i) {
+            template_mean += shaped[i];
+            capture_mean += capture[i];
+        }
+        template_mean /= count;
+        capture_mean /= count;
+        for (size_t i = 0U; i < count; ++i) {
+            const double x = shaped[i] - template_mean;
+            const double y = capture[(i + 9U) % count] - capture_mean;
+            direct_numerator += x * y;
+            template_power += x * x;
+            capture_power += (capture[i] - capture_mean) *
+                (capture[i] - capture_mean);
+        }
+        SIM_ASSERT_NEAR(ctx, direct_scores[9],
+            direct_numerator / sqrt(template_power * capture_power),
+            1.0e-12);
+    }
+
+    /* The DAC reconstruction is point evaluation by linear interpolation.
+     * Its symmetric two-tap fractional kernel adds no coordinate delay. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_dac_position_to_adc_position(
+        96.0, 2600.0 / 1450.0, 0.0, 0.0, &adc_even), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_dac_position_to_adc_position(
+        96.0, 2600.0 / 1450.0, 1.0, 0.0, &adc_odd), 0);
+    SIM_ASSERT_NEAR(ctx, adc_even, 96.0 / (2600.0 / 1450.0), 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, adc_even - adc_odd,
+        1.0 / (2600.0 / 1450.0), 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_map_reference_position(
+        71.38461538461539, 108.0, 15.976486, 1016.0, &mapping), 0);
+    SIM_ASSERT_NEAR(ctx, mapping.window_relative_position_samples,
+        -36.61538461538461, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, mapping.capture_unwrapped_position_samples,
+        87.36110138461539, 1.0e-12);
+
+    /* Independent per-event signs make a signed truncated-frame template
+     * invalid when the capture begins elsewhere in the long DAC loop.  The
+     * centered-energy observable retains identical event support. */
+    for (size_t event = 0U; event < 8U; ++event) {
+        const double template_sign = (event & 1U) ? -1.0 : 1.0;
+        const double capture_sign =
+            (event == 0U || event == 3U || event == 4U) ? -1.0 : 1.0;
+        const size_t center = 8U + event * 16U;
+        for (long j = -3; j <= 3; ++j) {
+            const double value = 1.0 - fabs((double)j) / 4.0;
+            const size_t source = (size_t)((long)center + j);
+            random_template[source] = template_sign * value;
+            random_capture[(source + 7U) % count] = capture_sign * value;
+        }
+    }
+    SIM_ASSERT_NEAR(ctx, test_dither_correlation_lag(
+        random_template, random_capture, count,
+        ADC_CAL_DITHER_CORRELATION_ENERGY), 7.0, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, test_dither_timing_lag(
+        random_template, random_capture, count), 7.0, 0.03);
+
+    memset(&offsets, 0, sizeof(offsets));
+    offsets.template_anchor_delay_samples = anchor_delay;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_expected_lag(
+        15.976486, &offsets, &expected_lag), 0);
+    SIM_ASSERT_NEAR(ctx, expected_lag, 15.976486, 1.0e-12);
+    /* The old hardware number remains rejected: no 7.1 correction is hidden
+     * in the coordinate conversion.  A correctly detected synthetic family
+     * closes without relaxing the one-sample tolerance. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        fmod(-15.976486 + 1016.0, 1016.0),
+        fmod(-467.941169 + 1016.0, 1016.0),
+        142.791120, 1016.0, &before), 0);
+    SIM_ASSERT_NEAR(ctx, before.absolute_difference_samples,
+        7.129165, 5.0e-6);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
+        fmod(-15.976486 + 1016.0, 1016.0),
+        fmod(-(15.976486 + 4.0 * 142.791120) + 1016.0, 1016.0),
+        142.791120, 1016.0, &after), 0);
+    SIM_ASSERT_NEAR(ctx, after.absolute_difference_samples, 0.0, 1.0e-9);
+    return 1;
+}
+
+static int unit_txt_waveform_timing_and_dither_diagnostics(
+    sim_assert_context_t *ctx)
+{
+    enum {
+        RAW_SAMPLE_COUNT = 65024,
+        CANDIDATE_COUNT = 8,
+        OFFSET_WINDOW_START = 108,
+        OFFSET_WINDOW_LENGTH = 800
+    };
+    static int16_t raw_dac[RAW_SAMPLE_COUNT];
+    static int16_t even_reference[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t odd_reference[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t channel_a[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t channel_b[SIM_ADC_CHANNEL_SAMPLES];
+    static uint8_t dma_bytes[ADC_RAW_FRAME_BYTES];
+    static double dither_reference[SIM_ADC_CHANNEL_SAMPLES];
+    static double residual_a[SIM_ADC_CHANNEL_SAMPLES];
+    static double residual_b[SIM_ADC_CHANNEL_SAMPLES];
+    static double scores_a[SIM_ADC_CHANNEL_SAMPLES];
+    static double scores_b[SIM_ADC_CHANNEL_SAMPLES];
+    static double edge_scores_a[SIM_ADC_CHANNEL_SAMPLES];
+    static double edge_scores_b[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t offset_reference[OFFSET_WINDOW_LENGTH];
+    static int16_t offset_adc[OFFSET_WINDOW_LENGTH];
+    adc_cal_dither_peak_candidate_t candidates_a[CANDIDATE_COUNT];
+    adc_cal_dither_peak_candidate_t candidates_b[CANDIDATE_COUNT];
+    adc_cal_dither_event_summary_t events;
+    adc_cal_dither_peak_config_t peak_config;
+    adc_cal_dither_validation_config_t validation_config;
+    adc_cal_dither_validation_input_t validation_input;
+    adc_cal_dither_validation_result_t validation_result;
+    adc_cal_dither_joint_config_t joint_config;
+    adc_cal_dither_joint_result_t joint;
+    timing_alignment_result_t timing;
+    calibration_state_t offset_fit;
+    calibration_config_t offset_config;
+    size_t raw_count = 0U;
+    size_t candidate_count_a = 0U;
+    size_t candidate_count_b = 0U;
+    size_t dma_byte_count = 0U;
+    size_t reconstructed_count = 0U;
+    float fractional_lag = 0.0f;
+    double existing_lag;
+    double resolved_lag;
+    double expected_origin;
+    int32_t tone_cycle_offset;
+    adc_cal_dither_periodic_difference_t cycle_residual;
+    const int16_t *selected_reference = NULL;
+    const int16_t *selected_channel = NULL;
+    const double adc_rate_hz = 1450000000.0;
+    const double dac_rate_hz = 2600000000.0;
+    const double tone_hz = 100003075.78740157;
+    const double timing_lags[] = {0.25, 17.25, -31.25, 71.25, -67.25};
+
+    SIM_ASSERT_EQ_INT(ctx, load_i16_text_waveform(
+        ADC_CAL_TEST_WAVEFORM_PATH, raw_dac, RAW_SAMPLE_COUNT,
+        &raw_count), 0);
+    SIM_ASSERT_EQ_INT(ctx, raw_count, RAW_SAMPLE_COUNT);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_resample_dac_reference(
+        raw_dac, raw_count, dac_rate_hz / adc_rate_hz, 0.0,
+        even_reference, SIM_ADC_CHANNEL_SAMPLES), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_resample_dac_reference(
+        raw_dac, raw_count, dac_rate_hz / adc_rate_hz, 1.0,
+        odd_reference, SIM_ADC_CHANNEL_SAMPLES), 0);
+    SIM_ASSERT_TRUE(ctx, memcmp(
+        even_reference, odd_reference, sizeof(even_reference)) != 0);
+
+    /* adc -cal timing: every modeled frame must pass correlation/fractional
+     * checks and recover phase modulo the 100 MHz tone period.  The real DMA
+     * fixture below supplies the dither family used for absolute unwrapping. */
+    for (size_t frame = 0U;
+         frame < sizeof(timing_lags) / sizeof(timing_lags[0]); ++frame) {
+        SIM_ASSERT_EQ_INT(ctx, make_scaled_dac_capture(
+            raw_dac, raw_count, channel_a, SIM_ADC_CHANNEL_SAMPLES,
+            dac_rate_hz / adc_rate_hz, timing_lags[frame], 0.018), 0);
+        SIM_ASSERT_EQ_INT(ctx, timing_find_circular_lag(
+            even_reference, channel_a, SIM_ADC_CHANNEL_SAMPLES,
+            &timing), 0);
+        SIM_ASSERT_EQ_INT(ctx, timing_estimate_fractional_lag(
+            even_reference, channel_a, SIM_ADC_CHANNEL_SAMPLES,
+            timing.lag_samples, &fractional_lag), 0);
+        SIM_ASSERT_TRUE(ctx, timing.correlation >= 0.970f);
+        SIM_ASSERT_TRUE(ctx, fabs((double)fractional_lag) <= 0.5);
+        {
+            const double raw_error =
+                (double)timing.lag_samples + (double)fractional_lag -
+                timing_lags[frame];
+            const double tone_period = adc_rate_hz / tone_hz;
+            const double cycle_reduced_error = raw_error -
+                round(raw_error / tone_period) * tone_period;
+            SIM_ASSERT_NEAR(ctx, cycle_reduced_error, 0.0, 0.05);
+        }
+    }
+
+    /* adc -cal diagnose: consume the exact captured DMA bytes, reconstruct
+     * both hardware channels, and select the best uploaded-reference phase. */
+    SIM_ASSERT_EQ_INT(ctx, load_u8_csv_capture(
+        ADC_CAL_TEST_CAPTURE_PATH, dma_bytes, ADC_RAW_FRAME_BYTES,
+        &dma_byte_count), 0);
+    SIM_ASSERT_EQ_INT(ctx, dma_byte_count, ADC_RAW_FRAME_BYTES);
+    SIM_ASSERT_EQ_INT(ctx, adc_reconstruct_channels(
+        dma_bytes, dma_byte_count, channel_a, SIM_ADC_CHANNEL_SAMPLES,
+        channel_b, SIM_ADC_CHANNEL_SAMPLES, &reconstructed_count), 0);
+    SIM_ASSERT_EQ_INT(ctx, reconstructed_count, SIM_ADC_CHANNEL_SAMPLES);
+    {
+        const int16_t *references[2] = {even_reference, odd_reference};
+        const int16_t *channels[2] = {channel_a, channel_b};
+        float best_correlation = -2.0f;
+        for (size_t channel = 0U; channel < 2U; ++channel) {
+            for (size_t phase = 0U; phase < 2U; ++phase) {
+                timing_alignment_result_t candidate_timing;
+                SIM_ASSERT_EQ_INT(ctx, timing_find_circular_lag(
+                    references[phase], channels[channel],
+                    SIM_ADC_CHANNEL_SAMPLES, &candidate_timing), 0);
+                if (candidate_timing.correlation > best_correlation) {
+                    best_correlation = candidate_timing.correlation;
+                    timing = candidate_timing;
+                    selected_reference = references[phase];
+                    selected_channel = channels[channel];
+                }
+            }
+        }
+    }
+    SIM_ASSERT_TRUE(ctx, selected_reference != NULL && selected_channel != NULL);
+    SIM_ASSERT_EQ_INT(ctx, timing_estimate_fractional_lag(
+        selected_reference, selected_channel, SIM_ADC_CHANNEL_SAMPLES,
+        timing.lag_samples, &fractional_lag), 0);
+    existing_lag = (double)timing.lag_samples + (double)fractional_lag;
+    SIM_ASSERT_TRUE(ctx, timing.correlation >= 0.970f);
+    SIM_ASSERT_EQ_INT(ctx, remove_known_tone(
+        selected_reference, SIM_ADC_CHANNEL_SAMPLES, tone_hz, adc_rate_hz,
+        dither_reference), 0);
+    SIM_ASSERT_EQ_INT(ctx, remove_known_tone(
+        channel_a, SIM_ADC_CHANNEL_SAMPLES, tone_hz, adc_rate_hz,
+        residual_a), 0);
+    SIM_ASSERT_EQ_INT(ctx, remove_known_tone(
+        channel_b, SIM_ADC_CHANNEL_SAMPLES, tone_hz, adc_rate_hz,
+        residual_b), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_summarize_events(
+        dither_reference, SIM_ADC_CHANNEL_SAMPLES, 108U, 800U, 0.25,
+        &events), 0);
+    SIM_ASSERT_TRUE(ctx, events.complete_count >= 1U);
+    SIM_ASSERT_EQ_INT(ctx, events.partial_count, 0U);
+
+    adc_cal_dither_peak_default_config(&peak_config);
+    adc_cal_dither_validation_default_config(&validation_config);
+    peak_config.maximum_candidates = CANDIDATE_COUNT;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+        dither_reference, residual_a, SIM_ADC_CHANNEL_SAMPLES,
+        ADC_CAL_DITHER_CORRELATION_ENERGY, scores_a), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+        dither_reference, residual_b, SIM_ADC_CHANNEL_SAMPLES,
+        ADC_CAL_DITHER_CORRELATION_ENERGY, scores_b), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_peak_candidates(
+        scores_a, SIM_ADC_CHANNEL_SAMPLES, events.spacing_samples,
+        &peak_config, &validation_config, candidates_a, CANDIDATE_COUNT,
+        &candidate_count_a), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_peak_candidates(
+        scores_b, SIM_ADC_CHANNEL_SAMPLES, events.spacing_samples,
+        &peak_config, &validation_config, candidates_b, CANDIDATE_COUNT,
+        &candidate_count_b), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+        dither_reference, residual_a, SIM_ADC_CHANNEL_SAMPLES,
+        ADC_CAL_DITHER_CORRELATION_EDGE_ENERGY, edge_scores_a), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+        dither_reference, residual_b, SIM_ADC_CHANNEL_SAMPLES,
+        ADC_CAL_DITHER_CORRELATION_EDGE_ENERGY, edge_scores_b), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_refine_candidate_lags(
+        edge_scores_a, SIM_ADC_CHANNEL_SAMPLES,
+        ADC_CAL_DITHER_DEFAULT_EDGE_REFINE_RADIUS,
+        candidates_a, candidate_count_a), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_refine_candidate_lags(
+        edge_scores_b, SIM_ADC_CHANNEL_SAMPLES,
+        ADC_CAL_DITHER_DEFAULT_EDGE_REFINE_RADIUS,
+        candidates_b, candidate_count_b), 0);
+
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_lag_to_wrapped_origin(
+        existing_lag, (double)SIM_ADC_CHANNEL_SAMPLES,
+        &expected_origin), 0);
+    adc_cal_dither_joint_default_config(&joint_config);
+    joint_config.use_expected_origin = 1;
+    joint_config.expected_origin_samples = expected_origin;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        candidates_a, candidate_count_a, candidates_b, candidate_count_b,
+        events.spacing_samples, (double)SIM_ADC_CHANNEL_SAMPLES,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_TRUE(ctx, joint.valid);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_resolve_tone_cycle(
+        existing_lag, adc_rate_hz / tone_hz,
+        joint.consensus_origin_samples, events.spacing_samples,
+        (double)SIM_ADC_CHANNEL_SAMPLES, 1.0, &resolved_lag,
+        &tone_cycle_offset, &cycle_residual), 0);
+    SIM_ASSERT_TRUE(ctx, cycle_residual.absolute_difference_samples <= 1.0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_lag_to_wrapped_origin(
+        resolved_lag, (double)SIM_ADC_CHANNEL_SAMPLES,
+        &expected_origin), 0);
+    joint_config.expected_origin_samples = expected_origin;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_select_joint_candidate_pair(
+        candidates_a, candidate_count_a, candidates_b, candidate_count_b,
+        events.spacing_samples, (double)SIM_ADC_CHANNEL_SAMPLES,
+        &joint_config, &joint), 0);
+    SIM_ASSERT_TRUE(ctx, joint.existing_consistent);
+    SIM_ASSERT_TRUE(ctx,
+        joint.channel_difference.absolute_difference_samples <= 1.0);
+    SIM_ASSERT_NEAR(ctx,
+        joint.channel_a_existing_residual_samples, 0.0, 1.0);
+    SIM_ASSERT_NEAR(ctx,
+        joint.channel_b_existing_residual_samples, 0.0, 1.0);
+
+    memset(&validation_input, 0, sizeof(validation_input));
+    validation_config.minimum_complete_events = 1U;
+    validation_input.selected_channel_valid = 1;
+    validation_input.channel_a_available = 1;
+    validation_input.channel_b_available = 1;
+    validation_input.channel_a_valid = 1;
+    validation_input.channel_b_valid = 1;
+    validation_input.joint_pair_required = 1;
+    validation_input.joint_pair_valid = joint.valid;
+    validation_input.existing_comparison_required = 1;
+    validation_input.channel_disagreement_samples =
+        joint.channel_difference.absolute_difference_samples;
+    validation_input.existing_disagreement_samples = fmax(
+        joint.channel_a_existing_residual_samples,
+        joint.channel_b_existing_residual_samples);
+    validation_input.complete_event_count = events.complete_count;
+    validation_input.event_indices_valid = events.partial_count == 0U;
+    validation_input.numerical_values_finite = 1;
+    validation_input.independent_peak_ratio =
+        candidates_a[joint.channel_a_candidate].absolute_peak >=
+                candidates_b[joint.channel_b_candidate].absolute_peak ?
+            candidates_a[joint.channel_a_candidate].independent_peak_ratio :
+            candidates_b[joint.channel_b_candidate].independent_peak_ratio;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_validate_detection(
+        &validation_input, &validation_config, &validation_result), 0);
+    SIM_ASSERT_TRUE(ctx, validation_result.structural_valid);
+    SIM_ASSERT_TRUE(ctx,
+        validation_result.recommendation != ADC_CAL_DITHER_RECOMMEND_REJECT);
+
+    /* Exercise the fixed-window estimator used by adc -cal offset with the
+     * exact uploaded waveform and captured DMA frame.  The estimator must
+     * retain high correlation after fractional timing alignment, and its
+     * additive correction must cancel both the measured hardware residual
+     * and representative positive/negative injected offsets. */
+    for (size_t i = 0U; i < OFFSET_WINDOW_LENGTH; ++i) {
+        const double source_position =
+            (double)(OFFSET_WINDOW_START + i) + existing_lag;
+        size_t lower;
+        double fraction;
+        SIM_ASSERT_TRUE(ctx, source_position >= 0.0);
+        SIM_ASSERT_TRUE(ctx,
+            source_position < (double)(SIM_ADC_CHANNEL_SAMPLES - 1U));
+        if (source_position < 0.0 ||
+            source_position >= (double)(SIM_ADC_CHANNEL_SAMPLES - 1U)) {
+            return 0;
+        }
+        lower = (size_t)floor(source_position);
+        fraction = source_position - (double)lower;
+        offset_reference[i] = selected_reference[OFFSET_WINDOW_START + i];
+        offset_adc[i] = (int16_t)lrint(
+            (1.0 - fraction) * (double)selected_channel[lower] +
+            fraction * (double)selected_channel[lower + 1U]);
+    }
+    calibration_default_config(&offset_config);
+    SIM_ASSERT_EQ_INT(ctx,
+        calibration_init(&offset_fit, &offset_config), CALIBRATION_OK);
+    SIM_ASSERT_EQ_INT(ctx, calibration_analyze_frame(
+        &offset_fit, offset_adc, offset_reference, OFFSET_WINDOW_LENGTH),
+        CALIBRATION_OK);
+    SIM_ASSERT_TRUE(ctx, offset_fit.metrics.correlation >= 0.970f);
+    SIM_ASSERT_TRUE(ctx, isfinite(offset_fit.metrics.measured_gain));
+    SIM_ASSERT_TRUE(ctx, isfinite(offset_fit.metrics.measured_offset));
+    {
+        double hardware_residual_sum = 0.0;
+        const double nominal_gain = offset_fit.metrics.measured_gain;
+        const double injected_offsets[] = {0.0, 37.0, -42.0};
+        for (size_t i = 0U; i < OFFSET_WINDOW_LENGTH; ++i) {
+            hardware_residual_sum += (double)offset_adc[i] -
+                nominal_gain * (double)offset_reference[i];
+        }
+        const double hardware_residual =
+            hardware_residual_sum / (double)OFFSET_WINDOW_LENGTH;
+        SIM_ASSERT_NEAR(ctx, hardware_residual,
+            offset_fit.metrics.measured_offset, 0.01);
+        for (size_t test = 0U;
+             test < sizeof(injected_offsets) / sizeof(injected_offsets[0]);
+             ++test) {
+            const double measured_residual =
+                hardware_residual + injected_offsets[test];
+            const double offset_correction = -measured_residual;
+            SIM_ASSERT_NEAR(ctx,
+                measured_residual + offset_correction, 0.0, 1.0e-9);
+        }
+    }
+    return 1;
+}
+
 static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
 {
     double template_samples[256];
@@ -1001,6 +2270,10 @@ static void run_unit_tests(sim_assert_context_t *ctx)
     (void)unit_nonfinite_config_rejection(ctx);
     (void)unit_finite_config_boundaries(ctx);
     (void)unit_dither_estimator_direct(ctx);
+    (void)unit_dither_detection_validation(ctx);
+    (void)unit_dither_joint_alignment(ctx);
+    (void)unit_dither_correlation_coordinates(ctx);
+    (void)unit_txt_waveform_timing_and_dither_diagnostics(ctx);
     (void)unit_skew_estimator_direct(ctx);
     (void)unit_performance_estimator_direct(ctx);
     (void)unit_boundary_conditions(ctx);

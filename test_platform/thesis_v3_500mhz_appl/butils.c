@@ -140,7 +140,6 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_TONE_REFINE_HALF_RANGE_BINS            0.75
 #define CAL_TONE_REFINE_MIN_STEP                  1.0e-12
 #define CAL_TONE_REFINE_MAX_ITERATIONS              40U
-#define CAL_DITHER_PEAK_GUARD_SAMPLES                8U
 #define CAL_DITHER_EVENT_THRESHOLD_FRACTION         0.25
 #define CAL_DITHER_CONSISTENCY_TOLERANCE_SAMPLES    1.0
 #ifndef CAL_TONE_VALIDATION_MAX_RMSE_CODES
@@ -149,11 +148,26 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #ifndef CAL_TONE_VALIDATION_MIN_CORRELATION
 #define CAL_TONE_VALIDATION_MIN_CORRELATION       CAL_DAC_REF_MIN_CORRELATION
 #endif
-#ifndef CAL_DITHER_VALIDATION_MIN_MARGIN
-#define CAL_DITHER_VALIDATION_MIN_MARGIN            6.0
+#ifndef CAL_DITHER_VALIDATION_WEAK_PEAK_RATIO
+#define CAL_DITHER_VALIDATION_WEAK_PEAK_RATIO       ADC_CAL_DITHER_DEFAULT_WEAK_PEAK_RATIO
 #endif
-#ifndef CAL_DITHER_VALIDATION_MIN_PEAK_RATIO
-#define CAL_DITHER_VALIDATION_MIN_PEAK_RATIO        1.10
+#ifndef CAL_DITHER_VALIDATION_STRONG_PEAK_RATIO
+#define CAL_DITHER_VALIDATION_STRONG_PEAK_RATIO     ADC_CAL_DITHER_DEFAULT_STRONG_PEAK_RATIO
+#endif
+#ifndef CAL_DITHER_PERIODIC_EXCLUSION_WIDTH_SAMPLES
+#define CAL_DITHER_PERIODIC_EXCLUSION_WIDTH_SAMPLES ADC_CAL_DITHER_DEFAULT_PERIODIC_EXCLUSION_WIDTH
+#endif
+#ifndef CAL_DITHER_MAX_CHANNEL_CANDIDATES
+#define CAL_DITHER_MAX_CHANNEL_CANDIDATES ADC_CAL_DITHER_DEFAULT_CANDIDATE_COUNT
+#endif
+#ifndef CAL_DITHER_EDGE_REFINE_RADIUS
+#define CAL_DITHER_EDGE_REFINE_RADIUS ADC_CAL_DITHER_DEFAULT_EDGE_REFINE_RADIUS
+#endif
+#ifndef CAL_DITHER_INTERNAL_CONTEXT_TOLERANCE_SAMPLES
+#define CAL_DITHER_INTERNAL_CONTEXT_TOLERANCE_SAMPLES 1.0e-6
+#endif
+#ifndef CAL_DITHER_INTERNAL_EVENT_FAMILY_TOLERANCE_SAMPLES
+#define CAL_DITHER_INTERNAL_EVENT_FAMILY_TOLERANCE_SAMPLES 1.0
 #endif
 #ifndef CAL_DITHER_VALIDATION_MIN_COMPLETE_EVENTS
 #define CAL_DITHER_VALIDATION_MIN_COMPLETE_EVENTS   1U
@@ -272,22 +286,39 @@ typedef struct {
     double channel_b_n0;
     double common_selected_n0;
     double channel_n0_disagreement_samples;
+    int32_t channel_frame_offset;
+    int32_t channel_event_offset;
+    double channel_family_disagreement_samples;
     uint32_t window_partial_event_count;
     uint32_t total_dither_event_count;
     uint8_t dither_event_indices_valid;
     const char *numerical_reason;
+    adc_cal_dither_confidence_t peak_confidence;
+    adc_cal_dither_recommendation_t recommendation;
+    adc_cal_dither_validation_reason_t dither_reason;
 } calibration_timing_validation_t;
 
 typedef struct {
     uint8_t valid;
+    uint32_t candidate_rank;
+    uint32_t candidate_count;
+    uint32_t coarse_peak_index;
+    double coarse_lag_samples;
+    uint32_t peak_index;
+    double fractional_offset_samples;
     double n0_integer;
     double n0_fractional;
     double sign;
     double peak;
+    uint32_t global_strongest_index;
+    double global_strongest_peak;
+    double raw_second_peak;
     double second_peak;
+    double raw_peak_ratio;
     double peak_ratio;
     double align_margin;
     double derived_lag;
+    adc_cal_dither_confidence_t peak_confidence;
 } calibration_dither_channel_alignment_t;
 
 typedef struct {
@@ -526,14 +557,55 @@ typedef struct {
     double dither_n0_fractional;
     double dither_sign;
     double dither_peak;
+    double dither_raw_second_peak;
     double dither_second_peak;
+    double dither_raw_peak_ratio;
     double dither_peak_ratio;
     double dither_align_margin;
     double dither_event_spacing_samples;
+    double reference_dither_event_phase_samples;
+    double lag_comparison_phase_offset_samples;
+    double expected_dither_lag_samples;
+    uint8_t tone_cycle_resolved;
+    int32_t tone_cycle_offset;
+    double tone_cycle_residual_samples;
+    double predicted_event_origin_from_existing;
+    double detected_event_origin;
+    double applied_reference_anchor_offset_samples;
+    double applied_resampling_delay_samples;
+    double applied_template_anchor_delay_samples;
+    double applied_reconstruction_offset_samples;
+    double applied_window_coordinate_offset_samples;
+    double first_complete_dither_event;
+    double last_complete_dither_event;
     uint32_t complete_dither_event_count;
     double dither_derived_lag;
     double alignment_disagreement_samples;
+    int32_t alignment_frame_offset;
+    int32_t alignment_event_offset;
+    double alignment_family_disagreement_samples;
     uint8_t alignment_methods_consistent;
+    double origin_lag_closure_samples;
+    double first_complete_capture_event;
+    double last_complete_capture_event;
+    double first_complete_capture_event_unwrapped;
+    double last_complete_capture_event_unwrapped;
+    uint8_t capture_event_train_crosses_frame;
+    int32_t complete_event_frame_offset;
+    int32_t complete_event_offset;
+    double complete_event_family_span_error;
+    uint8_t complete_event_count_consistent;
+    int32_t capture_event_frame_offset;
+    int32_t capture_event_offset;
+    double capture_event_family_span_error;
+    uint8_t capture_event_count_consistent;
+    uint8_t joint_candidate_pair_valid;
+    double joint_candidate_score;
+    uint8_t joint_same_polarity;
+    uint8_t joint_existing_consistent;
+    double joint_channel_a_existing_residual_samples;
+    double joint_channel_b_existing_residual_samples;
+    uint8_t timing_context_internally_consistent;
     uint32_t partial_dither_event_count;
     uint32_t total_dither_event_count;
     uint8_t dither_event_indices_valid;
@@ -1097,6 +1169,7 @@ static int calibration_compute_timing_diagnostics(
     double expected_tone_hz,
     double adc_sample_rate_hz,
     double existing_lag,
+    int existing_timing_valid,
     size_t fixed_window_start,
     size_t fixed_window_length,
     calibration_timing_diagnostics_t *diagnostics
