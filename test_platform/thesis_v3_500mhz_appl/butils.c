@@ -2527,7 +2527,22 @@ int adc_capture_frame(void)
      * The manual command has a natural delay before dma -w.
      * Give the DMA hardware time to settle after reset.
      */
-    usleep(100000);  /* 100 ms */
+    if (adc_sweep_active)
+    {
+        /* Keep the raw lwIP receive queue drained during long automatic
+         * calibration runs.  A single offset run can spend tens of seconds
+         * in this settle delay; leaving it as one blocking sleep exhausts
+         * the pbuf pool even though recv_callback() correctly frees pbufs. */
+        for (unsigned settle_ms = 0U; settle_ms < 100U; ++settle_ms)
+        {
+            udp_service_calibration();
+            usleep(1000);
+        }
+    }
+    else
+    {
+        usleep(100000);  /* 100 ms */
+    }
 
     status = XAxiDma_ReadReg(
         dma_inst.RegBase,

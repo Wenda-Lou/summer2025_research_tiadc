@@ -33,6 +33,7 @@ struct udp_pcb *udp_pcb_block;
 
 extern uint8_t uart_send_flag; //Send flag enabled by the uart
 extern uint8_t* RxBufferPtr;
+extern volatile uint8_t adc_sweep_active;
 
 #define REFERENCE_PACKET_HEADER_BYTES 8U
 #define REFERENCE_PACKET_MAX_SAMPLES \
@@ -66,6 +67,15 @@ void recv_callback(
 
     if (p == NULL)
     {
+        return;
+    }
+
+    /* Calibration owns the ADC, uploaded reference, and DMA buffer.  Drain
+     * and release network traffic while it runs, but never execute a UDP
+     * command that could mutate that state midway through a batch. */
+    if (adc_sweep_active)
+    {
+        pbuf_free(p);
         return;
     }
 
@@ -242,6 +252,13 @@ void udp_update(void)
         uart_send_flag = 0;
         udp_send_mem();        
     }
+}
+
+void udp_service_calibration(void)
+{
+    /* recv_callback() frees every received pbuf and suppresses command
+     * execution while adc_sweep_active is set. */
+    xemacif_input(&server_netif);
 }
 
 static uint16_t read_u16_le(const uint8_t *data)

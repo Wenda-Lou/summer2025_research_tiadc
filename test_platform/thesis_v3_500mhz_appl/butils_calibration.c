@@ -5847,7 +5847,18 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                             state->latest_controller_gain =             fabsf(state->filtered_residual) <                 CALIBRATION_OFFSET_NEAR_RESIDUAL_CODES ?             CALIBRATION_OFFSET_NEAR_UPDATE_STEP :             CALIBRATION_OFFSET_UPDATE_STEP;
                                                                                                             proposed_offset_update =             -state->latest_controller_gain * state->filtered_residual;
                                                                                                             coefficient_delta = proposed_offset_update;
-                                                                                                            inside_convergence_region =             fabsf(state->filtered_residual) <=                 (state->convergence_count > 0U ?                     CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES :                     CALIBRATION_OFFSET_ENTER_TOLERANCE_CODES);
+                                                                                                            {
+                                                                                                                const float convergence_limit =
+                                                                                                                    state->convergence_count > 0U ?
+                                                                                                                        CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES :
+                                                                                                                        CALIBRATION_OFFSET_ENTER_TOLERANCE_CODES;
+                                                                                                                /* A slow IIR filter must not hide a current-batch drift.
+                                                                                                                 * Require both estimates to be inside the confirmation
+                                                                                                                 * region before freezing the coefficient. */
+                                                                                                                inside_convergence_region =
+                                                                                                                    fabsf(state->filtered_residual) <= convergence_limit &&
+                                                                                                                    fabsf(batch.mean) <= convergence_limit;
+                                                                                                            }
                                                                                                             batch_pass =             batch.accepted >= CALIBRATION_OFFSET_MIN_ACCEPTED_FRAMES &&             inside_convergence_region &&             fabsf(coefficient_delta) <=                 CALIBRATION_OFFSET_MAX_UPDATE_CODES;
                                                                                                             correction_held = batch_pass;
                                                                                                             if (batch_pass) {
@@ -5855,7 +5866,9 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                                 coefficient_delta = 0.0f;
                                                                                                             }
                                                                                                             else {
-                                                                                                                if (fabsf(state->filtered_residual) >                     CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES)                 state->convergence_count = 0U;
+                                                                                                                if (fabsf(state->filtered_residual) >                     CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES ||
+                                                                                                                    fabsf(batch.mean) > CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES)
+                                                                                                                    state->convergence_count = 0U;
                                                                                                             }
                                                                                                             if (fabsf(state->filtered_residual) <=                 CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES ||             state->convergence_count > 0U) {
                                                                                                                 state->no_improvement_count = 0U;
@@ -5978,7 +5991,12 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                                 state->final_status = CALIBRATION_OFFSET_LOOP_PASS;
                                                                                                                 state->stage_result = CALIBRATION_OFFSET_RESULT_CONVERGED;
                                                                                                             }
-                                                                                                            else if (fabsf(state->verification_residual) <=                    CALIBRATION_OFFSET_VERIFICATION_PROVISIONAL_LIMIT_CODES) {
+                                                                                                            else if (fabsf(state->verification_residual) <=
+                                                                                                                CALIBRATION_OFFSET_VERIFICATION_PROVISIONAL_LIMIT_CODES +
+                                                                                                                fminf(
+                                                                                                                    CALIBRATION_OFFSET_VERIFICATION_MAX_UNCERTAINTY_CODES,
+                                                                                                                    CALIBRATION_OFFSET_VERIFICATION_UNCERTAINTY_SIGMA *
+                                                                                                                        state->verification_standard_error)) {
                                                                                                                 state->verification_status = CAL_OFFSET_VERIFICATION_MARGINAL;
                                                                                                                 state->final_status = CALIBRATION_OFFSET_LOOP_BEST_AVAILABLE;
                                                                                                                 state->stage_result = CALIBRATION_OFFSET_RESULT_PROVISIONAL;
