@@ -2033,6 +2033,8 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
         adc_cal_dither_result_t window_events;
         adc_cal_skew_config_t skew_config;
         adc_cal_skew_result_t skew_result;
+        adc_cal_skew_stage_policy_input_t policy_input;
+        adc_cal_skew_stage_policy_result_t policy_result;
         size_t window_candidate_count = 0U;
         adc_cal_dither_peak_default_config(&window_peak_config);
         adc_cal_dither_validation_default_config(&window_validation_config);
@@ -2095,6 +2097,23 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
         SIM_ASSERT_TRUE(ctx,
             fabs(skew_result.relative_skew_samples) <=
                 skew_config.max_linear_skew_samples);
+        memset(&policy_input, 0, sizeof(policy_input));
+        policy_input.primary_estimate_valid = skew_result.valid;
+        policy_input.measured_skew_samples =
+            skew_result.relative_skew_samples;
+        policy_input.accepted_frames = 10U;
+        policy_input.minimum_accepted_frames = 3U;
+        policy_input.batch_std_samples = 0.0;
+        policy_input.maximum_batch_std_samples = 0.02;
+        policy_input.tolerance_samples = 0.01;
+        policy_input.dither_status = ADC_CAL_SKEW_DITHER_VALID;
+        policy_input.actuator_available = 0;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+            &policy_input, &policy_result), 0);
+        SIM_ASSERT_TRUE(ctx, policy_result.pipeline_may_continue);
+        SIM_ASSERT_TRUE(ctx, policy_result.output_usable);
+        SIM_ASSERT_EQ_INT(ctx, policy_result.correction_status,
+            ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE);
         for (size_t i = 0U; i < OFFSET_WINDOW_LENGTH; ++i) {
             offset_capture_template[i] *= 0.25;
         }
@@ -2110,6 +2129,67 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
             SIM_ASSERT_TRUE(ctx,
                 gain_projection.normalized_projection < 20.0);
         }
+    }
+    return 1;
+}
+
+static int unit_all_generated_txt_dma_captures(sim_assert_context_t *ctx)
+{
+    enum { MAX_DAC_SAMPLES = 65024 };
+    static const char *fixture_names[] = {
+        "sine_100MHz_2p6GSPS_impulse_dither.txt",
+        "sine_100MHz_2p6GSPS_non_dither.txt",
+        "sine_350MHz_2p6GSPS_impulse_dither.txt",
+        "sine_350MHz_2p6GSPS_non_dither.txt"
+    };
+    static int16_t dac[MAX_DAC_SAMPLES];
+    static int16_t reference[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t channel_a[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t channel_b[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t reconstructed_a[SIM_ADC_CHANNEL_SAMPLES];
+    static int16_t reconstructed_b[SIM_ADC_CHANNEL_SAMPLES];
+    static uint8_t dma[ADC_RAW_FRAME_BYTES];
+    char path[512];
+
+    for (size_t fixture = 0U;
+         fixture < sizeof(fixture_names) / sizeof(fixture_names[0]);
+         ++fixture) {
+        timing_alignment_result_t timing;
+        size_t dac_count = 0U;
+        size_t reconstructed_count = 0U;
+        const int path_length = snprintf(path, sizeof(path), "%s/%s",
+            ADC_CAL_GENERATED_SAMPLE_DIR, fixture_names[fixture]);
+        SIM_ASSERT_TRUE(ctx, path_length > 0 &&
+            (size_t)path_length < sizeof(path));
+        SIM_ASSERT_EQ_INT(ctx, load_i16_text_waveform(
+            path, dac, MAX_DAC_SAMPLES, &dac_count), 0);
+        SIM_ASSERT_TRUE(ctx, dac_count >= 32512U);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_resample_dac_reference(
+            dac, dac_count, 2600000000.0 / 1450000000.0, 0.0,
+            reference, SIM_ADC_CHANNEL_SAMPLES), 0);
+        SIM_ASSERT_EQ_INT(ctx, make_scaled_dac_capture(
+            dac, dac_count, channel_a, SIM_ADC_CHANNEL_SAMPLES,
+            2600000000.0 / 1450000000.0, 7.25, 0.018), 0);
+        SIM_ASSERT_EQ_INT(ctx, make_scaled_dac_capture(
+            dac, dac_count, channel_b, SIM_ADC_CHANNEL_SAMPLES,
+            2600000000.0 / 1450000000.0, 7.25, 0.018), 0);
+        SIM_ASSERT_EQ_INT(ctx, sim_dma_encode_channels(
+            channel_a, channel_b, SIM_ADC_CHANNEL_SAMPLES,
+            dma, sizeof(dma)), 0);
+        SIM_ASSERT_EQ_INT(ctx, adc_reconstruct_channels(
+            dma, sizeof(dma), reconstructed_a, SIM_ADC_CHANNEL_SAMPLES,
+            reconstructed_b, SIM_ADC_CHANNEL_SAMPLES,
+            &reconstructed_count), 0);
+        SIM_ASSERT_EQ_INT(ctx, reconstructed_count,
+            SIM_ADC_CHANNEL_SAMPLES);
+        SIM_ASSERT_TRUE(ctx, memcmp(channel_a, reconstructed_a,
+            sizeof(channel_a)) == 0);
+        SIM_ASSERT_TRUE(ctx, memcmp(channel_b, reconstructed_b,
+            sizeof(channel_b)) == 0);
+        SIM_ASSERT_EQ_INT(ctx, timing_find_circular_lag(
+            reference, reconstructed_a, SIM_ADC_CHANNEL_SAMPLES,
+            &timing), 0);
+        SIM_ASSERT_TRUE(ctx, timing.correlation >= 0.97f);
     }
     return 1;
 }
@@ -2274,17 +2354,18 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
 
     /* An unavailable/invalid optional dither cross-check is advisory only. */
     input.measured_skew_samples = 0.005;
-    input.advisory_warning = 1;
+    input.dither_status = ADC_CAL_SKEW_DITHER_UNAVAILABLE;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
         &input, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
         ADC_CAL_SKEW_MEASUREMENT_VALID);
-    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
-        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    SIM_ASSERT_EQ_INT(ctx, result.dither_status,
+        ADC_CAL_SKEW_DITHER_UNAVAILABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result, ADC_CAL_SKEW_STAGE_RESULT_PASS);
     SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
 
     /* Excess batch spread is a real open-loop failure. */
-    input.advisory_warning = 0;
+    input.dither_status = ADC_CAL_SKEW_DITHER_VALID;
     input.measured_skew_samples = 0.1858;
     input.batch_std_samples = 0.03;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
@@ -2293,6 +2374,19 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
         ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE);
     SIM_ASSERT_TRUE(ctx, !result.pipeline_may_continue);
+
+    /* Optional disagreement warns; an explicitly mandatory cross-check fails. */
+    input.batch_std_samples = 0.001;
+    input.dither_status = ADC_CAL_SKEW_DITHER_DISAGREES;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(&input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    input.dither_confirmation_required = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(&input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result, ADC_CAL_SKEW_STAGE_RESULT_INVALID);
+    SIM_ASSERT_TRUE(ctx, !result.pipeline_may_continue);
+    input.dither_confirmation_required = 0;
+    input.dither_status = ADC_CAL_SKEW_DITHER_VALID;
 
     /* No estimate and insufficient frames are invalid. */
     input.batch_std_samples = 0.001;
@@ -2684,6 +2778,7 @@ static void run_unit_tests(sim_assert_context_t *ctx)
     (void)unit_dither_joint_alignment(ctx);
     (void)unit_dither_correlation_coordinates(ctx);
     (void)unit_txt_waveform_timing_and_dither_diagnostics(ctx);
+    (void)unit_all_generated_txt_dma_captures(ctx);
     (void)unit_skew_phase_branch_resolver(ctx);
     (void)unit_skew_stage_policy(ctx);
     (void)unit_skew_estimator_direct(ctx);
@@ -2802,6 +2897,7 @@ typedef struct {
     adc_cal_perf_batch_result_t latest_perf_batch;
     double active_gain_correction;
     double active_offset_correction;
+    uint8_t dma_frame[SIM_DMA_BYTES];
     int16_t channel_a[SIM_ADC_CHANNEL_SAMPLES];
     int16_t channel_b[SIM_ADC_CHANNEL_SAMPLES];
     int16_t aligned_a[SIM_ADC_CHANNEL_SAMPLES];
@@ -2864,15 +2960,32 @@ static int sim_pipeline_capture_aligned(
 {
     timing_alignment_result_t timing;
     float frac = 0.0f;
+    int16_t generated_a[SIM_ADC_CHANNEL_SAMPLES];
+    int16_t generated_b[SIM_ADC_CHANNEL_SAMPLES];
+    size_t reconstructed_count = 0U;
 
     if (ctx == NULL || state == NULL) return -1;
     ++ctx->frame_index;
     if (sim_signal_generate_frame(
-            &ctx->signal, ctx->channel_a, ctx->channel_b,
+            &ctx->signal, generated_a, generated_b,
             SIM_ADC_CHANNEL_SAMPLES, reason) != 0) {
         sim_pipeline_write_iteration(ctx, "capture", 0,
                                      reason != NULL ? *reason : "capture failed",
                                      state);
+        return -2;
+    }
+    if (sim_dma_encode_channels(
+            generated_a, generated_b, SIM_ADC_CHANNEL_SAMPLES,
+            ctx->dma_frame, sizeof(ctx->dma_frame)) != 0 ||
+        adc_reconstruct_channels(
+            ctx->dma_frame, sizeof(ctx->dma_frame),
+            ctx->channel_a, SIM_ADC_CHANNEL_SAMPLES,
+            ctx->channel_b, SIM_ADC_CHANNEL_SAMPLES,
+            &reconstructed_count) != 0 ||
+        reconstructed_count != SIM_ADC_CHANNEL_SAMPLES) {
+        if (reason != NULL) *reason = "DMA encode/reconstruction failed";
+        sim_pipeline_write_iteration(ctx, "dma_capture", 0,
+            "DMA encode/reconstruction failed", state);
         return -2;
     }
     if (timing_find_circular_lag(
@@ -3089,8 +3202,7 @@ static int sim_pipeline_run_skew(
     policy_input.batch_std_samples = 0.0;
     policy_input.maximum_batch_std_samples = 0.02;
     policy_input.tolerance_samples = 0.01;
-    policy_input.advisory_warning =
-        skew_result.status == ADC_CAL_SKEW_STATUS_WARNING;
+    policy_input.dither_status = ADC_CAL_SKEW_DITHER_VALID;
     policy_input.actuator_available = 0;
     if (adc_cal_skew_evaluate_stage_policy(
             &policy_input, &state->skew_policy) != 0) {

@@ -5114,7 +5114,11 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                         policy_input.maximum_batch_std_samples =         CAL_SKEW_MAX_BATCH_STD_SAMPLES;
                                                                         policy_input.polarity_branch_changes =         batch->polarity_branch_changes;
                                                                         policy_input.tolerance_samples =         CAL_SKEW_TOLERANCE_SAMPLES;
-                                                                        policy_input.advisory_warning =         batch->estimator_status == CAL_SKEW_ESTIMATOR_WARNING;
+                                                                        policy_input.dither_status =
+                                                                            batch->dither_crosscheck_valid_frames > 0U ?
+                                                                                ADC_CAL_SKEW_DITHER_VALID :
+                                                                                ADC_CAL_SKEW_DITHER_UNAVAILABLE;
+                                                                        policy_input.dither_confirmation_required = 0;
                                                                         policy_input.actuator_available = 0;
                                                                         policy_input.correction_applied = 0;
                                                                         policy_input.correction_converged = 0;
@@ -5158,7 +5162,9 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                         xil_printf("Measured channel         : Channel B\r\n");
                                                                         xil_printf("Primary estimator        : common-frequency tone phase\r\n");
                                                                         xil_printf("Dither estimator         : independent cross-check\r\n");
-                                                                        xil_printf("Dither cross-check       : %s\r\n",         batch->latest_frame.dither_crosscheck_valid ?             "VALID" : "UNAVAILABLE");
+                                                                        xil_printf("Dither cross-check       : %s\r\n",
+                                                                            adc_cal_skew_dither_status_name(
+                                                                                batch->policy.dither_status));
                                                                         if (!batch->latest_frame.dither_crosscheck_valid)         xil_printf("Dither rejection reason  : %s\r\n",             batch->latest_frame.dither_crosscheck_reason != NULL ?                 batch->latest_frame.dither_crosscheck_reason : "unknown");
                                                                         xil_printf("Register writes          : NONE\r\n");
                                                                         xil_printf("Actuator status          : skew correction unavailable; measurement only\r\n");
