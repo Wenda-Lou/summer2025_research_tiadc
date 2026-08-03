@@ -115,6 +115,12 @@ typedef enum {
 } adc_cal_skew_actuator_status_t;
 
 typedef enum {
+    ADC_CAL_SKEW_DITHER_UNAVAILABLE = 0,
+    ADC_CAL_SKEW_DITHER_VALID,
+    ADC_CAL_SKEW_DITHER_DISAGREES
+} adc_cal_skew_dither_status_t;
+
+typedef enum {
     ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE = 0,
     ADC_CAL_SKEW_CORRECTION_CONVERGED,
     ADC_CAL_SKEW_CORRECTION_NOT_CONVERGED,
@@ -139,7 +145,8 @@ typedef struct {
     double maximum_batch_std_samples;
     uint32_t polarity_branch_changes;
     double tolerance_samples;
-    int advisory_warning;
+    adc_cal_skew_dither_status_t dither_status;
+    int dither_confirmation_required;
     int actuator_available;
     int correction_applied;
     int correction_converged;
@@ -151,6 +158,7 @@ typedef struct {
     adc_cal_skew_stability_t stability;
     adc_cal_skew_tolerance_status_t tolerance_status;
     adc_cal_skew_actuator_status_t actuator_status;
+    adc_cal_skew_dither_status_t dither_status;
     adc_cal_skew_correction_status_t correction_status;
     adc_cal_skew_stage_result_t stage_result;
     int pipeline_may_continue;
@@ -208,6 +216,7 @@ const char *adc_cal_skew_tolerance_status_name(
     adc_cal_skew_tolerance_status_t status);
 const char *adc_cal_skew_actuator_status_name(
     adc_cal_skew_actuator_status_t status);
+const char *adc_cal_skew_dither_status_name(adc_cal_skew_dither_status_t status);
 const char *adc_cal_skew_correction_status_name(
     adc_cal_skew_correction_status_t status);
 const char *adc_cal_skew_stage_result_name(

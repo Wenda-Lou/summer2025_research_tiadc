@@ -33,6 +33,7 @@ target_include_directories(adc_cal_sim PRIVATE
 
 target_compile_definitions(adc_cal_sim PRIVATE
     ADC_CAL_SOFTWARE_SIMULATION=1
+    ADC_CAL_GENERATED_SAMPLE_DIR="${PROD_DIR}/waveform_generation/generated_samples"
     ADC_CAL_TEST_WAVEFORM_PATH="${PROD_DIR}/waveform_generation/generated_samples/sine_100MHz_2p6GSPS_impulse_dither.txt"
     ADC_CAL_TEST_CAPTURE_PATH="${PROD_DIR}/adc_data/adc_capture_20260801_180451.csv"
 )

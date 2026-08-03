@@ -45,6 +45,13 @@ invalidation hooks from `calibration_pending.h`.
   host invalidation-hook wiring
 - Controller-style synthetic calibration loops using production calibration APIs
 - Scenario logs and CSV files
+- Fixture-driven DMA capture tests for every generated 100 MHz and 350 MHz
+  dither/non-dither text waveform. These load the checked-in DAC samples,
+  resample them to the ADC rate, encode the firmware DMA layout, reconstruct
+  both channels with production code, and verify timing acquisition.
+- An end-to-end generated-waveform diagnostic that carries the 100 MHz impulse
+  dither fixture through DMA reconstruction, timing, offset/gain analysis, skew
+  estimation, open-loop stage policy, and output-usability checks.
 
 ## What Is Not Simulated
 
@@ -115,6 +122,13 @@ The desktop pipeline flow tests the same shared production stage sequencer used
 by the FPGA `adc -cal` full-run adapter. It is not a full board validation of the
 `butils_calibration.c` board adapters, UART formatting, or hardware side
 effects.
+
+Every capture consumed by the desktop pipeline is encoded into the firmware's
+128-bit DMA beat layout and reconstructed through `adc_reconstruct_channels()`
+before timing, offset, gain, skew, or performance processing. Thus `--run-all`
+checks the complete host calibration stage sequence across a simulated DMA
+capture boundary rather than passing ideal channel arrays directly between the
+signal generator and calibration callbacks.
 
 Correction-convention note: direct `calibration.c` tests use that module's local
 documented model, `corrected = raw * gain + offset`. The integrated firmware

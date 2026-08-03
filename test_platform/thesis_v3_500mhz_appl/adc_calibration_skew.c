@@ -319,6 +319,16 @@ const char *adc_cal_skew_actuator_status_name(
         "AVAILABLE" : "UNAVAILABLE";
 }
 
+const char *adc_cal_skew_dither_status_name(adc_cal_skew_dither_status_t status)
+{
+    switch (status) {
+    case ADC_CAL_SKEW_DITHER_VALID: return "VALID";
+    case ADC_CAL_SKEW_DITHER_DISAGREES: return "DISAGREES";
+    case ADC_CAL_SKEW_DITHER_UNAVAILABLE:
+    default: return "UNAVAILABLE";
+    }
+}
+
 const char *adc_cal_skew_correction_status_name(
     adc_cal_skew_correction_status_t status)
 {
@@ -360,6 +370,7 @@ int adc_cal_skew_evaluate_stage_policy(
     result->stability = ADC_CAL_SKEW_STABILITY_UNKNOWN;
     result->tolerance_status = ADC_CAL_SKEW_TOLERANCE_UNKNOWN;
     result->actuator_status = ADC_CAL_SKEW_ACTUATOR_UNAVAILABLE;
+    result->dither_status = ADC_CAL_SKEW_DITHER_UNAVAILABLE;
     result->correction_status = ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE;
     result->stage_result = ADC_CAL_SKEW_STAGE_RESULT_INVALID;
     result->reason = "skew stage policy input is invalid";
@@ -367,6 +378,9 @@ int adc_cal_skew_evaluate_stage_policy(
     result->actuator_status = input->actuator_available ?
         ADC_CAL_SKEW_ACTUATOR_AVAILABLE :
         ADC_CAL_SKEW_ACTUATOR_UNAVAILABLE;
+    result->dither_status = input->dither_status;
+    if (input->dither_status < ADC_CAL_SKEW_DITHER_UNAVAILABLE ||
+        input->dither_status > ADC_CAL_SKEW_DITHER_DISAGREES) return -3;
     if (!adc_cal_double_isfinite(input->maximum_batch_std_samples) ||
         input->maximum_batch_std_samples < 0.0 ||
         !adc_cal_double_isfinite(input->tolerance_samples) ||
@@ -383,6 +397,13 @@ int adc_cal_skew_evaluate_stage_policy(
         return 0;
     }
     result->measurement_validity = ADC_CAL_SKEW_MEASUREMENT_VALID;
+    if (input->dither_confirmation_required &&
+        input->dither_status != ADC_CAL_SKEW_DITHER_VALID) {
+        result->reason = input->dither_status == ADC_CAL_SKEW_DITHER_DISAGREES ?
+            "required dither cross-check disagrees with primary estimator" :
+            "required dither cross-check is unavailable";
+        return 0;
+    }
     if (input->polarity_branch_changes > 0U) {
         result->stability = ADC_CAL_SKEW_STABILITY_UNSTABLE;
         result->stage_result = ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE;
@@ -404,15 +425,15 @@ int adc_cal_skew_evaluate_stage_policy(
         result->correction_status = ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE;
         result->stage_result =
             result->tolerance_status == ADC_CAL_SKEW_TOLERANCE_IN &&
-            !input->advisory_warning ?
+            input->dither_status != ADC_CAL_SKEW_DITHER_DISAGREES ?
                 ADC_CAL_SKEW_STAGE_RESULT_PASS :
                 ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
         result->pipeline_may_continue = 1;
         result->output_usable = 1;
         result->reason = result->tolerance_status == ADC_CAL_SKEW_TOLERANCE_OUT ?
             "stable measured skew exceeds tolerance; no actuator available" :
-            input->advisory_warning ?
-                "valid stable measurement with optional cross-check warning" :
+            input->dither_status == ADC_CAL_SKEW_DITHER_DISAGREES ?
+                "valid stable measurement; optional dither cross-check disagrees" :
                 "valid stable open-loop skew measurement";
         return 0;
     }
