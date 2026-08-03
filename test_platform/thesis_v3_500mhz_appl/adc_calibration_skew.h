@@ -49,6 +49,115 @@ typedef enum {
     ADC_CAL_SKEW_REASON_NUMERICAL
 } adc_cal_skew_reason_t;
 
+typedef enum {
+    ADC_CAL_SKEW_POLARITY_UNKNOWN = 0,
+    ADC_CAL_SKEW_POLARITY_SAME = 1,
+    ADC_CAL_SKEW_POLARITY_INVERTED = -1
+} adc_cal_skew_polarity_t;
+
+typedef enum {
+    ADC_CAL_SKEW_BRANCH_REASON_NONE = 0,
+    ADC_CAL_SKEW_BRANCH_REASON_KNOWN_POLARITY,
+    ADC_CAL_SKEW_BRANCH_REASON_DITHER_AGREEMENT,
+    ADC_CAL_SKEW_BRANCH_REASON_FRAME_CONSISTENCY,
+    ADC_CAL_SKEW_BRANCH_REASON_PHYSICAL_BOUND,
+    ADC_CAL_SKEW_BRANCH_REASON_MINIMUM_ABSOLUTE_SKEW
+} adc_cal_skew_branch_reason_t;
+
+#define ADC_CAL_SKEW_PHASE_HYPOTHESES 3U
+
+typedef struct {
+    double max_abs_skew_samples;
+    adc_cal_skew_polarity_t known_polarity;
+    int dither_valid;
+    double dither_skew_samples;
+    int previous_valid;
+    double previous_skew_samples;
+} adc_cal_skew_phase_config_t;
+
+typedef struct {
+    int valid;
+    double raw_phase_difference_rad;
+    double raw_skew_samples;
+    double candidate_phase_adjustment_rad[ADC_CAL_SKEW_PHASE_HYPOTHESES];
+    double candidate_phase_difference_rad[ADC_CAL_SKEW_PHASE_HYPOTHESES];
+    double candidate_skew_samples[ADC_CAL_SKEW_PHASE_HYPOTHESES];
+    int candidate_within_physical_range[ADC_CAL_SKEW_PHASE_HYPOTHESES];
+    size_t selected_candidate;
+    adc_cal_skew_polarity_t selected_polarity;
+    adc_cal_skew_branch_reason_t selection_reason;
+    double applied_phase_adjustment_rad;
+    double corrected_phase_difference_rad;
+    double corrected_skew_samples;
+    double dither_disagreement_samples;
+} adc_cal_skew_phase_result_t;
+
+typedef enum {
+    ADC_CAL_SKEW_MEASUREMENT_INVALID = 0,
+    ADC_CAL_SKEW_MEASUREMENT_VALID
+} adc_cal_skew_measurement_validity_t;
+
+typedef enum {
+    ADC_CAL_SKEW_STABILITY_UNKNOWN = 0,
+    ADC_CAL_SKEW_STABILITY_UNSTABLE,
+    ADC_CAL_SKEW_STABILITY_STABLE
+} adc_cal_skew_stability_t;
+
+typedef enum {
+    ADC_CAL_SKEW_TOLERANCE_UNKNOWN = 0,
+    ADC_CAL_SKEW_TOLERANCE_IN,
+    ADC_CAL_SKEW_TOLERANCE_OUT
+} adc_cal_skew_tolerance_status_t;
+
+typedef enum {
+    ADC_CAL_SKEW_ACTUATOR_UNAVAILABLE = 0,
+    ADC_CAL_SKEW_ACTUATOR_AVAILABLE
+} adc_cal_skew_actuator_status_t;
+
+typedef enum {
+    ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE = 0,
+    ADC_CAL_SKEW_CORRECTION_CONVERGED,
+    ADC_CAL_SKEW_CORRECTION_NOT_CONVERGED,
+    ADC_CAL_SKEW_CORRECTION_SATURATED
+} adc_cal_skew_correction_status_t;
+
+typedef enum {
+    ADC_CAL_SKEW_STAGE_RESULT_INVALID = 0,
+    ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE,
+    ADC_CAL_SKEW_STAGE_RESULT_PASS,
+    ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING,
+    ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED,
+    ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_SATURATED
+} adc_cal_skew_stage_result_t;
+
+typedef struct {
+    int primary_estimate_valid;
+    double measured_skew_samples;
+    uint32_t accepted_frames;
+    uint32_t minimum_accepted_frames;
+    double batch_std_samples;
+    double maximum_batch_std_samples;
+    uint32_t polarity_branch_changes;
+    double tolerance_samples;
+    int advisory_warning;
+    int actuator_available;
+    int correction_applied;
+    int correction_converged;
+    int actuator_saturated;
+} adc_cal_skew_stage_policy_input_t;
+
+typedef struct {
+    adc_cal_skew_measurement_validity_t measurement_validity;
+    adc_cal_skew_stability_t stability;
+    adc_cal_skew_tolerance_status_t tolerance_status;
+    adc_cal_skew_actuator_status_t actuator_status;
+    adc_cal_skew_correction_status_t correction_status;
+    adc_cal_skew_stage_result_t stage_result;
+    int pipeline_may_continue;
+    int output_usable;
+    const char *reason;
+} adc_cal_skew_stage_policy_result_t;
+
 typedef struct {
     size_t minimum_events;
     double sample_rate_hz;
@@ -79,6 +188,40 @@ void adc_cal_skew_default_config(adc_cal_skew_config_t *config);
 void adc_cal_skew_result_reset(adc_cal_skew_result_t *result);
 const char *adc_cal_skew_status_name(adc_cal_skew_status_t status);
 const char *adc_cal_skew_reason_name(adc_cal_skew_reason_t reason);
+const char *adc_cal_skew_polarity_name(adc_cal_skew_polarity_t polarity);
+const char *adc_cal_skew_branch_reason_name(
+    adc_cal_skew_branch_reason_t reason);
+
+void adc_cal_skew_phase_default_config(adc_cal_skew_phase_config_t *config);
+int adc_cal_skew_resolve_tone_phase(
+    double channel_a_phase_rad,
+    double channel_b_phase_rad,
+    double tone_frequency_hz,
+    double sample_rate_hz,
+    const adc_cal_skew_phase_config_t *config,
+    adc_cal_skew_phase_result_t *result);
+
+const char *adc_cal_skew_measurement_validity_name(
+    adc_cal_skew_measurement_validity_t status);
+const char *adc_cal_skew_stability_name(adc_cal_skew_stability_t status);
+const char *adc_cal_skew_tolerance_status_name(
+    adc_cal_skew_tolerance_status_t status);
+const char *adc_cal_skew_actuator_status_name(
+    adc_cal_skew_actuator_status_t status);
+const char *adc_cal_skew_correction_status_name(
+    adc_cal_skew_correction_status_t status);
+const char *adc_cal_skew_stage_result_name(
+    adc_cal_skew_stage_result_t status);
+int adc_cal_skew_evaluate_stage_policy(
+    const adc_cal_skew_stage_policy_input_t *input,
+    adc_cal_skew_stage_policy_result_t *result);
+
+int adc_cal_skew_from_tone_phases(
+    double channel_a_phase_rad,
+    double channel_b_phase_rad,
+    double tone_frequency_hz,
+    double sample_rate_hz,
+    double *relative_skew_samples);
 
 int adc_cal_skew_estimate_from_residuals(
     const double *channel_a_residual,

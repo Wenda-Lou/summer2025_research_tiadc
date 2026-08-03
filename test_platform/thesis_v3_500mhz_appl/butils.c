@@ -209,10 +209,10 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_DITHER_GAIN_TEMPLATE_ENERGY_FLOOR        1.0e-6
 #endif
 #ifndef CAL_DITHER_GAIN_MIN_POSITIVE_GAIN
-#define CAL_DITHER_GAIN_MIN_POSITIVE_GAIN            0.05
+#define CAL_DITHER_GAIN_MIN_POSITIVE_GAIN            0.0001
 #endif
 #ifndef CAL_DITHER_GAIN_MIN_PLAUSIBLE_GAIN
-#define CAL_DITHER_GAIN_MIN_PLAUSIBLE_GAIN           0.05
+#define CAL_DITHER_GAIN_MIN_PLAUSIBLE_GAIN           0.0001
 #endif
 #ifndef CAL_DITHER_GAIN_MAX_PLAUSIBLE_GAIN
 #define CAL_DITHER_GAIN_MAX_PLAUSIBLE_GAIN           20.0
@@ -252,6 +252,11 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #endif
 #ifndef CAL_SKEW_MAX_BATCH_STD_SAMPLES
 #define CAL_SKEW_MAX_BATCH_STD_SAMPLES               0.02
+#endif
+#ifndef CAL_SKEW_CHANNEL_B_RELATIVE_POLARITY
+/* adc_frame.c performs no digital sign inversion.  Leave the effective
+ * board/analog polarity unknown unless platform metadata overrides it. */
+#define CAL_SKEW_CHANNEL_B_RELATIVE_POLARITY ADC_CAL_SKEW_POLARITY_UNKNOWN
 #endif
 #ifndef CAL_SKEW_DERIVATIVE_ENERGY_FLOOR
 #define CAL_SKEW_DERIVATIVE_ENERGY_FLOOR             1.0e-6
@@ -454,6 +459,7 @@ typedef enum {
 
 typedef enum {
     CAL_SKEW_STAGE_PASS = 0,
+    CAL_SKEW_STAGE_PASS_WITH_WARNING,
     CAL_SKEW_STAGE_RUNNING,
     CAL_SKEW_STAGE_SATURATED,
     CAL_SKEW_STAGE_NOT_CONVERGED,
@@ -502,6 +508,16 @@ typedef struct {
     calibration_skew_channel_estimate_t channel[2];
     double relative_skew_samples;
     double relative_skew_ps;
+    double raw_tone_phase_difference_rad;
+    double raw_tone_skew_samples;
+    double applied_phase_adjustment_rad;
+    double corrected_tone_phase_difference_rad;
+    double dither_relative_skew_samples;
+    double tone_dither_disagreement_samples;
+    uint8_t dither_crosscheck_valid;
+    const char *dither_crosscheck_reason;
+    adc_cal_skew_polarity_t selected_polarity;
+    adc_cal_skew_branch_reason_t branch_selection_reason;
     double relative_rising_skew_samples;
     double relative_falling_skew_samples;
     double edge_disagreement_samples;
@@ -521,10 +537,16 @@ typedef struct {
 
 typedef struct {
     calibration_skew_stage_status_t stage_status;
+    adc_cal_skew_stage_policy_result_t policy;
     calibration_skew_estimator_status_t estimator_status;
     calibration_skew_reject_reason_t reason;
     uint32_t accepted_frames;
     uint32_t rejected_frames;
+    uint32_t same_polarity_frames;
+    uint32_t inverted_polarity_frames;
+    uint32_t polarity_branch_changes;
+    uint32_t dither_crosscheck_valid_frames;
+    uint32_t dither_crosscheck_invalid_frames;
     uint32_t consecutive_passes;
     double initial_relative_skew_samples;
     double final_relative_skew_samples;
@@ -1006,6 +1028,7 @@ typedef struct {
     bool offset_pass;
     bool gain_pass;
     bool skew_pass;
+    bool skew_warning;
     bool gain_verification_pass;
     bool output_valid;
     bool performance_measurement_available;
@@ -1027,7 +1050,9 @@ typedef struct {
     float nominal_system_gain;
     float final_normalized_gain;
     float gain_verification_error;
+    double final_relative_skew_samples;
     double final_relative_skew_ps;
+    adc_cal_skew_stage_policy_result_t skew_policy;
     const char *failure_reason;
     adc_performance_result_t performance;
     calibration_pending_frame_t final_output;
@@ -1198,8 +1223,6 @@ static void calibration_print_dither_gain_diagnostic(
     const calibration_dither_gain_diagnostic_t *diagnostic);
 static const char *calibration_skew_estimator_status_name(
     calibration_skew_estimator_status_t status);
-static const char *calibration_skew_stage_status_name(
-    calibration_skew_stage_status_t status);
 static const char *calibration_skew_reason_name(
     calibration_skew_reject_reason_t reason);
 static int calibration_run_skew_open_loop(
@@ -1212,6 +1235,9 @@ static int calibration_estimate_skew_frame(
     const double *channel_a,
     const double *channel_b,
     const double *reference,
+    adc_cal_skew_polarity_t known_polarity,
+    int previous_valid,
+    double previous_skew_samples,
     calibration_skew_frame_result_t *result);
 static int calibration_interpolate_i16(
     const int16_t *samples,
@@ -1962,6 +1988,7 @@ static void calibration_automatic_state_reset(void)
     g_automatic_calibration.canonical_reference_phase = -1;
     g_automatic_calibration.gain_correction = 1.0f;
     g_automatic_calibration.final_relative_skew_ps = NAN;
+    g_automatic_calibration.final_relative_skew_samples = NAN;
     g_automatic_calibration.performance_measurement_available = false;
 }
 

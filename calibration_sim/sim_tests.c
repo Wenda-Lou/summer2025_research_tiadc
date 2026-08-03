@@ -1727,6 +1727,15 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
     static double edge_scores_b[SIM_ADC_CHANNEL_SAMPLES];
     static int16_t offset_reference[OFFSET_WINDOW_LENGTH];
     static int16_t offset_adc[OFFSET_WINDOW_LENGTH];
+    static int16_t offset_adc_a[OFFSET_WINDOW_LENGTH];
+    static int16_t offset_adc_b[OFFSET_WINDOW_LENGTH];
+    static double offset_reference_residual[OFFSET_WINDOW_LENGTH];
+    static double offset_a_residual[OFFSET_WINDOW_LENGTH];
+    static double offset_b_residual[OFFSET_WINDOW_LENGTH];
+    static double offset_aligned_template[OFFSET_WINDOW_LENGTH];
+    static double offset_capture_template[OFFSET_WINDOW_LENGTH];
+    static double offset_energy_scores[OFFSET_WINDOW_LENGTH];
+    static double offset_edge_scores[OFFSET_WINDOW_LENGTH];
     adc_cal_dither_peak_candidate_t candidates_a[CANDIDATE_COUNT];
     adc_cal_dither_peak_candidate_t candidates_b[CANDIDATE_COUNT];
     adc_cal_dither_event_summary_t events;
@@ -1961,6 +1970,12 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
         lower = (size_t)floor(source_position);
         fraction = source_position - (double)lower;
         offset_reference[i] = selected_reference[OFFSET_WINDOW_START + i];
+        offset_adc_a[i] = (int16_t)lrint(
+            (1.0 - fraction) * (double)channel_a[lower] +
+            fraction * (double)channel_a[lower + 1U]);
+        offset_adc_b[i] = (int16_t)lrint(
+            (1.0 - fraction) * (double)channel_b[lower] +
+            fraction * (double)channel_b[lower + 1U]);
         offset_adc[i] = (int16_t)lrint(
             (1.0 - fraction) * (double)selected_channel[lower] +
             fraction * (double)selected_channel[lower + 1U]);
@@ -1996,6 +2011,362 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
                 measured_residual + offset_correction, 0.0, 1.0e-9);
         }
     }
+
+    /* Reproduce the production capture-polarity strategy on the real DMA
+     * fixture.  Absolute DAC pulse signs may differ in a fresh part of the
+     * long loop, but pulse energy locates the train and Channel A supplies
+     * the per-event sign needed for relative B-A skew. */
+    SIM_ASSERT_EQ_INT(ctx, remove_known_tone(
+        offset_reference, OFFSET_WINDOW_LENGTH, tone_hz, adc_rate_hz,
+        offset_reference_residual), 0);
+    SIM_ASSERT_EQ_INT(ctx, remove_known_tone(
+        offset_adc_a, OFFSET_WINDOW_LENGTH, tone_hz, adc_rate_hz,
+        offset_a_residual), 0);
+    SIM_ASSERT_EQ_INT(ctx, remove_known_tone(
+        offset_adc_b, OFFSET_WINDOW_LENGTH, tone_hz, adc_rate_hz,
+        offset_b_residual), 0);
+    {
+        adc_cal_dither_peak_candidate_t window_candidates[CANDIDATE_COUNT];
+        adc_cal_dither_peak_config_t window_peak_config;
+        adc_cal_dither_validation_config_t window_validation_config;
+        adc_cal_dither_config_t window_event_config;
+        adc_cal_dither_result_t window_events;
+        adc_cal_skew_config_t skew_config;
+        adc_cal_skew_result_t skew_result;
+        size_t window_candidate_count = 0U;
+        adc_cal_dither_peak_default_config(&window_peak_config);
+        adc_cal_dither_validation_default_config(&window_validation_config);
+        window_peak_config.maximum_candidates = CANDIDATE_COUNT;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+            offset_reference_residual, offset_a_residual,
+            OFFSET_WINDOW_LENGTH, ADC_CAL_DITHER_CORRELATION_ENERGY,
+            offset_energy_scores), 0);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_peak_candidates(
+            offset_energy_scores, OFFSET_WINDOW_LENGTH,
+            events.spacing_samples, &window_peak_config,
+            &window_validation_config, window_candidates, CANDIDATE_COUNT,
+            &window_candidate_count), 0);
+        SIM_ASSERT_TRUE(ctx, window_candidate_count > 0U);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compute_circular_scores(
+            offset_reference_residual, offset_a_residual,
+            OFFSET_WINDOW_LENGTH, ADC_CAL_DITHER_CORRELATION_EDGE_ENERGY,
+            offset_edge_scores), 0);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_refine_candidate_lags(
+            offset_edge_scores, OFFSET_WINDOW_LENGTH,
+            ADC_CAL_DITHER_DEFAULT_EDGE_REFINE_RADIUS,
+            window_candidates, window_candidate_count), 0);
+        for (size_t i = 0U; i < OFFSET_WINDOW_LENGTH; ++i) {
+            offset_aligned_template[i] = sim_signal_interpolate_circular(
+                offset_reference_residual, OFFSET_WINDOW_LENGTH,
+                (double)i - window_candidates[0].lag_samples);
+        }
+        adc_cal_dither_default_config(&window_event_config);
+        window_event_config.minimum_events = 3U;
+        window_event_config.boundary_margin = 1U;
+        {
+            const int event_status = adc_cal_dither_find_events(
+                offset_aligned_template, OFFSET_WINDOW_LENGTH,
+                &window_event_config, &window_events);
+            SIM_ASSERT_TRUE(ctx, event_status == 0 ||
+                event_status == ADC_CAL_DITHER_ERR_POLARITY);
+        }
+        memset(offset_capture_template, 0, sizeof(offset_capture_template));
+        for (size_t k = 0U; k < window_events.accepted_events; ++k) {
+            const size_t start = window_events.events[k].start;
+            const size_t end = window_events.events[k].end;
+            const double q = window_events.events[k].polarity;
+            double capture_sum = 0.0;
+            for (size_t i = start; i < end; ++i) {
+                capture_sum += offset_a_residual[i];
+            }
+            const double p = capture_sum >= 0.0 ? 1.0 : -1.0;
+            for (size_t i = start; i < end; ++i) {
+                offset_capture_template[i] =
+                    p * q * offset_aligned_template[i];
+            }
+        }
+        adc_cal_skew_default_config(&skew_config);
+        skew_config.sample_rate_hz = adc_rate_hz;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            offset_a_residual, offset_b_residual, offset_capture_template,
+            OFFSET_WINDOW_LENGTH, &skew_config, &skew_result), 0);
+        SIM_ASSERT_TRUE(ctx, skew_result.valid);
+        SIM_ASSERT_TRUE(ctx, isfinite(skew_result.relative_skew_samples));
+        SIM_ASSERT_TRUE(ctx,
+            fabs(skew_result.relative_skew_samples) <=
+                skew_config.max_linear_skew_samples);
+        for (size_t i = 0U; i < OFFSET_WINDOW_LENGTH; ++i) {
+            offset_capture_template[i] *= 0.25;
+        }
+        {
+            adc_cal_dither_result_t gain_projection;
+            const int gain_status = adc_cal_dither_analyze(
+                offset_a_residual, offset_capture_template,
+                OFFSET_WINDOW_LENGTH, &window_event_config,
+                &gain_projection);
+            SIM_ASSERT_EQ_INT(ctx, gain_status, 0);
+            SIM_ASSERT_TRUE(ctx,
+                gain_projection.normalized_projection > 0.0001);
+            SIM_ASSERT_TRUE(ctx,
+                gain_projection.normalized_projection < 20.0);
+        }
+    }
+    return 1;
+}
+
+static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
+{
+    const double pi = 3.14159265358979323846;
+    const double two_pi = 6.28318530717958647692;
+    const double frequency_hz = 100.0e6;
+    const double sample_rate_hz = 1.45e9;
+    const double omega = two_pi * frequency_hz / sample_rate_hz;
+    adc_cal_skew_phase_config_t config;
+    adc_cal_skew_phase_result_t result;
+
+    adc_cal_skew_phase_default_config(&config);
+
+    /* Same-polarity zero, positive, and negative physical skew. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.2, 0.2, frequency_hz, sample_rate_hz, &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.selected_polarity, ADC_CAL_SKEW_POLARITY_SAME);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.2, 0.2 + omega * 0.12, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.12, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.2, 0.2 - omega * 0.11, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, -0.11, 1.0e-12);
+
+    /* Inverted Channel B with zero, positive, and negative physical skew. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.2, 0.2 + pi, frequency_hz, sample_rate_hz, &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.raw_skew_samples, 7.25, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.selected_polarity, ADC_CAL_SKEW_POLARITY_INVERTED);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.2, 0.2 + pi + omega * 0.13, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.13, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.2, 0.2 - pi - omega * 0.09, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, -0.09, 1.0e-12);
+
+    /* Both sides of the +/-pi wrap select the inverted small-skew family. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, pi - omega * 0.02, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, -0.02, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, -pi + omega * 0.03, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.03, 1.0e-12);
+
+    /* With both families allowed, valid dither chooses the matching branch. */
+    config.max_abs_skew_samples = 8.0;
+    config.dither_valid = 1;
+    config.dither_skew_samples = 0.14;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, omega * -7.064, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.selected_polarity, ADC_CAL_SKEW_POLARITY_INVERTED);
+    SIM_ASSERT_EQ_INT(ctx, result.selection_reason,
+        ADC_CAL_SKEW_BRANCH_REASON_DITHER_AGREEMENT);
+
+    /* Invalid dither is ignored; the configured physical bound is used. */
+    adc_cal_skew_phase_default_config(&config);
+    config.dither_valid = 0;
+    config.dither_skew_samples = -7.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, omega * -7.064, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_TRUE(ctx, fabs(result.corrected_skew_samples) < 0.25);
+    SIM_ASSERT_EQ_INT(ctx, result.selection_reason,
+        ADC_CAL_SKEW_BRANCH_REASON_PHYSICAL_BOUND);
+
+    /* Known polarity metadata has priority over dither and bounds. */
+    config.known_polarity = ADC_CAL_SKEW_POLARITY_SAME;
+    config.dither_valid = 1;
+    config.dither_skew_samples = 0.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, omega * -7.064, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.selected_polarity, ADC_CAL_SKEW_POLARITY_SAME);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, -7.064, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.selection_reason,
+        ADC_CAL_SKEW_BRANCH_REASON_KNOWN_POLARITY);
+
+    /* Unknown polarity rejects the implausible half-period branch. */
+    adc_cal_skew_phase_default_config(&config);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, omega * -7.064, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_TRUE(ctx, !result.candidate_within_physical_range[0]);
+    SIM_ASSERT_TRUE(ctx, result.candidate_within_physical_range[
+        result.selected_candidate]);
+
+    /* Previous corrected frame resolves an otherwise two-family ambiguity. */
+    config.max_abs_skew_samples = 8.0;
+    config.previous_valid = 1;
+    config.previous_skew_samples = 0.18;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, omega * -7.06, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.selected_polarity, ADC_CAL_SKEW_POLARITY_INVERTED);
+    SIM_ASSERT_EQ_INT(ctx, result.selection_reason,
+        ADC_CAL_SKEW_BRANCH_REASON_FRAME_CONSISTENCY);
+
+    /* Regression for raw -7.064 samples and +0.134-sample dither. */
+    adc_cal_skew_phase_default_config(&config);
+    config.dither_valid = 1;
+    config.dither_skew_samples = 0.134413;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, omega * -7.064153, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.raw_skew_samples, -7.064153, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, result.selected_polarity, ADC_CAL_SKEW_POLARITY_INVERTED);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.185847, 1.0e-9);
+    SIM_ASSERT_TRUE(ctx, result.dither_disagreement_samples < 0.06);
+    SIM_ASSERT_TRUE(ctx, fabs(result.corrected_skew_samples) < 0.25);
+    return 1;
+}
+
+static int unit_skew_stage_policy(sim_assert_context_t *ctx)
+{
+    adc_cal_skew_stage_policy_input_t input;
+    adc_cal_skew_stage_policy_result_t result;
+
+    memset(&input, 0, sizeof(input));
+    input.primary_estimate_valid = 1;
+    input.measured_skew_samples = 0.005;
+    input.accepted_frames = 10U;
+    input.minimum_accepted_frames = 3U;
+    input.batch_std_samples = 0.001;
+    input.maximum_batch_std_samples = 0.02;
+    input.tolerance_samples = 0.01;
+
+    /* Valid in-tolerance open-loop measurement. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_VALID);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.tolerance_status,
+        ADC_CAL_SKEW_TOLERANCE_IN);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_status,
+        ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS);
+    SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
+
+    /* Valid out-of-tolerance open-loop measurement remains usable. */
+    input.measured_skew_samples = 0.1858;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.tolerance_status,
+        ADC_CAL_SKEW_TOLERANCE_OUT);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
+
+    /* An unavailable/invalid optional dither cross-check is advisory only. */
+    input.measured_skew_samples = 0.005;
+    input.advisory_warning = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_VALID);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
+
+    /* Excess batch spread is a real open-loop failure. */
+    input.advisory_warning = 0;
+    input.measured_skew_samples = 0.1858;
+    input.batch_std_samples = 0.03;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_UNSTABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE);
+    SIM_ASSERT_TRUE(ctx, !result.pipeline_may_continue);
+
+    /* No estimate and insufficient frames are invalid. */
+    input.batch_std_samples = 0.001;
+    input.primary_estimate_valid = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_INVALID);
+    input.primary_estimate_valid = 1;
+    input.accepted_frames = 2U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_INVALID);
+
+    /* A polarity-family change makes the batch unstable. */
+    input.accepted_frames = 10U;
+    input.polarity_branch_changes = 1U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE);
+
+    /* Closed-loop convergence semantics remain distinct. */
+    input.polarity_branch_changes = 0U;
+    input.measured_skew_samples = 0.005;
+    input.actuator_available = 1;
+    input.correction_applied = 1;
+    input.correction_converged = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_status,
+        ADC_CAL_SKEW_CORRECTION_CONVERGED);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS);
+    input.correction_converged = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED);
+    input.actuator_saturated = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_status,
+        ADC_CAL_SKEW_CORRECTION_SATURATED);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_SATURATED);
+
+    /* Exact board regression: stable 0.1858 samples, 0.74 ps spread,
+     * 10/10 inverted frames, no branch changes, and no actuator. */
+    memset(&input, 0, sizeof(input));
+    input.primary_estimate_valid = 1;
+    input.measured_skew_samples = 0.185824;
+    input.accepted_frames = 10U;
+    input.minimum_accepted_frames = 3U;
+    input.batch_std_samples = 0.740224e-12 * 1.45e9;
+    input.maximum_batch_std_samples = 0.02;
+    input.polarity_branch_changes = 0U;
+    input.tolerance_samples = 0.01;
+    input.actuator_available = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_VALID);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.tolerance_status,
+        ADC_CAL_SKEW_TOLERANCE_OUT);
+    SIM_ASSERT_EQ_INT(ctx, result.actuator_status,
+        ADC_CAL_SKEW_ACTUATOR_UNAVAILABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_status,
+        ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
     return 1;
 }
 
@@ -2007,6 +2378,23 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     adc_cal_skew_config_t config;
     adc_cal_skew_result_t result;
     uint32_t rng = 77U;
+    double tone_skew = NAN;
+
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_from_tone_phases(
+        0.25, 0.25 + 6.28318530717958647692 * 100.0e6 / 1.45e9 * 0.12,
+        100.0e6, 1.45e9, &tone_skew), 0);
+    SIM_ASSERT_NEAR(ctx, tone_skew, 0.12, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_from_tone_phases(
+        0.25,
+        0.25 + 3.14159265358979323846 +
+            6.28318530717958647692 * 100.0e6 / 1.45e9 * 0.12,
+        100.0e6, 1.45e9, &tone_skew), 0);
+    SIM_ASSERT_NEAR(ctx, tone_skew, 0.12, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_from_tone_phases(
+        3.10, -3.10, 100.0e6, 1.45e9, &tone_skew), 0);
+    SIM_ASSERT_TRUE(ctx, tone_skew > 0.0 && tone_skew < 0.25);
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_from_tone_phases(
+        0.0, 0.0, 0.0, 1.45e9, &tone_skew) != 0);
 
     adc_cal_skew_default_config(&config);
     config.sample_rate_hz = SIM_DEFAULT_ADC_SAMPLE_RATE_HZ;
@@ -2036,7 +2424,9 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, result.relative_skew_samples < -0.15);
 
     make_dither_residual(template_samples, b, 256U, 1.0, 0.40, 0.0, NULL);
-    SIM_ASSERT_TRUE(ctx, adc_cal_skew_estimate_from_residuals(a, b, template_samples, 256U, &config, &result) != 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(a, b, template_samples, 256U, &config, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.valid);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_STATUS_WARNING);
     SIM_ASSERT_EQ_INT(ctx, result.reason, ADC_CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE);
 
     make_dither_residual(template_samples, b, 256U, 1.0, 0.10, 0.0, NULL);
@@ -2063,6 +2453,26 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     make_dither_residual(template_samples, b, 256U, 1.0, 0.12, 0.0, NULL);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(b, a, template_samples, 256U, &config, &result), 0);
     SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, -0.12, 0.02);
+
+    /* Opposing rising/falling shifts remain a valid but explicit warning. */
+    make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
+    for (size_t i = 0U; i < 256U; ++i) {
+        const double previous = i > 0U ? template_samples[i - 1U] :
+            template_samples[i];
+        const double next = i + 1U < 256U ? template_samples[i + 1U] :
+            template_samples[i];
+        const double derivative = 0.5 * (next - previous);
+        const double polarity = template_samples[i] < 0.0 ? -1.0 : 1.0;
+        const double canonical_derivative = polarity * derivative;
+        const double edge_skew = canonical_derivative >= 0.0 ? 0.40 : -0.40;
+        b[i] = template_samples[i] + edge_skew * derivative;
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+        a, b, template_samples, 256U, &config, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.valid);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_STATUS_WARNING);
+    SIM_ASSERT_EQ_INT(ctx, result.reason,
+        ADC_CAL_SKEW_REASON_EDGE_DISAGREEMENT);
     return 1;
 }
 
@@ -2274,6 +2684,8 @@ static void run_unit_tests(sim_assert_context_t *ctx)
     (void)unit_dither_joint_alignment(ctx);
     (void)unit_dither_correlation_coordinates(ctx);
     (void)unit_txt_waveform_timing_and_dither_diagnostics(ctx);
+    (void)unit_skew_phase_branch_resolver(ctx);
+    (void)unit_skew_stage_policy(ctx);
     (void)unit_skew_estimator_direct(ctx);
     (void)unit_performance_estimator_direct(ctx);
     (void)unit_boundary_conditions(ctx);
@@ -2640,6 +3052,7 @@ static int sim_pipeline_run_skew(
     static double residual_b[SIM_ADC_CHANNEL_SAMPLES];
     adc_cal_skew_config_t skew_config;
     adc_cal_skew_result_t skew_result;
+    adc_cal_skew_stage_policy_input_t policy_input;
     if (ctx == NULL || state == NULL) return -1;
     make_dither_template(dither_template, SIM_ADC_CHANNEL_SAMPLES,
                          ctx->config.dither_period_samples,
@@ -2667,12 +3080,30 @@ static int sim_pipeline_run_skew(
     }
     ctx->latest_skew = skew_result.relative_skew_samples;
     state->final_relative_skew_ps = skew_result.relative_skew_ps;
-    state->skew_pass = true;
+    state->final_relative_skew_samples = skew_result.relative_skew_samples;
+    memset(&policy_input, 0, sizeof(policy_input));
+    policy_input.primary_estimate_valid = 1;
+    policy_input.measured_skew_samples = skew_result.relative_skew_samples;
+    policy_input.accepted_frames = 1U;
+    policy_input.minimum_accepted_frames = 1U;
+    policy_input.batch_std_samples = 0.0;
+    policy_input.maximum_batch_std_samples = 0.02;
+    policy_input.tolerance_samples = 0.01;
+    policy_input.advisory_warning =
+        skew_result.status == ADC_CAL_SKEW_STATUS_WARNING;
+    policy_input.actuator_available = 0;
+    if (adc_cal_skew_evaluate_stage_policy(
+            &policy_input, &state->skew_policy) != 0) {
+        if (reason != NULL) *reason = "skew stage policy failed";
+        return -4;
+    }
+    state->skew_pass = state->skew_policy.pipeline_may_continue != 0;
+    state->skew_warning = state->skew_policy.stage_result ==
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
     sim_pipeline_write_iteration(ctx, "skew", state->skew_pass ? 1 : 0,
-                                 state->skew_pass ? "none" :
-                                 "skew outside supported linear range",
+                                 state->skew_policy.reason,
                                  state);
-    return 0;
+    return state->skew_pass ? 0 : -4;
 }
 
 static int sim_pipeline_perf_capture(

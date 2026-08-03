@@ -1,5 +1,6 @@
 #include "adc_calibration_pipeline.h"
 
+#include <math.h>
 #include <string.h>
 
 static void pipeline_print_stage(
@@ -40,6 +41,8 @@ void adc_cal_pipeline_reset(adc_cal_pipeline_state_t *state)
     state->offset_result = ADC_CAL_PIPELINE_OFFSET_NONE;
     state->calibration_channel = -1;
     state->canonical_reference_phase = -1;
+    state->final_relative_skew_samples = NAN;
+    state->final_relative_skew_ps = NAN;
 }
 
 void adc_cal_pipeline_fail(

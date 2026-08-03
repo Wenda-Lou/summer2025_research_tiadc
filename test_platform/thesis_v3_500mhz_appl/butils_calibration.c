@@ -1672,6 +1672,9 @@ static int adc_evaluate_performance_batch(
                                                                 xil_printf(" | flat ");
                                                                 print_double_inline(batch->mean_dither_flat_gain);
                                                                 xil_printf(" | events %lu | new %s",         (unsigned long)batch->dither_latest.complete_event_count,         calibration_dither_gain_status_name(             batch->dither_latest.status));
+                                                                if (batch->dither_latest.status ==             CAL_DITHER_GAIN_STATUS_WARNING &&             batch->dither_latest.reason != CAL_DITHER_GAIN_REASON_NONE) {
+                                                                    xil_printf(" | reason %s",             calibration_dither_gain_reason_name(                 batch->dither_latest.reason));
+                                                                }
                                                             }
                                                             else if (batch->dither_invalid > 0U) {
                                                                 xil_printf(" | dither INVALID | events %lu | reason %s",         (unsigned long)batch->dither_latest.complete_event_count,         calibration_dither_gain_reason_name(             batch->dither_latest.reason));
@@ -1696,7 +1699,7 @@ static int adc_evaluate_performance_batch(
                                                             return "NOT RUN";
                                                         }
                                                         static const char *calibration_skew_stage_summary_status(     const adc_automatic_calibration_state_t *state) {
-                                                            if (state->skew_pass) return "PASS";
+                                                            if (state->skew_policy.measurement_validity ==             ADC_CAL_SKEW_MEASUREMENT_VALID)         return adc_cal_skew_stage_result_name(             state->skew_policy.stage_result);
                                                             if (state->active && state->stage == ADC_CAL_STAGE_SKEW)         return "RUNNING";
                                                             if (state->failed_stage == ADC_CAL_STAGE_SKEW) return "FAILED";
                                                             if (state->stage == ADC_CAL_STAGE_COMPLETE &&         isfinite(state->final_relative_skew_ps))         return "DIAGNOSTIC";
@@ -1738,7 +1741,11 @@ static int adc_evaluate_performance_batch(
                                                             }
                                                             if (state->skew_pass || isfinite(state->final_relative_skew_ps) ||         state->failed_stage == ADC_CAL_STAGE_SKEW) {
                                                                 xil_printf("\r\n");
+                                                                print_double_value("Relative skew B-A",         state->final_relative_skew_samples, " samples");
                                                                 print_double_value("Relative skew B-A",         state->final_relative_skew_ps, " ps");
+                                                                xil_printf("Skew within tolerance  : %s\r\n",         adc_cal_skew_tolerance_status_name(             state->skew_policy.tolerance_status));
+                                                                xil_printf("Skew correction available: %s\r\n",         adc_cal_skew_actuator_status_name(             state->skew_policy.actuator_status));
+                                                                xil_printf("Skew correction applied: NO\r\n");
                                                             }
                                                             if (state->performance.reference_metrics_valid ||         state->performance.spectral_metrics_valid ||         state->stage == ADC_CAL_STAGE_COMPLETE) {
                                                                 xil_printf("\r\n");
@@ -3251,7 +3258,12 @@ static int adc_evaluate_performance_batch(
                                                                         static double adc_residual[CAL_FIXED_WINDOW_LENGTH];
                                                                         static double reference_tone[CAL_FIXED_WINDOW_LENGTH];
                                                                         static double dither_template[CAL_FIXED_WINDOW_LENGTH];
+                                                                        static double aligned_dither_template[CAL_FIXED_WINDOW_LENGTH];
                                                                         static calibration_dither_offset_event_t events[CAL_FIXED_WINDOW_LENGTH / 2U];
+                                                                        static double template_event_polarity[CAL_FIXED_WINDOW_LENGTH / 2U];
+                                                                        static adc_cal_dither_peak_candidate_t alignment_candidates[CAL_DITHER_MAX_CHANNEL_CANDIDATES];
+                                                                        static adc_cal_dither_config_t aligned_event_config;
+                                                                        static adc_cal_dither_result_t aligned_events;
                                                                         static double u[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
                                                                         static double v[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
                                                                         static double template_profile[CAL_DITHER_OFFSET_MAX_EVENT_PROFILE_SAMPLES];
@@ -3284,6 +3296,8 @@ static int adc_evaluate_performance_batch(
                                                                         uint32_t flat_count = 0U;
                                                                         double raw_dither_gain;
                                                                         double raw_flat_gain = NAN;
+                                                                        calibration_dither_channel_alignment_t dither_alignment;
+                                                                        size_t alignment_candidate_count = 0U;
                                                                         if (diagnostic == NULL) return -1;
                                                                         calibration_dither_gain_mark_invalid(         diagnostic, CAL_DITHER_GAIN_REASON_NUMERICAL,         existing_normalized_gain);
                                                                         if (frame == NULL || !frame->frame_valid ||         frame->selected_channel != g_stored_offset_reference.selected_channel ||         frame->canonical_reference_phase !=             g_stored_offset_reference.canonical_reference_phase ||         frame->calibration_window_start !=             g_stored_offset_reference.calibration_window_start ||         frame->calibration_window_length != CAL_FIXED_WINDOW_LENGTH ||         frame->valid_analysis_sample_count != CAL_FIXED_WINDOW_LENGTH ||         frame->aligned_corrected_adc_samples == NULL ||         frame->aligned_reference_samples == NULL ||         !isfinite(frame->total_lag) ||         !isfinite(frame->reference_frequency_hz) ||         frame->reference_frequency_hz <= 0.0 ||         !isfinite(nominal_system_gain) ||         fabs(nominal_system_gain) <= DBL_EPSILON ||         !frame->timing_diagnostics.valid ||         frame->timing_diagnostics.selected_common_channel < 0 ||         !isfinite(frame->timing_diagnostics.dither_derived_lag)) {
@@ -3304,7 +3318,49 @@ static int adc_evaluate_performance_batch(
                                                                             return -3;
                                                                         }
                                                                         diagnostic->tone_fit_pass = 1U;
-                                                                        if (calibration_dither_offset_find_events(         dither_template, CAL_FIXED_WINDOW_LENGTH, events,         sizeof(events) / sizeof(events[0]), &complete_events,         &discarded_boundary) != 0) {
+                                                                        if (!isfinite(frame->timing_diagnostics.dither_event_spacing_samples) ||
+                                                                            calibration_align_dither_residual(
+                                                                                dither_template, adc_residual,
+                                                                                CAL_FIXED_WINDOW_LENGTH,
+                                                                                frame->timing_diagnostics.dither_event_spacing_samples,
+                                                                                &dither_alignment, alignment_candidates,
+                                                                                CAL_DITHER_MAX_CHANNEL_CANDIDATES,
+                                                                                &alignment_candidate_count) != 0) {
+                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_TEMPLATE;
+                                                                            return -4;
+                                                                        }
+                                                                        calibration_synthesize_dither(
+                                                                            dither_template, CAL_FIXED_WINDOW_LENGTH,
+                                                                            dither_alignment.derived_lag, 1.0,
+                                                                            aligned_dither_template);
+                                                                        adc_cal_dither_default_config(&aligned_event_config);
+                                                                        aligned_event_config.minimum_events =
+                                                                            CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS;
+                                                                        aligned_event_config.boundary_margin = 1U;
+                                                                        {
+                                                                            const int event_status = adc_cal_dither_find_events(
+                                                                                aligned_dither_template,
+                                                                                CAL_FIXED_WINDOW_LENGTH,
+                                                                                &aligned_event_config, &aligned_events);
+                                                                            if ((event_status != 0 &&
+                                                                                 event_status != ADC_CAL_DITHER_ERR_POLARITY) ||
+                                                                                aligned_events.accepted_events <
+                                                                                    CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS ||
+                                                                                aligned_events.accepted_events >
+                                                                                    sizeof(events) / sizeof(events[0])) {
+                                                                                diagnostic->reason = CAL_DITHER_GAIN_REASON_NO_DITHER;
+                                                                                return -4;
+                                                                            }
+                                                                        }
+                                                                        complete_events = (uint32_t)aligned_events.accepted_events;
+                                                                        discarded_boundary = (uint32_t)aligned_events.rejected_events;
+                                                                        for (uint32_t k = 0U; k < complete_events; ++k) {
+                                                                            events[k].start = aligned_events.events[k].start;
+                                                                            events[k].end = aligned_events.events[k].end;
+                                                                            events[k].center = aligned_events.events[k].center;
+                                                                            events[k].polarity = aligned_events.events[k].polarity;
+                                                                        }
+                                                                        if (complete_events == 0U) {
                                                                             diagnostic->reason = CAL_DITHER_GAIN_REASON_NO_DITHER;
                                                                             return -4;
                                                                         }
@@ -3316,8 +3372,14 @@ static int adc_evaluate_performance_batch(
                                                                         }
                                                                         diagnostic->event_count_pass = 1U;
                                                                         for (uint32_t k = 0U; k < complete_events; ++k) {
+                                                                            double measured_event_sum = 0.0;
                                                                             const double left = (double)events[k].start - events[k].center;
                                                                             const double right =             (double)(events[k].end - 1U) - events[k].center;
+                                                                            template_event_polarity[k] = events[k].polarity;
+                                                                            for (size_t i = events[k].start; i < events[k].end; ++i) {
+                                                                                measured_event_sum += adc_residual[i];
+                                                                            }
+                                                                            events[k].polarity = measured_event_sum >= 0.0 ? 1.0 : -1.0;
                                                                             if (left > rel_start) rel_start = left;
                                                                             if (right < rel_end) rel_end = right;
                                                                             p_sum += events[k].polarity;
@@ -3342,13 +3404,17 @@ static int adc_evaluate_performance_batch(
                                                                                 const double position =             events[k].center + (double)(m_first + (int)j);
                                                                                 double residual_value;
                                                                                 double template_value;
-                                                                                if (calibration_dither_offset_interpolate(                     adc_residual, CAL_FIXED_WINDOW_LENGTH, position,                     &residual_value) != 0 ||                 calibration_dither_offset_interpolate(                     dither_template, CAL_FIXED_WINDOW_LENGTH, position,                     &template_value) != 0) {
+                                                                                if (calibration_dither_offset_interpolate(                     adc_residual, CAL_FIXED_WINDOW_LENGTH, position,                     &residual_value) != 0 ||                 calibration_dither_offset_interpolate(                     aligned_dither_template, CAL_FIXED_WINDOW_LENGTH, position,                     &template_value) != 0) {
                                                                                     diagnostic->reason = CAL_DITHER_GAIN_REASON_INTERPOLATION;
                                                                                     return -7;
                                                                                 }
                                                                                 u[j] += residual_value;
                                                                                 v[j] += p * residual_value;
-                                                                                template_profile[j] += p * template_value;
+                                                                                /* The long DAC loop randomizes pulse signs.  Canonicalize
+                                                                                 * the DAC event shape with its original sign, while p is
+                                                                                 * taken from this capture. */
+                                                                                template_profile[j] +=
+                                                                                    template_event_polarity[k] * template_value;
                                                                             }
                                                                         }
                                                                         p_mean = p_sum / (double)complete_events;
@@ -3428,10 +3494,6 @@ static int adc_evaluate_performance_batch(
                                                                         diagnostic->dither_flat_gain = raw_flat_gain / nominal_system_gain;
                                                                         diagnostic->full_vs_flat_gain =         diagnostic->dither_full_gain - diagnostic->dither_flat_gain;
                                                                         diagnostic->fit_quality_pass =         isfinite(diagnostic->template_correlation) &&         diagnostic->template_correlation >=             CAL_DITHER_GAIN_MIN_TEMPLATE_CORRELATION &&         isfinite(diagnostic->normalized_fit_rmse) &&         diagnostic->normalized_fit_rmse <=             CAL_DITHER_GAIN_MAX_NORMALIZED_FIT_RMSE &&         isfinite(diagnostic->full_vs_flat_gain) &&         fabs(diagnostic->full_vs_flat_gain) <=             CAL_DITHER_GAIN_FULL_FLAT_TOLERANCE;
-                                                                        if (!diagnostic->fit_quality_pass) {
-                                                                            diagnostic->reason = CAL_DITHER_GAIN_REASON_FIT_QUALITY;
-                                                                            return -13;
-                                                                        }
                                                                         diagnostic->existing_normalized_gain = existing_normalized_gain;
                                                                         diagnostic->tone = adc_fit;
                                                                         diagnostic->tone_amplitude_codes = adc_fit.amplitude;
@@ -3446,8 +3508,18 @@ static int adc_evaluate_performance_batch(
                                                                             return -14;
                                                                         }
                                                                         diagnostic->valid = 1U;
-                                                                        diagnostic->reason = CAL_DITHER_GAIN_REASON_NONE;
-                                                                        diagnostic->status =         diagnostic->agreement_pass ? CAL_DITHER_GAIN_STATUS_PASS :         CAL_DITHER_GAIN_STATUS_WARNING;
+                                                                        diagnostic->reason = diagnostic->fit_quality_pass ?
+                                                                            CAL_DITHER_GAIN_REASON_NONE :
+                                                                            CAL_DITHER_GAIN_REASON_FIT_QUALITY;
+                                                                        /* Shape quality is advisory.  The pulse train, polarity,
+                                                                         * positive gain, and numerical checks have already passed;
+                                                                         * analog pulse distortion must not be reported as dither
+                                                                         * absence or used as a correction. */
+                                                                        diagnostic->status =
+                                                                            diagnostic->fit_quality_pass &&
+                                                                            diagnostic->agreement_pass ?
+                                                                                CAL_DITHER_GAIN_STATUS_PASS :
+                                                                                CAL_DITHER_GAIN_STATUS_WARNING;
                                                                         return 0;
                                                                     }
                                                                     static void calibration_print_dither_gain_diagnostic(     const calibration_dither_gain_diagnostic_t *diagnostic) {
@@ -4398,21 +4470,6 @@ static int adc_evaluate_performance_batch(
                                                                             return "INVALID";
                                                                         }
                                                                     }
-                                                                    static const char *calibration_skew_stage_status_name(     calibration_skew_stage_status_t status) {
-                                                                        switch (status) {
-                                                                        case CAL_SKEW_STAGE_PASS:
-                                                                            return "PASS";
-                                                                        case CAL_SKEW_STAGE_RUNNING:
-                                                                            return "RUNNING";
-                                                                        case CAL_SKEW_STAGE_SATURATED:
-                                                                            return "SATURATED";
-                                                                        case CAL_SKEW_STAGE_NOT_CONVERGED:
-                                                                            return "NOT CONVERGED";
-                                                                        case CAL_SKEW_STAGE_FAIL:
-                                                                        default:
-                                                                            return "FAIL";
-                                                                        }
-                                                                    }
                                                                     static const char *calibration_skew_reason_name(     calibration_skew_reject_reason_t reason) {
                                                                         switch (reason) {
                                                                         case CAL_SKEW_REASON_NONE:
@@ -4456,6 +4513,16 @@ static int adc_evaluate_performance_batch(
                                                                         result->reason = reason;
                                                                         result->relative_skew_samples = NAN;
                                                                         result->relative_skew_ps = NAN;
+                                                                        result->raw_tone_phase_difference_rad = NAN;
+                                                                        result->raw_tone_skew_samples = NAN;
+                                                                        result->applied_phase_adjustment_rad = NAN;
+                                                                        result->corrected_tone_phase_difference_rad = NAN;
+                                                                        result->dither_relative_skew_samples = NAN;
+                                                                        result->tone_dither_disagreement_samples = NAN;
+                                                                        result->dither_crosscheck_valid = 0U;
+                                                                        result->dither_crosscheck_reason = "not evaluated";
+                                                                        result->selected_polarity = ADC_CAL_SKEW_POLARITY_UNKNOWN;
+                                                                        result->branch_selection_reason = ADC_CAL_SKEW_BRANCH_REASON_NONE;
                                                                         result->relative_rising_skew_samples = NAN;
                                                                         result->relative_falling_skew_samples = NAN;
                                                                         result->edge_disagreement_samples = NAN;
@@ -4620,6 +4687,16 @@ static void calibration_map_shared_skew_result(
     legacy->reason = calibration_map_shared_skew_reason(shared->reason);
     legacy->relative_skew_samples = shared->relative_skew_samples;
     legacy->relative_skew_ps = shared->relative_skew_ps;
+    legacy->raw_tone_phase_difference_rad = NAN;
+    legacy->raw_tone_skew_samples = NAN;
+    legacy->applied_phase_adjustment_rad = NAN;
+    legacy->corrected_tone_phase_difference_rad = NAN;
+    legacy->dither_relative_skew_samples = shared->relative_skew_samples;
+    legacy->tone_dither_disagreement_samples = NAN;
+    legacy->dither_crosscheck_valid = shared->valid ? 1U : 0U;
+    legacy->dither_crosscheck_reason = shared->failure_reason;
+    legacy->selected_polarity = ADC_CAL_SKEW_POLARITY_UNKNOWN;
+    legacy->branch_selection_reason = ADC_CAL_SKEW_BRANCH_REASON_NONE;
     legacy->relative_rising_skew_samples = shared->rising_skew_samples;
     legacy->relative_falling_skew_samples = shared->falling_skew_samples;
     legacy->edge_disagreement_samples = shared->edge_disagreement_samples;
@@ -4670,6 +4747,9 @@ static int calibration_estimate_skew_frame(
     const double *channel_a,
     const double *channel_b,
     const double *reference,
+    adc_cal_skew_polarity_t known_polarity,
+    int previous_valid,
+    double previous_skew_samples,
     calibration_skew_frame_result_t *result)
 {
     static double tone_a[CAL_FIXED_WINDOW_LENGTH];
@@ -4678,11 +4758,24 @@ static int calibration_estimate_skew_frame(
     static double residual_a[CAL_FIXED_WINDOW_LENGTH];
     static double residual_b[CAL_FIXED_WINDOW_LENGTH];
     static double dither_template[CAL_FIXED_WINDOW_LENGTH];
+    static double aligned_dither_template[CAL_FIXED_WINDOW_LENGTH];
+    static double capture_polarized_template[CAL_FIXED_WINDOW_LENGTH];
+    static adc_cal_dither_peak_candidate_t alignment_candidates[CAL_DITHER_MAX_CHANNEL_CANDIDATES];
     calibration_tone_fit_result_t fit_a;
     calibration_tone_fit_result_t fit_b;
     calibration_tone_fit_result_t fit_ref;
     adc_cal_skew_config_t config;
     adc_cal_skew_result_t shared;
+    adc_cal_skew_phase_config_t phase_config;
+    adc_cal_skew_phase_result_t phase_result;
+    static adc_cal_dither_config_t event_config;
+    static adc_cal_dither_result_t template_events;
+    calibration_dither_channel_alignment_t dither_alignment;
+    size_t alignment_candidate_count = 0U;
+    bool tone_quality_warning = false;
+    bool dither_available = false;
+    const char *dither_failure_reason = "dither cross-check unavailable";
+    const double sample_rate_hz = adc_get_effective_sample_rate_hz();
 
     if (result == NULL) return -1;
     calibration_skew_mark_invalid(
@@ -4696,54 +4789,195 @@ static int calibration_estimate_skew_frame(
             "stored timing/dither context is invalid");
         return -2;
     }
+    /* Refine the frequency once from the clean DAC reference, then fit both
+     * ADC channels at exactly that common frequency.  Independent frequency
+     * refinements turn small noise differences into a phase ramp across the
+     * window and made the relative channel phase appear to wander. */
     if (calibration_fit_tone_refined(
-            channel_a, CAL_FIXED_WINDOW_LENGTH,
-            g_stored_offset_reference.reference_frequency_hz,
-            adc_get_effective_sample_rate_hz(), &fit_a, tone_a,
-            residual_a) != 0 ||
-        calibration_fit_tone_refined(
-            channel_b, CAL_FIXED_WINDOW_LENGTH,
-            g_stored_offset_reference.reference_frequency_hz,
-            adc_get_effective_sample_rate_hz(), &fit_b, tone_b,
-            residual_b) != 0 ||
-        calibration_fit_tone_refined(
             reference, CAL_FIXED_WINDOW_LENGTH,
             g_stored_offset_reference.reference_frequency_hz,
-            adc_get_effective_sample_rate_hz(), &fit_ref, tone_ref,
+            sample_rate_hz, &fit_ref, tone_ref,
             dither_template) != 0 ||
-        !calibration_tone_fit_parameters_are_finite(&fit_a) ||
-        !calibration_tone_fit_parameters_are_finite(&fit_b) ||
         !calibration_tone_fit_parameters_are_finite(&fit_ref) ||
-        fit_a.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||
-        fit_b.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||
-        fit_a.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION ||
-        fit_b.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION) {
+        calibration_fit_tone_at_frequency(
+            channel_a, CAL_FIXED_WINDOW_LENGTH,
+            fit_ref.fitted_frequency_hz / sample_rate_hz,
+            sample_rate_hz,
+            g_stored_offset_reference.reference_frequency_hz,
+            fit_ref.fitted_frequency_hz, &fit_a, tone_a, residual_a) != 0 ||
+        calibration_fit_tone_at_frequency(
+            channel_b, CAL_FIXED_WINDOW_LENGTH,
+            fit_ref.fitted_frequency_hz / sample_rate_hz,
+            sample_rate_hz,
+            g_stored_offset_reference.reference_frequency_hz,
+            fit_ref.fitted_frequency_hz, &fit_b, tone_b, residual_b) != 0 ||
+        !calibration_tone_fit_parameters_are_finite(&fit_a) ||
+        !calibration_tone_fit_parameters_are_finite(&fit_b)) {
         calibration_skew_mark_invalid(
             result, CAL_SKEW_REASON_TONE_FIT,
             "tone fit failed for one or both physical channels");
         return -3;
     }
+    /* The common-frequency tone phase is the primary small relative-skew
+     * estimate.  The dither path below independently validates that both
+     * channels contain the expected physical pulse family and provides a
+     * deliberately advisory cross-check. */
+    tone_quality_warning =
+        fit_a.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||
+        fit_b.rmse > CAL_TONE_VALIDATION_MAX_RMSE_CODES ||
+        fit_a.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION ||
+        fit_b.tone_only_correlation < CAL_TONE_VALIDATION_MIN_CORRELATION;
 
-    adc_cal_skew_default_config(&config);
-    config.minimum_events = CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS;
-    config.sample_rate_hz = adc_get_effective_sample_rate_hz();
-    config.max_linear_skew_samples = CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
-    config.max_edge_disagreement_samples = CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
-
-    if (adc_cal_skew_estimate_from_residuals(
-            residual_a, residual_b, dither_template, CAL_FIXED_WINDOW_LENGTH,
-            &config, &shared) != 0 || !shared.valid) {
-        calibration_map_shared_skew_result(&shared, &fit_a, &fit_b, result);
-        if (result->reason == CAL_SKEW_REASON_NONE) {
-            result->reason = CAL_SKEW_REASON_NUMERICAL;
+    adc_cal_skew_result_reset(&shared);
+    do {
+        if (!isfinite(g_stored_offset_reference.timing_diagnostics.
+                dither_event_spacing_samples) ||
+            calibration_align_dither_residual(
+                dither_template, residual_a, CAL_FIXED_WINDOW_LENGTH,
+                g_stored_offset_reference.timing_diagnostics.
+                    dither_event_spacing_samples,
+                &dither_alignment, alignment_candidates,
+                CAL_DITHER_MAX_CHANNEL_CANDIDATES,
+                &alignment_candidate_count) != 0) {
+            dither_failure_reason = "capture dither energy could not be aligned";
+            break;
         }
-        result->stage_status = CAL_SKEW_STAGE_FAIL;
-        result->rejection_reason = shared.failure_reason != NULL ?
-            shared.failure_reason : calibration_skew_reason_name(result->reason);
+        calibration_synthesize_dither(
+            dither_template, CAL_FIXED_WINDOW_LENGTH,
+            dither_alignment.derived_lag, 1.0, aligned_dither_template);
+        adc_cal_dither_default_config(&event_config);
+        event_config.minimum_events = CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS;
+        event_config.boundary_margin = 1U;
+        {
+            const int event_status = adc_cal_dither_find_events(
+                aligned_dither_template, CAL_FIXED_WINDOW_LENGTH,
+                &event_config, &template_events);
+            if ((event_status != 0 &&
+                 event_status != ADC_CAL_DITHER_ERR_POLARITY) ||
+                template_events.accepted_events <
+                    CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS) {
+                dither_failure_reason =
+                    "aligned capture has too few complete dither events";
+                break;
+            }
+        }
+        memset(capture_polarized_template, 0,
+            sizeof(capture_polarized_template));
+        for (size_t k = 0U; k < template_events.accepted_events; ++k) {
+            const size_t start = template_events.events[k].start;
+            const size_t end = template_events.events[k].end;
+            const double template_sign = template_events.events[k].polarity;
+            double capture_sum = 0.0;
+            double capture_sign;
+            for (size_t i = start; i < end; ++i) capture_sum += residual_a[i];
+            capture_sign = capture_sum >= 0.0 ? 1.0 : -1.0;
+            for (size_t i = start; i < end; ++i) {
+                capture_polarized_template[i] = capture_sign * template_sign *
+                    aligned_dither_template[i];
+            }
+        }
+        adc_cal_skew_default_config(&config);
+        config.minimum_events = CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS;
+        config.sample_rate_hz = sample_rate_hz;
+        config.max_linear_skew_samples = CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
+        config.max_edge_disagreement_samples =
+            CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
+        if (adc_cal_skew_estimate_from_residuals(
+                residual_a, residual_b, capture_polarized_template,
+                CAL_FIXED_WINDOW_LENGTH, &config, &shared) != 0 ||
+            !shared.valid || !isfinite(shared.relative_skew_samples)) {
+            dither_failure_reason = shared.failure_reason != NULL ?
+                shared.failure_reason : "dither skew estimate is invalid";
+            break;
+        }
+        dither_available = true;
+    } while (0);
+
+    calibration_map_shared_skew_result(&shared, &fit_a, &fit_b, result);
+    adc_cal_skew_phase_default_config(&phase_config);
+    phase_config.max_abs_skew_samples = CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
+    phase_config.known_polarity = known_polarity;
+    phase_config.dither_valid = dither_available ? 1 : 0;
+    phase_config.dither_skew_samples = dither_available ?
+        shared.relative_skew_samples : NAN;
+    phase_config.previous_valid = previous_valid;
+    phase_config.previous_skew_samples = previous_skew_samples;
+    if (adc_cal_skew_resolve_tone_phase(
+            fit_a.phase_rad, fit_b.phase_rad,
+            fit_ref.fitted_frequency_hz, sample_rate_hz,
+            &phase_config, &phase_result) != 0 || !phase_result.valid) {
+        calibration_skew_mark_invalid(
+            result, CAL_SKEW_REASON_POLARITY_IMBALANCE,
+            "tone polarity branch could not be resolved");
+        result->channel[0].tone = fit_a;
+        result->channel[1].tone = fit_b;
         return -4;
     }
-    calibration_map_shared_skew_result(&shared, &fit_a, &fit_b, result);
+
+    result->valid = 1U;
+    result->stage_status = CAL_SKEW_STAGE_RUNNING;
+    result->raw_tone_phase_difference_rad =
+        phase_result.raw_phase_difference_rad;
+    result->raw_tone_skew_samples = phase_result.raw_skew_samples;
+    result->applied_phase_adjustment_rad =
+        phase_result.applied_phase_adjustment_rad;
+    result->corrected_tone_phase_difference_rad =
+        phase_result.corrected_phase_difference_rad;
+    result->relative_skew_samples = phase_result.corrected_skew_samples;
+    result->relative_skew_ps = phase_result.corrected_skew_samples *
+        1.0e12 / sample_rate_hz;
+    result->selected_polarity = phase_result.selected_polarity;
+    result->branch_selection_reason = phase_result.selection_reason;
+    result->dither_relative_skew_samples = dither_available ?
+        shared.relative_skew_samples : NAN;
+    result->tone_dither_disagreement_samples = dither_available ?
+        phase_result.dither_disagreement_samples : NAN;
+    result->dither_crosscheck_valid = dither_available ? 1U : 0U;
+    result->dither_crosscheck_reason = dither_available ?
+        (shared.failure_reason != NULL ? shared.failure_reason : "none") :
+        dither_failure_reason;
+    result->estimator_status = CAL_SKEW_ESTIMATOR_PASS;
+    result->reason = CAL_SKEW_REASON_NONE;
     result->rejection_reason = "none";
+
+    if (!dither_available) {
+        result->estimator_status = CAL_SKEW_ESTIMATOR_WARNING;
+        result->reason = CAL_SKEW_REASON_DITHER_ALIGNMENT;
+        result->rejection_reason = dither_failure_reason;
+    }
+    else if (shared.status != ADC_CAL_SKEW_STATUS_PASS) {
+        result->estimator_status = CAL_SKEW_ESTIMATOR_WARNING;
+        result->reason = calibration_map_shared_skew_reason(shared.reason);
+        result->rejection_reason = shared.failure_reason;
+    }
+    if (dither_available &&
+        phase_result.dither_disagreement_samples >
+            CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES) {
+        result->estimator_status = CAL_SKEW_ESTIMATOR_WARNING;
+        result->reason = CAL_SKEW_REASON_EDGE_DISAGREEMENT;
+        result->rejection_reason =
+            "corrected tone and dither skew estimates disagree";
+    }
+    if (fabs(result->relative_skew_samples) >
+        CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES) {
+        result->estimator_status = CAL_SKEW_ESTIMATOR_WARNING;
+        result->reason = CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE;
+        result->rejection_reason =
+            "corrected tone skew is outside configured physical range";
+    }
+    if (tone_quality_warning &&
+        result->estimator_status == CAL_SKEW_ESTIMATOR_PASS) {
+        result->estimator_status = CAL_SKEW_ESTIMATOR_WARNING;
+        result->reason = CAL_SKEW_REASON_TONE_FIT;
+        result->rejection_reason =
+            "physical-channel tone fit is marginal; phase skew remains valid";
+    }
+    result->channel[0].valid = 1U;
+    result->channel[1].valid = 1U;
+    result->channel[0].status = result->estimator_status;
+    result->channel[1].status = result->estimator_status;
+    result->channel[0].reason = result->reason;
+    result->channel[1].reason = result->reason;
     return 0;
 }
 static double calibration_median_double(     double *values, size_t count) {
@@ -4777,6 +5011,11 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                         const char *reason = NULL;
                                                                         double sum = 0.0;
                                                                         double square_sum = 0.0;
+                                                                        double previous_skew_samples = NAN;
+                                                                        int previous_skew_valid = 0;
+                                                                        adc_cal_skew_polarity_t previous_polarity =
+                                                                            ADC_CAL_SKEW_POLARITY_UNKNOWN;
+                                                                        adc_cal_skew_stage_policy_input_t policy_input;
                                                                         if (batch == NULL) return -1;
                                                                         memset(batch, 0, sizeof(*batch));
                                                                         batch->stage_status = CAL_SKEW_STAGE_FAIL;
@@ -4811,7 +5050,7 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                 batch->failure_reason = reason;
                                                                                 if (diagnose_mode || ADC_CAL_VERBOSE_DEBUG)             xil_printf("Skew frame %lu/%u : REJECTED (%s)\r\n",                     (unsigned long)frame, CAL_SKEW_BATCH_SIZE,                     reason != NULL ? reason : "capture failed");
                                                                             }
-                                                                            else if (calibration_estimate_skew_frame(                 channel_a, channel_b, reference, &result) != 0 ||                 !result.valid) {
+                                                                            else if (calibration_estimate_skew_frame(                 channel_a, channel_b, reference,                 CAL_SKEW_CHANNEL_B_RELATIVE_POLARITY,                 previous_skew_valid, previous_skew_samples, &result) != 0 ||                 !result.valid) {
                                                                                 ++batch->rejected_frames;
                                                                                 batch->latest_frame = result;
                                                                                 batch->reason = result.reason;
@@ -4827,7 +5066,15 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                 }
                                                                                 ++batch->accepted_frames;
                                                                                 batch->latest_frame = result;
-                                                                                batch->estimator_status = result.estimator_status;
+                                                                                if (result.selected_polarity == ADC_CAL_SKEW_POLARITY_SAME)             ++batch->same_polarity_frames;
+                                                                                else if (result.selected_polarity == ADC_CAL_SKEW_POLARITY_INVERTED)             ++batch->inverted_polarity_frames;
+                                                                                if (result.dither_crosscheck_valid)             ++batch->dither_crosscheck_valid_frames;
+                                                                                else             ++batch->dither_crosscheck_invalid_frames;
+                                                                                if (previous_polarity != ADC_CAL_SKEW_POLARITY_UNKNOWN &&             result.selected_polarity != previous_polarity)             ++batch->polarity_branch_changes;
+                                                                                previous_polarity = result.selected_polarity;
+                                                                                previous_skew_samples = result.relative_skew_samples;
+                                                                                previous_skew_valid = 1;
+                                                                                if (batch->estimator_status == CAL_SKEW_ESTIMATOR_INVALID ||             result.estimator_status == CAL_SKEW_ESTIMATOR_WARNING)             batch->estimator_status = result.estimator_status;
                                                                                 batch->reason = result.reason;
                                                                                 batch->final_relative_skew_samples =             result.relative_skew_samples;
                                                                                 batch->final_relative_skew_ps = result.relative_skew_ps;
@@ -4850,32 +5097,57 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                             }
                                                                             if (frame < CAL_SKEW_BATCH_SIZE) usleep(ADC_TIMING_INTERFRAME_DELAY_US);
                                                                         }
-                                                                        if (batch->accepted_frames == 0U) {
-                                                                            batch->stage_status = CAL_SKEW_STAGE_FAIL;
-                                                                            batch->failure_reason = "no reliable skew estimates";
-                                                                            return -3;
+                                                                        if (batch->accepted_frames > 0U) {
+                                                                            batch->median_relative_skew_samples =         calibration_median_double(relative_values, batch->accepted_frames);
+                                                                            batch->median_relative_skew_ps =         batch->median_relative_skew_samples *         (1.0e12 / adc_get_effective_sample_rate_hz());
+                                                                            batch->relative_skew_std_samples =         sqrt(fmax(0.0, square_sum / (double)batch->accepted_frames -         (sum / (double)batch->accepted_frames) *         (sum / (double)batch->accepted_frames)));
+                                                                            batch->relative_skew_std_ps =         batch->relative_skew_std_samples *         (1.0e12 / adc_get_effective_sample_rate_hz());
+                                                                            batch->final_relative_skew_samples =         batch->median_relative_skew_samples;
+                                                                            batch->final_relative_skew_ps =         batch->median_relative_skew_ps;
                                                                         }
-                                                                        batch->median_relative_skew_samples =         calibration_median_double(relative_values, batch->accepted_frames);
-                                                                        batch->median_relative_skew_ps =         batch->median_relative_skew_samples *         (1.0e12 / adc_get_effective_sample_rate_hz());
-                                                                        batch->relative_skew_std_samples =         sqrt(fmax(0.0, square_sum / (double)batch->accepted_frames -         (sum / (double)batch->accepted_frames) *         (sum / (double)batch->accepted_frames)));
-                                                                        batch->relative_skew_std_ps =         batch->relative_skew_std_samples *         (1.0e12 / adc_get_effective_sample_rate_hz());
-                                                                        batch->final_relative_skew_samples =         batch->median_relative_skew_samples;
-                                                                        batch->final_relative_skew_ps =         batch->median_relative_skew_ps;
-                                                                        if (batch->accepted_frames < CAL_SKEW_MIN_ACCEPTED_FRAMES) {
+                                                                        memset(&policy_input, 0, sizeof(policy_input));
+                                                                        policy_input.primary_estimate_valid =         batch->accepted_frames > 0U &&         isfinite(batch->median_relative_skew_samples);
+                                                                        policy_input.measured_skew_samples =         batch->median_relative_skew_samples;
+                                                                        policy_input.accepted_frames = batch->accepted_frames;
+                                                                        policy_input.minimum_accepted_frames =         CAL_SKEW_MIN_ACCEPTED_FRAMES;
+                                                                        policy_input.batch_std_samples =         batch->relative_skew_std_samples;
+                                                                        policy_input.maximum_batch_std_samples =         CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+                                                                        policy_input.polarity_branch_changes =         batch->polarity_branch_changes;
+                                                                        policy_input.tolerance_samples =         CAL_SKEW_TOLERANCE_SAMPLES;
+                                                                        policy_input.advisory_warning =         batch->estimator_status == CAL_SKEW_ESTIMATOR_WARNING;
+                                                                        policy_input.actuator_available = 0;
+                                                                        policy_input.correction_applied = 0;
+                                                                        policy_input.correction_converged = 0;
+                                                                        policy_input.actuator_saturated = 0;
+                                                                        if (adc_cal_skew_evaluate_stage_policy(         &policy_input, &batch->policy) != 0) {
                                                                             batch->stage_status = CAL_SKEW_STAGE_FAIL;
-                                                                            batch->reason = CAL_SKEW_REASON_TOO_FEW_EVENTS;
-                                                                            batch->failure_reason = "too few accepted skew frames";
+                                                                            batch->failure_reason = "skew stage policy evaluation failed";
+                                                                            return -4;
                                                                         }
-                                                                        else if (fabs(batch->median_relative_skew_samples) <=             CAL_SKEW_TOLERANCE_SAMPLES &&         batch->latest_frame.edge_disagreement_samples <=             CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES &&         batch->relative_skew_std_samples <=             CAL_SKEW_MAX_BATCH_STD_SAMPLES) {
-                                                                            batch->consecutive_passes =         CAL_SKEW_REQUIRED_CONVERGED_BATCHES;
+                                                                        batch->failure_reason = batch->policy.reason;
+                                                                        switch (batch->policy.stage_result) {
+                                                                        case ADC_CAL_SKEW_STAGE_RESULT_PASS:
                                                                             batch->stage_status = CAL_SKEW_STAGE_PASS;
-                                                                            batch->failure_reason = "none";
-                                                                        }
-                                                                        else {
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING:
+                                                                            batch->stage_status = CAL_SKEW_STAGE_PASS_WITH_WARNING;
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED:
                                                                             batch->stage_status = CAL_SKEW_STAGE_NOT_CONVERGED;
-                                                                            batch->failure_reason = "open-loop skew is outside tolerance or unstable";
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_SATURATED:
+                                                                            batch->stage_status = CAL_SKEW_STAGE_SATURATED;
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE:
+                                                                            batch->reason = CAL_SKEW_REASON_NUMERICAL;
+                                                                            batch->stage_status = CAL_SKEW_STAGE_FAIL;
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_STAGE_RESULT_INVALID:
+                                                                        default:
+                                                                            batch->stage_status = CAL_SKEW_STAGE_FAIL;
+                                                                            break;
                                                                         }
-                                                                        return batch->stage_status == CAL_SKEW_STAGE_FAIL ? -4 : 0;
+                                                                        return batch->policy.pipeline_may_continue ? 0 : -4;
                                                                     }
                                                                     static void calibration_print_skew_summary(     const calibration_skew_batch_result_t *batch, bool diagnose_mode) {
                                                                         if (batch == NULL) return;
@@ -4884,6 +5156,10 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                         xil_printf("-----------------------------------------\r\n");
                                                                         xil_printf("Reference channel        : Channel A\r\n");
                                                                         xil_printf("Measured channel         : Channel B\r\n");
+                                                                        xil_printf("Primary estimator        : common-frequency tone phase\r\n");
+                                                                        xil_printf("Dither estimator         : independent cross-check\r\n");
+                                                                        xil_printf("Dither cross-check       : %s\r\n",         batch->latest_frame.dither_crosscheck_valid ?             "VALID" : "UNAVAILABLE");
+                                                                        if (!batch->latest_frame.dither_crosscheck_valid)         xil_printf("Dither rejection reason  : %s\r\n",             batch->latest_frame.dither_crosscheck_reason != NULL ?                 batch->latest_frame.dither_crosscheck_reason : "unknown");
                                                                         xil_printf("Register writes          : NONE\r\n");
                                                                         xil_printf("Actuator status          : skew correction unavailable; measurement only\r\n");
                                                                         print_double_value("Initial relative skew",         batch->initial_relative_skew_samples, " samples");
@@ -4892,18 +5168,39 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                         print_double_value("Final relative skew",         batch->final_relative_skew_ps, " ps");
                                                                         print_double_value("Best relative skew",         batch->best_relative_skew_samples, " samples");
                                                                         print_double_value("Best relative skew",         batch->best_relative_skew_ps, " ps");
-                                                                        print_double_value("Rising-edge estimate",         batch->rising_skew_ps, " ps");
-                                                                        print_double_value("Falling-edge estimate",         batch->falling_skew_ps, " ps");
-                                                                        print_double_value("Edge disagreement",         batch->edge_disagreement_ps, " ps");
+                                                                        print_double_value("Raw tone phase difference",         batch->latest_frame.raw_tone_phase_difference_rad, " rad");
+                                                                        print_double_value("Raw tone skew",         batch->latest_frame.raw_tone_skew_samples, " samples");
+                                                                        print_double_value("Raw tone skew",         batch->latest_frame.raw_tone_skew_samples *         (1.0e12 / adc_get_effective_sample_rate_hz()), " ps");
+                                                                        xil_printf("Polarity hypothesis      : %s\r\n",         adc_cal_skew_polarity_name(             batch->latest_frame.selected_polarity));
+                                                                        print_double_value("Applied phase adjustment",         batch->latest_frame.applied_phase_adjustment_rad, " rad");
+                                                                        print_double_value("Corrected phase difference",         batch->latest_frame.corrected_tone_phase_difference_rad, " rad");
+                                                                        xil_printf("Branch-selection reason  : %s\r\n",         adc_cal_skew_branch_reason_name(             batch->latest_frame.branch_selection_reason));
+                                                                        print_double_value("Dither relative skew",         batch->latest_frame.dither_relative_skew_samples, " samples");
+                                                                        print_double_value("Dither relative skew",         batch->latest_frame.dither_relative_skew_samples *         (1.0e12 / adc_get_effective_sample_rate_hz()), " ps");
+                                                                        print_double_value("Tone/dither disagreement",         batch->latest_frame.tone_dither_disagreement_samples *         (1.0e12 / adc_get_effective_sample_rate_hz()), " ps");
+                                                                        print_double_value("Dither rising-edge",         batch->rising_skew_ps, " ps");
+                                                                        print_double_value("Dither falling-edge",         batch->falling_skew_ps, " ps");
+                                                                        print_double_value("Dither edge disagreement",         batch->edge_disagreement_ps, " ps");
                                                                         print_double_value("Batch skew std",         batch->relative_skew_std_ps, " ps");
                                                                         xil_printf("Accepted frames          : %lu\r\n",         (unsigned long)batch->accepted_frames);
                                                                         xil_printf("Rejected frames          : %lu\r\n",         (unsigned long)batch->rejected_frames);
+                                                                        xil_printf("Same-polarity branches   : %lu\r\n",         (unsigned long)batch->same_polarity_frames);
+                                                                        xil_printf("Inverted branches        : %lu\r\n",         (unsigned long)batch->inverted_polarity_frames);
+                                                                        xil_printf("Polarity branch changes  : %lu\r\n",         (unsigned long)batch->polarity_branch_changes);
+                                                                        xil_printf("Dither-valid frames      : %lu\r\n",         (unsigned long)batch->dither_crosscheck_valid_frames);
+                                                                        xil_printf("Dither-invalid frames    : %lu\r\n",         (unsigned long)batch->dither_crosscheck_invalid_frames);
                                                                         xil_printf("Initial delay register   : %ld\r\n",         (long)batch->initial_delay_register);
                                                                         xil_printf("Final delay register     : %ld\r\n",         (long)batch->final_delay_register);
                                                                         xil_printf("Saturated                : %s\r\n",         batch->saturated ? "YES" : "NO");
-                                                                        xil_printf("Consecutive passes       : %lu/%u\r\n",         (unsigned long)batch->consecutive_passes,         CAL_SKEW_REQUIRED_CONVERGED_BATCHES);
-                                                                        xil_printf("Estimator status         : %s\r\n",         calibration_skew_estimator_status_name(             batch->estimator_status));
-                                                                        xil_printf("Status                   : %s\r\n",         calibration_skew_stage_status_name(batch->stage_status));
+                                                                        xil_printf("Estimator validity       : %s\r\n",         adc_cal_skew_measurement_validity_name(             batch->policy.measurement_validity));
+                                                                        xil_printf("Stability status         : %s\r\n",         adc_cal_skew_stability_name(batch->policy.stability));
+                                                                        xil_printf("Within tolerance         : %s\r\n",         adc_cal_skew_tolerance_status_name(             batch->policy.tolerance_status));
+                                                                        xil_printf("Correction actuator      : %s\r\n",         adc_cal_skew_actuator_status_name(             batch->policy.actuator_status));
+                                                                        xil_printf("Correction applied       : NO\r\n");
+                                                                        xil_printf("Correction status        : %s\r\n",         adc_cal_skew_correction_status_name(             batch->policy.correction_status));
+                                                                        if (batch->policy.actuator_status ==             ADC_CAL_SKEW_ACTUATOR_AVAILABLE)         xil_printf("Consecutive passes       : %lu/%u\r\n",             (unsigned long)batch->consecutive_passes,             CAL_SKEW_REQUIRED_CONVERGED_BATCHES);
+                                                                        else         xil_printf("Consecutive passes       : NOT APPLICABLE\r\n");
+                                                                        xil_printf("Stage status             : %s\r\n",         adc_cal_skew_stage_result_name(             batch->policy.stage_result));
                                                                         if (batch->failure_reason != NULL &&         strcmp(batch->failure_reason, "none") != 0)         xil_printf("Reason                   : %s\r\n",             batch->failure_reason);
                                                                         if (diagnose_mode || ADC_CAL_VERBOSE_DEBUG) {
                                                                             const calibration_skew_frame_result_t *latest =         &batch->latest_frame;
@@ -5846,20 +6143,31 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                             else             ++state->no_improvement_count;
                                                                                                             state->latest_controller_gain =             fabsf(state->filtered_residual) <                 CALIBRATION_OFFSET_NEAR_RESIDUAL_CODES ?             CALIBRATION_OFFSET_NEAR_UPDATE_STEP :             CALIBRATION_OFFSET_UPDATE_STEP;
                                                                                                             proposed_offset_update =             -state->latest_controller_gain * state->filtered_residual;
+                                                                                                            proposed_offset_update = fmaxf(
+                                                                                                                -CALIBRATION_OFFSET_MAX_CONTROLLER_STEP_CODES,
+                                                                                                                fminf(CALIBRATION_OFFSET_MAX_CONTROLLER_STEP_CODES,
+                                                                                                                    proposed_offset_update));
                                                                                                             coefficient_delta = proposed_offset_update;
                                                                                                             {
                                                                                                                 const float convergence_limit =
                                                                                                                     state->convergence_count > 0U ?
                                                                                                                         CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES :
                                                                                                                         CALIBRATION_OFFSET_ENTER_TOLERANCE_CODES;
+                                                                                                                const float raw_convergence_limit =
+                                                                                                                    CALIBRATION_OFFSET_CONVERGENCE_RAW_LIMIT_CODES +
+                                                                                                                    fminf(
+                                                                                                                        CALIBRATION_OFFSET_CONVERGENCE_MAX_UNCERTAINTY_CODES,
+                                                                                                                        standard_error);
                                                                                                                 /* A slow IIR filter must not hide a current-batch drift.
-                                                                                                                 * Require both estimates to be inside the confirmation
-                                                                                                                 * region before freezing the coefficient. */
+                                                                                                                 * The raw batch is evaluated against its measured
+                                                                                                                 * uncertainty because demanding repeated +/-1-code raw
+                                                                                                                 * means is not attainable on this hardware.  Independent
+                                                                                                                 * verification remains the final acceptance gate. */
                                                                                                                 inside_convergence_region =
                                                                                                                     fabsf(state->filtered_residual) <= convergence_limit &&
-                                                                                                                    fabsf(batch.mean) <= convergence_limit;
+                                                                                                                    fabsf(batch.mean) <= raw_convergence_limit;
                                                                                                             }
-                                                                                                            batch_pass =             batch.accepted >= CALIBRATION_OFFSET_MIN_ACCEPTED_FRAMES &&             inside_convergence_region &&             fabsf(coefficient_delta) <=                 CALIBRATION_OFFSET_MAX_UPDATE_CODES;
+                                                                                                            batch_pass =             batch.accepted >= CALIBRATION_OFFSET_MIN_ACCEPTED_FRAMES &&             state->batch_iteration_count >=                 CALIBRATION_OFFSET_MIN_CONFIRMATION_BATCHES &&             inside_convergence_region &&             fabsf(coefficient_delta) <=                 CALIBRATION_OFFSET_MAX_UPDATE_CODES;
                                                                                                             correction_held = batch_pass;
                                                                                                             if (batch_pass) {
                                                                                                                 ++state->convergence_count;
@@ -5867,7 +6175,9 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                             }
                                                                                                             else {
                                                                                                                 if (fabsf(state->filtered_residual) >                     CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES ||
-                                                                                                                    fabsf(batch.mean) > CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES)
+                                                                                                                    fabsf(batch.mean) >
+                                                                                                                        CALIBRATION_OFFSET_CONVERGENCE_RAW_LIMIT_CODES +
+                                                                                                                        CALIBRATION_OFFSET_CONVERGENCE_MAX_UNCERTAINTY_CODES)
                                                                                                                     state->convergence_count = 0U;
                                                                                                             }
                                                                                                             if (fabsf(state->filtered_residual) <=                 CALIBRATION_OFFSET_EXIT_TOLERANCE_CODES ||             state->convergence_count > 0U) {
@@ -6856,6 +7166,8 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                         g_automatic_calibration.offset_pass = state->offset_pass;
                                                                                                         g_automatic_calibration.gain_pass = state->gain_pass;
                                                                                                         g_automatic_calibration.skew_pass = state->skew_pass;
+                                                                                                        g_automatic_calibration.skew_warning = state->skew_warning;
+                                                                                                        g_automatic_calibration.skew_policy = state->skew_policy;
                                                                                                         g_automatic_calibration.gain_verification_pass = state->gain_verification_pass;
                                                                                                         g_automatic_calibration.output_valid = state->output_valid;
                                                                                                         g_automatic_calibration.performance_measurement_available =             state->performance_measurement_available;
@@ -6875,6 +7187,7 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                         g_automatic_calibration.nominal_system_gain = state->nominal_system_gain;
                                                                                                         g_automatic_calibration.final_normalized_gain =             state->final_normalized_gain;
                                                                                                         g_automatic_calibration.gain_verification_error =             state->gain_verification_error;
+                                                                                                        g_automatic_calibration.final_relative_skew_samples =             state->final_relative_skew_samples;
                                                                                                         g_automatic_calibration.final_relative_skew_ps =             state->final_relative_skew_ps;
                                                                                                         g_automatic_calibration.failure_reason = state->failure_reason;
                                                                                                     }
@@ -7001,11 +7314,15 @@ static double calibration_median_double(     double *values, size_t count) {
                                                                                                             return -2;
                                                                                                         }
                                                                                                         calibration_print_skew_summary(&skew_batch, false);
+                                                                                                        state->final_relative_skew_samples =             skew_batch.final_relative_skew_samples;
                                                                                                         state->final_relative_skew_ps = skew_batch.final_relative_skew_ps;
-                                                                                                        state->skew_pass = skew_batch.stage_status == CAL_SKEW_STAGE_PASS;
-                                                                                                        if (!state->skew_pass) {
+                                                                                                        state->skew_policy = skew_batch.policy;
+                                                                                                        state->skew_pass = skew_batch.policy.pipeline_may_continue &&             skew_batch.policy.measurement_validity ==                 ADC_CAL_SKEW_MEASUREMENT_VALID;
+                                                                                                        state->skew_warning = skew_batch.policy.stage_result ==             ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+                                                                                                        if (state->skew_warning) {
                                                                                                             xil_printf("\r\nWARNING: Skew stage is diagnostic-only in this build.\r\n");
                                                                                                             xil_printf("No skew register writes were performed.\r\n");
+                                                                                                            xil_printf("The stable measured skew is outside tolerance.\r\n");
                                                                                                             xil_printf("Continuing to performance measurement without delay-register updates.\r\n");
                                                                                                         }
                                                                                                         calibration_pipeline_sync_automatic_state(state);

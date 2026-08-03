@@ -1,6 +1,8 @@
 #ifndef ADC_CALIBRATION_PIPELINE_H
 #define ADC_CALIBRATION_PIPELINE_H
 
+#include "adc_calibration_skew.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -43,6 +45,7 @@ typedef struct {
     bool gain_pass;
     bool gain_verification_pass;
     bool skew_pass;
+    bool skew_warning;
     bool output_valid;
     bool performance_measurement_available;
     bool performance_valid;
@@ -64,7 +67,9 @@ typedef struct {
     float nominal_system_gain;
     float final_normalized_gain;
     float gain_verification_error;
+    double final_relative_skew_samples;
     double final_relative_skew_ps;
+    adc_cal_skew_stage_policy_result_t skew_policy;
     uint32_t stage_iteration;
 } adc_cal_pipeline_state_t;
 
