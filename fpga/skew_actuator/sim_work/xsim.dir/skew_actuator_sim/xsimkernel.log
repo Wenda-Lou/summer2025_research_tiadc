@@ -1,0 +1,7 @@
+Running: xsim.dir/skew_actuator_sim/xsimk.exe -runall -simmode gui -wdb skew_actuator_sim.wdb -simrunnum 0 -socket 62952
+Design successfully loaded
+Design Loading Memory Usage: 28732 KB (Peak: 28732 KB)
+Design Loading CPU Usage: 733 ms
+Simulation completed
+Simulation Memory Usage: 29216 KB (Peak: 29216 KB)
+Simulation CPU Usage: 765 ms

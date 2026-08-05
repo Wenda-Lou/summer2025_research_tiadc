@@ -188,6 +188,10 @@ const char *adc_cal_dither_validation_reason_name(
         return "PEAK_RATIO_BELOW_WEAK_THRESHOLD";
     case ADC_CAL_DITHER_VALIDATION_PEAK_BELOW_STRONG:
         return "PEAK_RATIO_BELOW_STRONG_THRESHOLD";
+    case ADC_CAL_DITHER_VALIDATION_EXISTING_TIMING:
+        return "EXISTING_TIMING_INVALID";
+    case ADC_CAL_DITHER_VALIDATION_TONE_FIT: return "TONE_FIT_INVALID";
+    case ADC_CAL_DITHER_VALIDATION_WINDOW: return "WINDOW_INVALID";
     default: return "UNKNOWN";
     }
 }
@@ -777,6 +781,17 @@ int adc_cal_dither_summarize_events(
     return 0;
 }
 
+int adc_cal_dither_window_is_valid(
+    size_t complete_event_count,
+    size_t minimum_complete_events,
+    int event_indices_valid,
+    int event_family_coherent)
+{
+    return minimum_complete_events > 0U &&
+        complete_event_count >= minimum_complete_events &&
+        event_indices_valid && event_family_coherent;
+}
+
 int adc_cal_dither_compare_periodic_origins(
     double first_origin_samples,
     double second_origin_samples,
@@ -855,6 +870,18 @@ int adc_cal_dither_compare_periodic_origins(
         adc_cal_double_isfinite(difference->signed_difference_samples) &&
         adc_cal_double_isfinite(difference->absolute_difference_samples);
     return difference->valid ? 0 : ADC_CAL_DITHER_ERR_NUMERICAL;
+}
+
+int adc_cal_dither_compare_periodic_lags(
+    double first_lag_samples,
+    double second_lag_samples,
+    double event_spacing_samples,
+    double frame_period_samples,
+    adc_cal_dither_periodic_difference_t *difference)
+{
+    return adc_cal_dither_compare_periodic_origins(
+        first_lag_samples, second_lag_samples,
+        event_spacing_samples, frame_period_samples, difference);
 }
 
 int adc_cal_dither_resolve_tone_cycle(
@@ -1266,6 +1293,40 @@ int adc_cal_dither_resample_dac_reference(
         if (interpolated < INT16_MIN) interpolated = INT16_MIN;
         adc_reference_samples[i] = (int16_t)interpolated;
     }
+    return 0;
+}
+
+int adc_cal_dither_rate_ratio_from_tone_bins(
+    double nominal_dac_adc_ratio,
+    double reference_tone_bin,
+    double captured_tone_bin,
+    double maximum_relative_adjustment,
+    double *matched_dac_adc_ratio)
+{
+    double candidate;
+    double relative_adjustment;
+    if (matched_dac_adc_ratio == NULL) return ADC_CAL_DITHER_ERR_NULL;
+    *matched_dac_adc_ratio = NAN;
+    if (!adc_cal_double_isfinite(nominal_dac_adc_ratio) ||
+        nominal_dac_adc_ratio <= DBL_EPSILON ||
+        !adc_cal_double_isfinite(reference_tone_bin) ||
+        reference_tone_bin <= DBL_EPSILON ||
+        !adc_cal_double_isfinite(captured_tone_bin) ||
+        captured_tone_bin <= DBL_EPSILON ||
+        !adc_cal_double_isfinite(maximum_relative_adjustment) ||
+        maximum_relative_adjustment < 0.0) {
+        return ADC_CAL_DITHER_ERR_NUMERICAL;
+    }
+    candidate = nominal_dac_adc_ratio *
+        captured_tone_bin / reference_tone_bin;
+    relative_adjustment = dither_abs(
+        candidate / nominal_dac_adc_ratio - 1.0);
+    if (!adc_cal_double_isfinite(candidate) ||
+        candidate <= DBL_EPSILON ||
+        relative_adjustment > maximum_relative_adjustment) {
+        return ADC_CAL_DITHER_ERR_NUMERICAL;
+    }
+    *matched_dac_adc_ratio = candidate;
     return 0;
 }
 

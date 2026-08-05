@@ -795,6 +795,11 @@ static int load_u8_csv_capture(
     return count > 0U ? 0 : -6;
 }
 
+static int sim_double_isfinite(double value)
+{
+    return value == value && value <= DBL_MAX && value >= -DBL_MAX;
+}
+
 static int remove_known_tone(
     const int16_t *samples,
     size_t sample_count,
@@ -805,8 +810,8 @@ static int remove_known_tone(
     double normal[3][4] = {{0.0}};
     double coefficients[3];
     if (samples == NULL || residual == NULL || sample_count < 3U ||
-        !isfinite(frequency_hz) || frequency_hz <= 0.0 ||
-        !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0) return -1;
+        !sim_double_isfinite(frequency_hz) || frequency_hz <= 0.0 ||
+        !sim_double_isfinite(sample_rate_hz) || sample_rate_hz <= 0.0) return -1;
     for (size_t i = 0U; i < sample_count; ++i) {
         const double phase = 2.0 * M_PI * frequency_hz *
             (double)i / sample_rate_hz;
@@ -1032,6 +1037,36 @@ static int unit_dither_detection_validation(sim_assert_context_t *ctx)
                     -7.049, 1.0e-9);
     SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
                     7.049, 1.0e-9);
+
+    /* Lag validation must stay in lag coordinates.  Event-origin metadata may
+     * use another sign/wrap convention and is not part of this comparison. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_lags(
+        463.983703, 463.983703, 140.757300, 1016.0,
+        &periodic_difference), 0);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_lags(
+        463.983703, 463.983703 + 140.757300, 140.757300, 1016.0,
+        &periodic_difference), 0);
+    SIM_ASSERT_EQ_INT(ctx, periodic_difference.event_offset, -1);
+    SIM_ASSERT_NEAR(ctx, periodic_difference.absolute_difference_samples,
+                    0.0, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_lags(
+        463.983703, 463.983703 + 47.373036, 140.757300, 1016.0,
+        &periodic_difference), 0);
+    SIM_ASSERT_TRUE(ctx,
+        periodic_difference.absolute_difference_samples > 1.0);
+
+    SIM_ASSERT_TRUE(ctx, strcmp(adc_cal_dither_validation_reason_name(
+        ADC_CAL_DITHER_VALIDATION_EXISTING_TIMING), "NONE") != 0);
+    SIM_ASSERT_TRUE(ctx, strcmp(adc_cal_dither_validation_reason_name(
+        ADC_CAL_DITHER_VALIDATION_TONE_FIT), "NONE") != 0);
+    SIM_ASSERT_TRUE(ctx, strcmp(adc_cal_dither_validation_reason_name(
+        ADC_CAL_DITHER_VALIDATION_WINDOW), "NONE") != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_dither_window_is_valid(5U, 1U, 1, 1));
+    SIM_ASSERT_TRUE(ctx, !adc_cal_dither_window_is_valid(0U, 1U, 1, 1));
+    SIM_ASSERT_TRUE(ctx, !adc_cal_dither_window_is_valid(5U, 1U, 0, 1));
+    SIM_ASSERT_TRUE(ctx, !adc_cal_dither_window_is_valid(5U, 1U, 1, 0));
     SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_origins(
         frame1_existing_n0, frame1_dither_n0, 142.791, 1016.0,
         &periodic_difference), 0);
@@ -1700,6 +1735,20 @@ static int unit_dither_correlation_coordinates(sim_assert_context_t *ctx)
         fmod(-(15.976486 + 4.0 * 142.791120) + 1016.0, 1016.0),
         142.791120, 1016.0, &after), 0);
     SIM_ASSERT_NEAR(ctx, after.absolute_difference_samples, 0.0, 1.0e-9);
+    {
+        double matched_ratio = NAN;
+        const double nominal_ratio = 2.6e9 / 1.45e9;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_rate_ratio_from_tone_bins(
+            nominal_ratio, 70.0, 71.0, 0.05, &matched_ratio), 0);
+        SIM_ASSERT_NEAR(ctx, matched_ratio,
+            nominal_ratio * 71.0 / 70.0, 1.0e-12);
+        SIM_ASSERT_TRUE(ctx, adc_cal_dither_rate_ratio_from_tone_bins(
+            nominal_ratio, 70.0, 80.0, 0.05, &matched_ratio) != 0);
+        SIM_ASSERT_TRUE(ctx, adc_cal_dither_rate_ratio_from_tone_bins(
+            nominal_ratio, 0.0, 71.0, 0.05, &matched_ratio) != 0);
+        SIM_ASSERT_TRUE(ctx, adc_cal_dither_rate_ratio_from_tone_bins(
+            nominal_ratio, 70.0, 71.0, 0.05, NULL) != 0);
+    }
     return 1;
 }
 
@@ -2091,7 +2140,8 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
             offset_a_residual, offset_b_residual, offset_capture_template,
             OFFSET_WINDOW_LENGTH, &skew_config, &skew_result), 0);
         SIM_ASSERT_TRUE(ctx, skew_result.valid);
-        SIM_ASSERT_TRUE(ctx, isfinite(skew_result.relative_skew_samples));
+        SIM_ASSERT_TRUE(ctx,
+            sim_double_isfinite(skew_result.relative_skew_samples));
         SIM_ASSERT_TRUE(ctx,
             fabs(skew_result.relative_skew_samples) <=
                 skew_config.max_linear_skew_samples);
@@ -2114,6 +2164,764 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
     return 1;
 }
 
+/* End-to-end replay context for the exact uploaded DAC waveform and recorded
+ * DMA frame.  A single capture cannot model independent analog noise from one
+ * batch to the next, so the fixture is replayed deterministically while the
+ * software corrections and production pipeline state advance normally. */
+typedef struct {
+    int16_t raw_dac[65024U];
+    uint8_t dma_bytes[ADC_RAW_FRAME_BYTES];
+    int16_t reference_even[SIM_ADC_CHANNEL_SAMPLES];
+    int16_t reference_odd[SIM_ADC_CHANNEL_SAMPLES];
+    int16_t channel_a[SIM_ADC_CHANNEL_SAMPLES];
+    int16_t channel_b[SIM_ADC_CHANNEL_SAMPLES];
+    int16_t reference_window[800U];
+    int16_t aligned_a[800U];
+    int16_t aligned_b[800U];
+    const char *capture_path;
+    const int16_t *selected_reference;
+    const int16_t *selected_channel;
+    size_t raw_count;
+    size_t dma_byte_count;
+    size_t reconstructed_count;
+    int selected_phase;
+    int selected_channel_index;
+    double lag_samples;
+    double correlation;
+    double analysis_tone_hz;
+    double nominal_rate_ratio;
+    double selected_rate_ratio;
+    size_t reference_tone_bin;
+    size_t captured_tone_bin;
+    int reference_rate_adapted;
+    double measured_gain;
+    double measured_offset;
+    double tone_phase_a;
+    double tone_phase_b;
+    double dither_skew_samples;
+    int dither_valid;
+    int gain_dither_valid;
+    uint32_t replay_count;
+    uint32_t timing_replays;
+    uint32_t offset_batches;
+    uint32_t gain_batches;
+    uint32_t skew_replays;
+    uint32_t performance_replays;
+    adc_cal_perf_batch_result_t performance;
+} fixture_pipeline_context_t;
+
+static size_t fixture_dominant_bin(const int16_t *samples, size_t count)
+{
+    double mean = 0.0;
+    double best_power = -1.0;
+    size_t best_bin = 0U;
+    if (samples == NULL || count < 4U) return 0U;
+    for (size_t i = 0U; i < count; ++i) mean += samples[i];
+    mean /= (double)count;
+    for (size_t bin = 1U; bin < count / 2U; ++bin) {
+        double real = 0.0;
+        double imag = 0.0;
+        for (size_t i = 0U; i < count; ++i) {
+            const double angle = 2.0 * M_PI *
+                (double)bin * (double)i / (double)count;
+            const double value = (double)samples[i] - mean;
+            real += value * cos(angle);
+            imag -= value * sin(angle);
+        }
+        {
+            const double power = real * real + imag * imag;
+            if (power > best_power) {
+                best_power = power;
+                best_bin = bin;
+            }
+        }
+    }
+    return best_bin;
+}
+
+static int fixture_fit_tone_phase(
+    const int16_t *samples,
+    size_t sample_count,
+    double frequency_hz,
+    double sample_rate_hz,
+    double *phase_rad)
+{
+    double matrix[3][4] = {{0.0}};
+    if (samples == NULL || phase_rad == NULL || sample_count < 4U ||
+        !sim_double_isfinite(frequency_hz) || frequency_hz <= 0.0 ||
+        !sim_double_isfinite(sample_rate_hz) || sample_rate_hz <= 0.0) return -1;
+    for (size_t i = 0U; i < sample_count; ++i) {
+        const double angle = 2.0 * M_PI * frequency_hz *
+            (double)i / sample_rate_hz;
+        const double basis[3] = {cos(angle), sin(angle), 1.0};
+        for (size_t row = 0U; row < 3U; ++row) {
+            for (size_t col = 0U; col < 3U; ++col) {
+                matrix[row][col] += basis[row] * basis[col];
+            }
+            matrix[row][3] += basis[row] * (double)samples[i];
+        }
+    }
+    for (size_t pivot = 0U; pivot < 3U; ++pivot) {
+        size_t best = pivot;
+        for (size_t row = pivot + 1U; row < 3U; ++row) {
+            if (fabs(matrix[row][pivot]) > fabs(matrix[best][pivot])) {
+                best = row;
+            }
+        }
+        if (fabs(matrix[best][pivot]) <= DBL_EPSILON) return -2;
+        if (best != pivot) {
+            for (size_t col = pivot; col < 4U; ++col) {
+                const double swap = matrix[pivot][col];
+                matrix[pivot][col] = matrix[best][col];
+                matrix[best][col] = swap;
+            }
+        }
+        {
+            const double divisor = matrix[pivot][pivot];
+            for (size_t col = pivot; col < 4U; ++col) {
+                matrix[pivot][col] /= divisor;
+            }
+        }
+        for (size_t row = 0U; row < 3U; ++row) {
+            const double factor = matrix[row][pivot];
+            if (row == pivot) continue;
+            for (size_t col = pivot; col < 4U; ++col) {
+                matrix[row][col] -= factor * matrix[pivot][col];
+            }
+        }
+    }
+    *phase_rad = atan2(-matrix[1][3], matrix[0][3]);
+    return sim_double_isfinite(*phase_rad) ? 0 : -3;
+}
+
+static int fixture_prepare_dither_skew(fixture_pipeline_context_t *fixture)
+{
+    enum { COUNT = 800, CANDIDATES = 8 };
+    double reference_residual[COUNT];
+    double residual_a[COUNT];
+    double residual_b[COUNT];
+    double energy_scores[COUNT];
+    double edge_scores[COUNT];
+    double aligned_template[COUNT];
+    double capture_template[COUNT];
+    double gain_template[COUNT];
+    adc_cal_dither_peak_candidate_t candidates[CANDIDATES];
+    adc_cal_dither_peak_config_t peak_config;
+    adc_cal_dither_validation_config_t validation_config;
+    adc_cal_dither_event_summary_t event_summary;
+    adc_cal_dither_config_t event_config;
+    adc_cal_dither_result_t events;
+    adc_cal_skew_config_t skew_config;
+    adc_cal_skew_result_t skew_result;
+    size_t candidate_count = 0U;
+    const double tone_hz = fixture->analysis_tone_hz;
+    const double adc_rate_hz = 1450000000.0;
+
+    fixture->dither_valid = 0;
+    fixture->gain_dither_valid = 0;
+    fixture->dither_skew_samples = NAN;
+    if (remove_known_tone(fixture->reference_window, COUNT, tone_hz,
+            adc_rate_hz, reference_residual) != 0 ||
+        remove_known_tone(fixture->aligned_a, COUNT, tone_hz,
+            adc_rate_hz, residual_a) != 0 ||
+        remove_known_tone(fixture->aligned_b, COUNT, tone_hz,
+            adc_rate_hz, residual_b) != 0) return -1;
+    adc_cal_dither_peak_default_config(&peak_config);
+    adc_cal_dither_validation_default_config(&validation_config);
+    peak_config.maximum_candidates = CANDIDATES;
+    if (adc_cal_dither_summarize_events(
+            reference_residual, COUNT, 0U, COUNT, 0.25,
+            &event_summary) != 0 || event_summary.complete_count < 3U ||
+        adc_cal_dither_compute_circular_scores(
+            reference_residual, residual_a, COUNT,
+            ADC_CAL_DITHER_CORRELATION_ENERGY, energy_scores) != 0 ||
+        adc_cal_dither_find_peak_candidates(
+            energy_scores, COUNT, event_summary.spacing_samples, &peak_config,
+            &validation_config, candidates, CANDIDATES,
+            &candidate_count) != 0 || candidate_count == 0U ||
+        adc_cal_dither_compute_circular_scores(
+            reference_residual, residual_a, COUNT,
+            ADC_CAL_DITHER_CORRELATION_EDGE_ENERGY, edge_scores) != 0 ||
+        adc_cal_dither_refine_candidate_lags(
+            edge_scores, COUNT, ADC_CAL_DITHER_DEFAULT_EDGE_REFINE_RADIUS,
+            candidates, candidate_count) != 0) return -2;
+    for (size_t i = 0U; i < COUNT; ++i) {
+        aligned_template[i] = sim_signal_interpolate_circular(
+            reference_residual, COUNT,
+            (double)i - candidates[0].lag_samples);
+    }
+    adc_cal_dither_default_config(&event_config);
+    event_config.minimum_events = 3U;
+    event_config.boundary_margin = 1U;
+    {
+        const int status = adc_cal_dither_find_events(
+            aligned_template, COUNT, &event_config, &events);
+        if ((status != 0 && status != ADC_CAL_DITHER_ERR_POLARITY) ||
+            events.accepted_events < event_config.minimum_events) return -3;
+    }
+    memset(capture_template, 0, sizeof(capture_template));
+    memset(gain_template, 0, sizeof(gain_template));
+    for (size_t event = 0U; event < events.accepted_events; ++event) {
+        const size_t start = events.events[event].start;
+        const size_t end = events.events[event].end;
+        double capture_sum = 0.0;
+        double gain_sum = 0.0;
+        const double *selected_residual =
+            fixture->selected_channel_index == 0 ? residual_a : residual_b;
+        for (size_t i = start; i < end; ++i) capture_sum += residual_a[i];
+        for (size_t i = start; i < end; ++i) gain_sum += selected_residual[i];
+        {
+            const double capture_sign = capture_sum >= 0.0 ? 1.0 : -1.0;
+            const double gain_sign = gain_sum >= 0.0 ? 1.0 : -1.0;
+            const double template_sign = events.events[event].polarity;
+            for (size_t i = start; i < end; ++i) {
+                capture_template[i] = capture_sign * template_sign *
+                    aligned_template[i];
+                gain_template[i] = gain_sign * template_sign *
+                    aligned_template[i];
+            }
+        }
+    }
+    adc_cal_skew_default_config(&skew_config);
+    skew_config.sample_rate_hz = adc_rate_hz;
+    if (adc_cal_skew_estimate_from_residuals(
+            residual_a, residual_b, capture_template, COUNT,
+            &skew_config, &skew_result) != 0 || !skew_result.valid ||
+        !sim_double_isfinite(skew_result.relative_skew_samples)) return -4;
+    {
+        adc_cal_dither_result_t gain_projection;
+        const double *selected_residual =
+            fixture->selected_channel_index == 0 ? residual_a : residual_b;
+        if (adc_cal_dither_analyze(
+                selected_residual, gain_template, COUNT,
+                &event_config, &gain_projection) == 0 &&
+            gain_projection.normalized_projection > 0.0001 &&
+            gain_projection.normalized_projection < 20.0) {
+            fixture->gain_dither_valid = 1;
+        }
+    }
+    fixture->dither_valid = 1;
+    fixture->dither_skew_samples = skew_result.relative_skew_samples;
+    return 0;
+}
+
+static int fixture_pipeline_prepare(
+    void *context,
+    const adc_cal_pipeline_run_config_t *config,
+    const char **reason)
+{
+    fixture_pipeline_context_t *fixture =
+        (fixture_pipeline_context_t *)context;
+    calibration_state_t fit;
+    calibration_config_t fit_config;
+    timing_alignment_result_t best_timing;
+    float best_fractional = 0.0f;
+    float best_correlation = -2.0f;
+    const double adc_rate_hz = 1450000000.0;
+    const double dac_rate_hz = 2600000000.0;
+    const double tone_hz = 100003075.78740157;
+    const char *capture_path = fixture->capture_path != NULL ?
+        fixture->capture_path : ADC_CAL_TEST_CAPTURE_PATH;
+    (void)config;
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->capture_path = capture_path;
+    fixture->nominal_rate_ratio = dac_rate_hz / adc_rate_hz;
+    fixture->selected_rate_ratio = fixture->nominal_rate_ratio;
+    fixture->analysis_tone_hz = tone_hz;
+    fixture->dither_skew_samples = NAN;
+    if (load_i16_text_waveform(
+            ADC_CAL_TEST_WAVEFORM_PATH, fixture->raw_dac,
+            sizeof(fixture->raw_dac) / sizeof(fixture->raw_dac[0]),
+            &fixture->raw_count) != 0 || fixture->raw_count != 65024U) {
+        if (reason != NULL) *reason = "could not load exact DAC TXT fixture";
+        return -1;
+    }
+    if (adc_cal_dither_resample_dac_reference(
+            fixture->raw_dac, fixture->raw_count,
+            fixture->selected_rate_ratio, 0.0, fixture->reference_even,
+            SIM_ADC_CHANNEL_SAMPLES) != 0 ||
+        adc_cal_dither_resample_dac_reference(
+            fixture->raw_dac, fixture->raw_count,
+            fixture->selected_rate_ratio, 1.0, fixture->reference_odd,
+            SIM_ADC_CHANNEL_SAMPLES) != 0) {
+        if (reason != NULL) *reason = "DAC TXT resampling failed";
+        return -2;
+    }
+    if (load_u8_csv_capture(
+            fixture->capture_path, fixture->dma_bytes,
+            sizeof(fixture->dma_bytes), &fixture->dma_byte_count) != 0 ||
+        fixture->dma_byte_count != ADC_RAW_FRAME_BYTES ||
+        adc_reconstruct_channels(
+            fixture->dma_bytes, fixture->dma_byte_count,
+            fixture->channel_a, SIM_ADC_CHANNEL_SAMPLES,
+            fixture->channel_b, SIM_ADC_CHANNEL_SAMPLES,
+            &fixture->reconstructed_count) != 0 ||
+        fixture->reconstructed_count != SIM_ADC_CHANNEL_SAMPLES) {
+        if (reason != NULL) *reason = "could not reconstruct exact DMA fixture";
+        return -3;
+    }
+    fixture->reference_tone_bin = fixture_dominant_bin(
+        fixture->reference_even, SIM_ADC_CHANNEL_SAMPLES);
+    {
+        const size_t bin_a = fixture_dominant_bin(
+            fixture->channel_a, SIM_ADC_CHANNEL_SAMPLES);
+        const size_t bin_b = fixture_dominant_bin(
+            fixture->channel_b, SIM_ADC_CHANNEL_SAMPLES);
+        fixture->captured_tone_bin = bin_a;
+        if (bin_a == bin_b && bin_a != fixture->reference_tone_bin &&
+            adc_cal_dither_rate_ratio_from_tone_bins(
+                fixture->nominal_rate_ratio,
+                (double)fixture->reference_tone_bin,
+                (double)bin_a, 0.05,
+                &fixture->selected_rate_ratio) == 0 &&
+            adc_cal_dither_resample_dac_reference(
+                fixture->raw_dac, fixture->raw_count,
+                fixture->selected_rate_ratio, 0.0,
+                fixture->reference_even,
+                SIM_ADC_CHANNEL_SAMPLES) == 0 &&
+            adc_cal_dither_resample_dac_reference(
+                fixture->raw_dac, fixture->raw_count,
+                fixture->selected_rate_ratio, 1.0,
+                fixture->reference_odd,
+                SIM_ADC_CHANNEL_SAMPLES) == 0) {
+            fixture->reference_rate_adapted = 1;
+            fixture->analysis_tone_hz = tone_hz *
+                fixture->selected_rate_ratio / fixture->nominal_rate_ratio;
+        }
+    }
+    {
+        const int16_t *references[2] = {
+            fixture->reference_even, fixture->reference_odd};
+        const int16_t *channels[2] = {
+            fixture->channel_a, fixture->channel_b};
+        for (size_t channel = 0U; channel < 2U; ++channel) {
+            for (size_t phase = 0U; phase < 2U; ++phase) {
+                timing_alignment_result_t candidate;
+                float fractional = 0.0f;
+                if (timing_find_circular_lag(
+                        references[phase], channels[channel],
+                        SIM_ADC_CHANNEL_SAMPLES, &candidate) != 0 ||
+                    timing_estimate_fractional_lag(
+                        references[phase], channels[channel],
+                        SIM_ADC_CHANNEL_SAMPLES, candidate.lag_samples,
+                        &fractional) != 0) continue;
+                if (candidate.correlation > best_correlation) {
+                    best_correlation = candidate.correlation;
+                    best_timing = candidate;
+                    best_fractional = fractional;
+                    fixture->selected_reference = references[phase];
+                    fixture->selected_channel = channels[channel];
+                    fixture->selected_phase = (int)phase;
+                    fixture->selected_channel_index = (int)channel;
+                }
+            }
+        }
+    }
+    if (fixture->selected_reference == NULL ||
+        fixture->selected_channel == NULL || best_correlation < 0.970f) {
+        if (reason != NULL) *reason = "recorded timing correlation is too low";
+        return -4;
+    }
+    fixture->lag_samples = (double)best_timing.lag_samples +
+        (double)best_fractional;
+    fixture->correlation = best_correlation;
+    for (size_t i = 0U; i < 800U; ++i) {
+        const size_t reference_index = 108U + i;
+        double source_position = fmod(
+            (double)reference_index + fixture->lag_samples,
+            (double)SIM_ADC_CHANNEL_SAMPLES);
+        size_t lower;
+        size_t upper;
+        double fraction;
+        if (source_position < 0.0) {
+            source_position += (double)SIM_ADC_CHANNEL_SAMPLES;
+        }
+        lower = (size_t)floor(source_position);
+        upper = lower + 1U;
+        if (upper >= SIM_ADC_CHANNEL_SAMPLES) upper = 0U;
+        fraction = source_position - (double)lower;
+        fixture->reference_window[i] =
+            fixture->selected_reference[reference_index];
+        fixture->aligned_a[i] = (int16_t)lrint(
+            (1.0 - fraction) * (double)fixture->channel_a[lower] +
+            fraction * (double)fixture->channel_a[upper]);
+        fixture->aligned_b[i] = (int16_t)lrint(
+            (1.0 - fraction) * (double)fixture->channel_b[lower] +
+            fraction * (double)fixture->channel_b[upper]);
+    }
+    calibration_default_config(&fit_config);
+    if (calibration_init(&fit, &fit_config) != CALIBRATION_OK ||
+        calibration_analyze_frame(
+            &fit,
+            fixture->selected_channel_index == 0 ?
+                fixture->aligned_a : fixture->aligned_b,
+            fixture->reference_window, 800U) != CALIBRATION_OK ||
+        fit.metrics.correlation < 0.970f ||
+        !isfinite(fit.metrics.measured_gain) ||
+        !isfinite(fit.metrics.measured_offset)) {
+        if (reason != NULL) *reason = "recorded offset/gain fit is invalid";
+        return -6;
+    }
+    fixture->measured_gain = fit.metrics.measured_gain;
+    fixture->measured_offset = fit.metrics.measured_offset;
+    if (fixture_fit_tone_phase(
+            fixture->aligned_a, 800U, fixture->analysis_tone_hz, adc_rate_hz,
+            &fixture->tone_phase_a) != 0 ||
+        fixture_fit_tone_phase(
+            fixture->aligned_b, 800U, fixture->analysis_tone_hz, adc_rate_hz,
+            &fixture->tone_phase_b) != 0) {
+        if (reason != NULL) *reason = "recorded channel tone fit failed";
+        return -7;
+    }
+    (void)fixture_prepare_dither_skew(fixture);
+    return 0;
+}
+
+static int fixture_pipeline_timing(
+    void *context,
+    adc_cal_pipeline_state_t *state,
+    const adc_cal_pipeline_run_config_t *config,
+    const char **reason)
+{
+    fixture_pipeline_context_t *fixture =
+        (fixture_pipeline_context_t *)context;
+    (void)reason;
+    fixture->replay_count += config->timing_frame_count;
+    fixture->timing_replays += config->timing_frame_count;
+    state->timing_pass = true;
+    state->calibration_channel = (int8_t)fixture->selected_channel_index;
+    state->canonical_reference_phase = (int8_t)fixture->selected_phase;
+    state->fixed_window_start = 108U;
+    state->fixed_window_length = 800U;
+    state->expected_lag = (int32_t)lrint(fixture->lag_samples);
+    state->timing_mean_correlation = (float)fixture->correlation;
+    return 0;
+}
+
+static int fixture_pipeline_offset(
+    void *context,
+    adc_cal_pipeline_state_t *state,
+    const char **reason)
+{
+    fixture_pipeline_context_t *fixture =
+        (fixture_pipeline_context_t *)context;
+    double correction = 0.0;
+    unsigned consecutive = 0U;
+    for (unsigned batch = 0U; batch < 20U; ++batch) {
+        const double residual = fixture->measured_offset + correction;
+        correction -= 0.35 * residual;
+        fixture->replay_count += 30U;
+        ++fixture->offset_batches;
+        state->stage_iteration = batch + 1U;
+        consecutive = fabs(fixture->measured_offset + correction) <= 1.0 ?
+            consecutive + 1U : 0U;
+        if (consecutive >= 2U) break;
+    }
+    state->offset_correction = (float)correction;
+    state->offset_verification_error =
+        (float)(fixture->measured_offset + correction);
+    state->offset_pass = consecutive >= 2U;
+    state->offset_result = state->offset_pass ?
+        ADC_CAL_PIPELINE_OFFSET_CONVERGED : ADC_CAL_PIPELINE_OFFSET_FAILED;
+    if (!state->offset_pass && reason != NULL) {
+        *reason = "recorded offset replay did not converge within 20 batches";
+    }
+    return state->offset_pass ? 0 : -1;
+}
+
+static int fixture_pipeline_gain(
+    void *context,
+    adc_cal_pipeline_state_t *state,
+    const char **reason)
+{
+    fixture_pipeline_context_t *fixture =
+        (fixture_pipeline_context_t *)context;
+    double correction = 1.0;
+    const double nominal_system_gain = fixture->measured_gain;
+    const double normalized_measured_gain =
+        fixture->measured_gain / nominal_system_gain;
+    unsigned consecutive = 0U;
+    if (fixture->measured_gain <= 0.0) {
+        if (reason != NULL) *reason = "recorded gain is non-positive";
+        return -1;
+    }
+    for (unsigned batch = 0U; batch < 20U; ++batch) {
+        const double error = normalized_measured_gain * correction - 1.0;
+        correction -= 0.5 * error / normalized_measured_gain;
+        fixture->replay_count += 30U;
+        ++fixture->gain_batches;
+        state->stage_iteration = batch + 1U;
+        consecutive = fabs(normalized_measured_gain * correction - 1.0) <=
+            CALIBRATION_GAIN_TOLERANCE ? consecutive + 1U : 0U;
+        if (consecutive >= 2U) break;
+    }
+    state->gain_correction = (float)correction;
+    state->nominal_system_gain = (float)nominal_system_gain;
+    state->final_normalized_gain =
+        (float)(normalized_measured_gain * correction);
+    state->gain_verification_error = state->final_normalized_gain - 1.0f;
+    state->gain_pass = consecutive >= 2U;
+    state->gain_verification_pass = state->gain_pass &&
+        fabs((double)state->gain_verification_error) <=
+            CALIBRATION_GAIN_TOLERANCE;
+    state->output_valid = state->gain_verification_pass;
+    state->valid = state->output_valid;
+    if (!state->output_valid && reason != NULL) {
+        *reason = "recorded gain replay did not converge or verify";
+    }
+    return state->output_valid ? 0 : -2;
+}
+
+static int fixture_pipeline_skew(
+    void *context,
+    adc_cal_pipeline_state_t *state,
+    const char **reason)
+{
+    fixture_pipeline_context_t *fixture =
+        (fixture_pipeline_context_t *)context;
+    adc_cal_skew_phase_config_t phase_config;
+    adc_cal_skew_phase_result_t phase_result;
+    adc_cal_skew_stage_policy_input_t policy_input;
+    adc_cal_skew_phase_default_config(&phase_config);
+    phase_config.dither_valid = fixture->dither_valid;
+    phase_config.dither_skew_samples = fixture->dither_skew_samples;
+    if (adc_cal_skew_resolve_tone_phase(
+            fixture->tone_phase_a, fixture->tone_phase_b,
+            fixture->analysis_tone_hz, 1450000000.0,
+            &phase_config, &phase_result) != 0 || !phase_result.valid) {
+        if (reason != NULL) *reason = "recorded skew phase branch is invalid";
+        return -1;
+    }
+    memset(&policy_input, 0, sizeof(policy_input));
+    policy_input.primary_estimate_valid = 1;
+    policy_input.measured_skew_samples = phase_result.corrected_skew_samples;
+    policy_input.accepted_frames = 10U;
+    policy_input.minimum_accepted_frames = 7U;
+    policy_input.batch_std_samples = 0.0;
+    policy_input.maximum_batch_std_samples = 0.02;
+    policy_input.tolerance_samples = 0.01;
+    policy_input.advisory_warning = !fixture->dither_valid ||
+        (fixture->dither_valid &&
+         phase_result.dither_disagreement_samples > 0.03);
+    policy_input.actuator_available = 0;
+    if (adc_cal_skew_evaluate_stage_policy(
+            &policy_input, &state->skew_policy) != 0) {
+        if (reason != NULL) *reason = "recorded skew policy evaluation failed";
+        return -2;
+    }
+    fixture->replay_count += 10U;
+    fixture->skew_replays += 10U;
+    state->final_relative_skew_samples =
+        phase_result.corrected_skew_samples;
+    state->final_relative_skew_ps = phase_result.corrected_skew_samples *
+        1.0e12 / 1450000000.0;
+    state->skew_pass = state->skew_policy.pipeline_may_continue != 0;
+    state->skew_warning = state->skew_policy.stage_result ==
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+    if (!state->skew_pass && reason != NULL) *reason = state->skew_policy.reason;
+    return state->skew_pass ? 0 : -3;
+}
+
+static int fixture_performance_capture(
+    void *context,
+    double *raw_a,
+    double *raw_b,
+    double *reference,
+    size_t capacity,
+    size_t *sample_count,
+    const char **reason)
+{
+    fixture_pipeline_context_t *fixture =
+        (fixture_pipeline_context_t *)context;
+    if (capacity > 800U) {
+        if (reason != NULL) *reason = "recorded performance window is too short";
+        return -1;
+    }
+    for (size_t i = 0U; i < capacity; ++i) {
+        raw_a[i] = fixture->aligned_a[i];
+        raw_b[i] = fixture->aligned_b[i];
+        reference[i] = fixture->reference_window[i];
+    }
+    ++fixture->replay_count;
+    ++fixture->performance_replays;
+    if (sample_count != NULL) *sample_count = capacity;
+    return 0;
+}
+
+static int fixture_pipeline_performance(
+    void *context,
+    adc_cal_pipeline_state_t *state,
+    const char **reason)
+{
+    fixture_pipeline_context_t *fixture =
+        (fixture_pipeline_context_t *)context;
+    adc_cal_perf_config_t config;
+    adc_cal_perf_default_config(&config);
+    config.sample_count = 800U;
+    config.sample_rate_hz = 1450000000.0;
+    config.expected_fundamental_hz = fixture->analysis_tone_hz;
+    config.frame_count = 30U;
+    config.minimum_valid_frames = 20U;
+    config.final_offset_correction = state->offset_correction;
+    config.final_gain_correction = state->gain_correction;
+    config.nominal_system_gain = state->nominal_system_gain;
+    if (adc_cal_perf_run_batch(
+            &config, fixture_performance_capture, fixture,
+            &fixture->performance) != 0 || !fixture->performance.valid) {
+        state->performance_measurement_available = true;
+        state->performance_valid = false;
+        state->performance_failure_reason = fixture->performance.failure_reason;
+        if (reason != NULL) *reason = fixture->performance.failure_reason;
+        return -1;
+    }
+    state->performance_measurement_available = true;
+    state->performance_valid = true;
+    return 0;
+}
+
+static int unit_recorded_fixture_full_pipeline(sim_assert_context_t *ctx)
+{
+    static fixture_pipeline_context_t fixture;
+    adc_cal_pipeline_callbacks_t callbacks;
+    adc_cal_pipeline_run_config_t run_config;
+    adc_cal_pipeline_state_t state;
+    memset(&callbacks, 0, sizeof(callbacks));
+    memset(&run_config, 0, sizeof(run_config));
+    memset(&state, 0, sizeof(state));
+    callbacks.context = &fixture;
+    callbacks.prepare = fixture_pipeline_prepare;
+    callbacks.run_timing = fixture_pipeline_timing;
+    callbacks.run_offset = fixture_pipeline_offset;
+    callbacks.run_gain = fixture_pipeline_gain;
+    callbacks.run_skew = fixture_pipeline_skew;
+    callbacks.run_performance = fixture_pipeline_performance;
+    run_config.timing_frame_count = 10U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_pipeline_run_all(
+        &state, &callbacks, &run_config), 0);
+    SIM_ASSERT_TRUE(ctx, state.timing_pass);
+    SIM_ASSERT_TRUE(ctx, state.timing_mean_correlation >= 0.970f);
+    SIM_ASSERT_EQ_INT(ctx, state.offset_result,
+        ADC_CAL_PIPELINE_OFFSET_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, state.offset_pass);
+    SIM_ASSERT_TRUE(ctx, fabs((double)state.offset_verification_error) <= 1.0);
+    SIM_ASSERT_TRUE(ctx, state.gain_pass);
+    SIM_ASSERT_TRUE(ctx, state.gain_verification_pass);
+    SIM_ASSERT_TRUE(ctx, fixture.gain_dither_valid);
+    SIM_ASSERT_TRUE(ctx, fabs((double)state.gain_verification_error) <=
+        CALIBRATION_GAIN_TOLERANCE);
+    SIM_ASSERT_TRUE(ctx, fixture.dither_valid);
+    SIM_ASSERT_TRUE(ctx, state.skew_pass);
+    SIM_ASSERT_EQ_INT(ctx, state.skew_policy.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_VALID);
+    SIM_ASSERT_EQ_INT(ctx, state.skew_policy.stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_EQ_INT(ctx, state.skew_policy.correction_status,
+        ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE);
+    SIM_ASSERT_TRUE(ctx, state.performance_measurement_available);
+    SIM_ASSERT_TRUE(ctx, state.performance_valid);
+    SIM_ASSERT_EQ_INT(ctx, fixture.performance.frames_valid, 30U);
+    SIM_ASSERT_EQ_INT(ctx, state.overall_result, ADC_CAL_PIPELINE_RESULT_PASS);
+    SIM_ASSERT_TRUE(ctx, state.output_valid);
+    SIM_ASSERT_EQ_INT(ctx, fixture.timing_replays, 10U);
+    SIM_ASSERT_TRUE(ctx, fixture.offset_batches >= 2U &&
+        fixture.offset_batches <= 20U);
+    SIM_ASSERT_TRUE(ctx, fixture.gain_batches >= 2U &&
+        fixture.gain_batches <= 20U);
+    SIM_ASSERT_EQ_INT(ctx, fixture.skew_replays, 10U);
+    SIM_ASSERT_EQ_INT(ctx, fixture.performance_replays, 30U);
+    SIM_ASSERT_TRUE(ctx, fixture.replay_count >= 110U);
+    if (ctx != NULL && ctx->summary != NULL) {
+        fprintf(ctx->summary,
+            "Recorded fixture pipeline : PASS\n"
+            "  files                  : %s | %s\n"
+            "  timing                 : %.6f correlation, %.6f samples, %lu frames\n"
+            "  offset                 : %.6f correction, %.6f verification, %lu batches\n"
+            "  gain                   : %.9f correction, %.9f normalized, %lu batches, dither %s\n"
+            "  dither cross-check     : %s, %.6f samples\n"
+            "  open-loop skew         : %.6f samples, %.6f ps, %s\n"
+            "  performance            : %lu/%lu valid, SNDR %.3f dB, ENOB %.3f\n"
+            "  pipeline               : %s, output usable YES\n",
+            ADC_CAL_TEST_WAVEFORM_PATH, ADC_CAL_TEST_CAPTURE_PATH,
+            fixture.correlation, fixture.lag_samples,
+            (unsigned long)fixture.timing_replays,
+            (double)state.offset_correction,
+            (double)state.offset_verification_error,
+            (unsigned long)fixture.offset_batches,
+            (double)state.gain_correction,
+            (double)state.final_normalized_gain,
+            (unsigned long)fixture.gain_batches,
+            fixture.gain_dither_valid ? "VALID" : "INVALID",
+            fixture.dither_valid ? "VALID" : "INVALID",
+            fixture.dither_skew_samples,
+            state.final_relative_skew_samples,
+            state.final_relative_skew_ps,
+            adc_cal_skew_stage_result_name(state.skew_policy.stage_result),
+            (unsigned long)fixture.performance.frames_valid,
+            (unsigned long)fixture.performance.frames_attempted,
+            (double)fixture.performance.sndr_db,
+            (double)fixture.performance.enob,
+            adc_cal_pipeline_result_name(state.overall_result));
+    }
+    return 1;
+}
+
+static int unit_rate_mismatched_fixture_full_pipeline(
+    sim_assert_context_t *ctx)
+{
+    static fixture_pipeline_context_t fixture;
+    adc_cal_pipeline_callbacks_t callbacks;
+    adc_cal_pipeline_run_config_t run_config;
+    adc_cal_pipeline_state_t state;
+    memset(&fixture, 0, sizeof(fixture));
+    memset(&callbacks, 0, sizeof(callbacks));
+    memset(&run_config, 0, sizeof(run_config));
+    memset(&state, 0, sizeof(state));
+    fixture.capture_path = ADC_CAL_TEST_RATE_MISMATCH_CAPTURE_PATH;
+    callbacks.context = &fixture;
+    callbacks.prepare = fixture_pipeline_prepare;
+    callbacks.run_timing = fixture_pipeline_timing;
+    callbacks.run_offset = fixture_pipeline_offset;
+    callbacks.run_gain = fixture_pipeline_gain;
+    callbacks.run_skew = fixture_pipeline_skew;
+    callbacks.run_performance = fixture_pipeline_performance;
+    run_config.timing_frame_count = 10U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_pipeline_run_all(
+        &state, &callbacks, &run_config), 0);
+    SIM_ASSERT_TRUE(ctx, fixture.reference_rate_adapted);
+    SIM_ASSERT_EQ_INT(ctx, fixture.reference_tone_bin, 70U);
+    SIM_ASSERT_EQ_INT(ctx, fixture.captured_tone_bin, 71U);
+    SIM_ASSERT_NEAR(ctx, fixture.selected_rate_ratio,
+        fixture.nominal_rate_ratio * 71.0 / 70.0, 1.0e-12);
+    SIM_ASSERT_TRUE(ctx, state.timing_mean_correlation >= 0.970f);
+    SIM_ASSERT_TRUE(ctx, state.offset_pass);
+    SIM_ASSERT_TRUE(ctx, state.gain_pass);
+    SIM_ASSERT_TRUE(ctx, fixture.gain_dither_valid);
+    SIM_ASSERT_TRUE(ctx, state.skew_pass);
+    SIM_ASSERT_TRUE(ctx, state.performance_valid);
+    SIM_ASSERT_EQ_INT(ctx, state.overall_result, ADC_CAL_PIPELINE_RESULT_PASS);
+    SIM_ASSERT_TRUE(ctx, state.output_valid);
+    if (ctx != NULL && ctx->summary != NULL) {
+        fprintf(ctx->summary,
+            "Rate-mismatched fixture pipeline : PASS\n"
+            "  capture                : %s\n"
+            "  reference/capture bins : %lu / %lu\n"
+            "  nominal/selected ratio : %.9f / %.9f\n"
+            "  timing correlation     : %.6f\n"
+            "  dither gain/skew       : %s / %s\n"
+            "  pipeline               : %s, output usable YES\n",
+            fixture.capture_path,
+            (unsigned long)fixture.reference_tone_bin,
+            (unsigned long)fixture.captured_tone_bin,
+            fixture.nominal_rate_ratio,
+            fixture.selected_rate_ratio,
+            fixture.correlation,
+            fixture.gain_dither_valid ? "VALID" : "INVALID",
+            fixture.dither_valid ? "VALID" : "INVALID",
+            adc_cal_pipeline_result_name(state.overall_result));
+    }
+    return 1;
+}
+
 static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
 {
     const double pi = 3.14159265358979323846;
@@ -2125,6 +2933,18 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
     adc_cal_skew_phase_result_t result;
 
     adc_cal_skew_phase_default_config(&config);
+
+    /* Stage 1's rate-matched tone context is accepted; the stale nominal
+     * bin-70 frequency is specifically rejected against the bin-71 fit. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_validate_tone_context(
+        101.328740e6, 101.314711e6, 1.45e9, 800U, 0.75),
+        ADC_CAL_SKEW_TONE_CONTEXT_VALID);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_validate_tone_context(
+        99.901574e6, 101.314711e6, 1.45e9, 800U, 0.75),
+        ADC_CAL_SKEW_TONE_CONTEXT_FREQUENCY_MISMATCH);
+    SIM_ASSERT_TRUE(ctx, strcmp(adc_cal_skew_tone_context_status_name(
+        ADC_CAL_SKEW_TONE_CONTEXT_FREQUENCY_MISMATCH),
+        "FREQUENCY_MISMATCH") == 0);
 
     /* Same-polarity zero, positive, and negative physical skew. */
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
@@ -2139,6 +2959,13 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
         0.2, 0.2 - omega * 0.11, frequency_hz, sample_rate_hz,
         &config, &result), 0);
     SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, -0.11, 1.0e-12);
+
+    /* A common circular/time-origin shift cancels from the paired phase
+     * comparison; no independent channel alignment is involved. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.2 + 1.7, 0.2 + 1.7 + omega * 0.12,
+        frequency_hz, sample_rate_hz, &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.12, 1.0e-12);
 
     /* Inverted Channel B with zero, positive, and negative physical skew. */
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
@@ -2234,12 +3061,252 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
     return 1;
 }
 
+typedef struct {
+    int register_value;
+    int initial_register;
+    double initial_skew_samples;
+    double signed_step_samples;
+    double std_samples;
+    uint32_t reads;
+    uint32_t writes;
+    uint32_t measurements;
+    int invalid_measurement;
+    int readback_mismatch;
+} simulated_skew_actuator_t;
+
+static int simulated_skew_measure(
+    void *context, adc_cal_skew_batch_measurement_t *measurement)
+{
+    simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
+    if (sim == NULL || measurement == NULL) return -1;
+    memset(measurement, 0, sizeof(*measurement));
+    ++sim->measurements;
+    measurement->valid = !sim->invalid_measurement;
+    measurement->skew_samples = sim->initial_skew_samples +
+        sim->signed_step_samples *
+        (double)(sim->register_value - sim->initial_register);
+    measurement->batch_std_samples = sim->std_samples;
+    measurement->accepted_frames = measurement->valid ? 10U : 0U;
+    measurement->rejected_frames = measurement->valid ? 0U : 10U;
+    measurement->reason = measurement->valid ? "none" :
+        "simulated invalid primary estimator";
+    return 0;
+}
+
+static int simulated_skew_read(void *context, int *value)
+{
+    simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
+    if (sim == NULL || value == NULL) return -1;
+    ++sim->reads;
+    *value = sim->register_value;
+    return 0;
+}
+
+static int simulated_skew_write(void *context, int value)
+{
+    simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
+    if (sim == NULL) return -1;
+    ++sim->writes;
+    sim->register_value = sim->readback_mismatch ? value + 1 : value;
+    return 0;
+}
+
+static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
+{
+    adc_cal_skew_loop_config_t config;
+    adc_cal_skew_loop_io_t io;
+    adc_cal_skew_loop_result_t result;
+    simulated_skew_actuator_t sim;
+    int requested = 0;
+    int applied = 0;
+    int target = 0;
+    int saturated = 0;
+
+    adc_cal_skew_loop_default_config(&config);
+    config.skew_closed_loop_enable = 1;
+    config.skew_register_min = 0;
+    config.skew_register_max = 63;
+    config.skew_actuator_step_samples = 0.02;
+    config.skew_actuator_polarity = 1;
+    config.skew_max_steps_per_iteration = 4;
+    config.skew_tolerance_samples = 0.011;
+    config.skew_required_consecutive_passes = 2U;
+    config.skew_max_iterations = 10U;
+    memset(&io, 0, sizeof(io));
+    io.measure_batch = simulated_skew_measure;
+    io.read_register = simulated_skew_read;
+    io.write_register = simulated_skew_write;
+
+    /* Correct sign and bounded update: positive B-A skew with a positive
+     * actuator polarity must reduce the Channel-B register. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_plan_update(
+        0.186, 20, &config, &requested, &applied, &target, &saturated), 0);
+    SIM_ASSERT_TRUE(ctx, requested < 0);
+    SIM_ASSERT_EQ_INT(ctx, applied, -4);
+    SIM_ASSERT_EQ_INT(ctx, target, 16);
+    SIM_ASSERT_TRUE(ctx, !saturated);
+    config.skew_actuator_polarity = -1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_plan_update(
+        0.186, 20, &config, &requested, &applied, &target, &saturated), 0);
+    SIM_ASSERT_TRUE(ctx, applied > 0);
+    config.skew_actuator_polarity = 1;
+
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.actuator_polarity, 1);
+    SIM_ASSERT_NEAR(ctx, result.observed_step_samples, 0.02, 1.0e-12);
+    SIM_ASSERT_TRUE(ctx, fabs(result.final_skew_samples) <=
+        config.skew_tolerance_samples);
+    SIM_ASSERT_TRUE(ctx, result.consecutive_passes >= 2U);
+    SIM_ASSERT_TRUE(ctx, result.correction_applied);
+    SIM_ASSERT_TRUE(ctx, result.final_register < result.initial_register);
+
+    /* Production leaves actuator polarity unknown until the mandatory +1
+     * characterization.  Verify that a negative hardware response is learned
+     * and then used to move the register in the convergent direction. */
+    config.skew_actuator_polarity = 0;
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = -0.02;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
+    SIM_ASSERT_EQ_INT(ctx, result.actuator_polarity, -1);
+    SIM_ASSERT_TRUE(ctx, result.final_register > result.initial_register);
+    config.skew_actuator_polarity = 1;
+
+    /* Invalid primary estimate is rejected before any actuator access. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.invalid_measurement = 1;
+    io.context = &sim;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result) != 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_FAILED);
+    SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
+
+    /* An unavailable actuator is discovered only after a valid measurement.
+     * Preserve and publish that measurement as a distinct loop outcome. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    io.read_register = NULL;
+    io.write_register = NULL;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status,
+        ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE);
+    SIM_ASSERT_NEAR(ctx, result.initial_skew_samples, 0.186, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, result.final_skew_samples, 0.186, 1.0e-12);
+    SIM_ASSERT_TRUE(ctx, result.accepted_frames > 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.reads, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
+    SIM_ASSERT_TRUE(ctx, strcmp(result.failure_reason,
+        "ACTUATOR_UNAVAILABLE") == 0);
+    io.read_register = simulated_skew_read;
+    io.write_register = simulated_skew_write;
+
+    /* A readback mismatch during the mandatory +1 characterization fails. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.readback_mismatch = 1;
+    io.context = &sim;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result) != 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_FAILED);
+
+    /* Measurement-only mode never reads or writes an actuator. */
+    config.skew_closed_loop_enable = 0;
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status,
+        ADC_CAL_SKEW_LOOP_MEASUREMENT_ONLY);
+    SIM_ASSERT_EQ_INT(ctx, sim.reads, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
+
+    /* Saturation is explicit when the correction points below register min. */
+    config.skew_closed_loop_enable = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_plan_update(
+        0.186, 0, &config, &requested, &applied, &target, &saturated), 0);
+    SIM_ASSERT_EQ_INT(ctx, applied, 0);
+    SIM_ASSERT_TRUE(ctx, saturated);
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 0;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_SATURATED);
+
+    /* One passing batch is insufficient when two consecutive passes are
+     * configured and the iteration limit permits only one. */
+    config.skew_max_iterations = 1U;
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.005;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status,
+        ADC_CAL_SKEW_LOOP_NOT_CONVERGED);
+    SIM_ASSERT_EQ_INT(ctx, result.consecutive_passes, 1U);
+
+    /* Coarse resolution is reported honestly instead of claiming convergence. */
+    config.skew_max_iterations = 10U;
+    config.skew_actuator_step_samples = 0.04;
+    config.skew_tolerance_samples = 0.01;
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.026;
+    sim.signed_step_samples = 0.04;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status,
+        ADC_CAL_SKEW_LOOP_NOT_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason, "resolution") != NULL);
+    SIM_ASSERT_NEAR(ctx, result.final_skew_samples, 0.026, 1.0e-12);
+    return 1;
+}
+
 static int unit_skew_stage_policy(sim_assert_context_t *ctx)
 {
     adc_cal_skew_stage_policy_input_t input;
     adc_cal_skew_stage_policy_result_t result;
 
     memset(&input, 0, sizeof(input));
+    input.measurement_required = 1;
     input.primary_estimate_valid = 1;
     input.measured_skew_samples = 0.005;
     input.accepted_frames = 10U;
@@ -2301,6 +3368,7 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
         &input, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
         ADC_CAL_SKEW_STAGE_RESULT_INVALID);
+    SIM_ASSERT_TRUE(ctx, strstr(result.reason, "mandatory") != NULL);
     input.primary_estimate_valid = 1;
     input.accepted_frames = 2U;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
@@ -2316,7 +3384,23 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
         ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE);
 
+    /* A measurement-only open-loop stage is explicitly optional: loss of all
+     * skew estimates is visible but does not invalidate calibrated output. */
+    input.measurement_required = 0;
+    input.primary_estimate_valid = 0;
+    input.accepted_frames = 0U;
+    input.polarity_branch_changes = 0U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
+    SIM_ASSERT_TRUE(ctx, strstr(result.reason, "optional") != NULL);
+
     /* Closed-loop convergence semantics remain distinct. */
+    input.measurement_required = 1;
+    input.primary_estimate_valid = 1;
+    input.accepted_frames = 10U;
     input.polarity_branch_changes = 0U;
     input.measured_skew_samples = 0.005;
     input.actuator_available = 1;
@@ -2379,6 +3463,24 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     adc_cal_skew_result_t result;
     uint32_t rng = 77U;
     double tone_skew = NAN;
+    int16_t pair_a[1016];
+    int16_t pair_b[1016];
+    double mapped_a[800];
+    double mapped_b[800];
+
+    for (size_t i = 0U; i < 1016U; ++i) {
+        pair_a[i] = (int16_t)(i % 700U);
+        pair_b[i] = (int16_t)(pair_a[i] + 100);
+    }
+    /* Regression for the reported 464-sample lag: the 800-sample window
+     * crosses the DMA boundary, but the same circular interpolation is used
+     * for both channels and their relative relationship is preserved. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_map_paired_window_i16(
+        pair_a, pair_b, 1016U, 108U, 800U, 0.0, 463.983703,
+        mapped_a, mapped_b), 0);
+    for (size_t i = 0U; i < 800U; ++i) {
+        SIM_ASSERT_NEAR(ctx, mapped_b[i] - mapped_a[i], 100.0, 1.0e-9);
+    }
 
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_from_tone_phases(
         0.25, 0.25 + 6.28318530717958647692 * 100.0e6 / 1.45e9 * 0.12,
@@ -2684,7 +3786,10 @@ static void run_unit_tests(sim_assert_context_t *ctx)
     (void)unit_dither_joint_alignment(ctx);
     (void)unit_dither_correlation_coordinates(ctx);
     (void)unit_txt_waveform_timing_and_dither_diagnostics(ctx);
+    (void)unit_recorded_fixture_full_pipeline(ctx);
+    (void)unit_rate_mismatched_fixture_full_pipeline(ctx);
     (void)unit_skew_phase_branch_resolver(ctx);
+    (void)unit_skew_closed_loop_controller(ctx);
     (void)unit_skew_stage_policy(ctx);
     (void)unit_skew_estimator_direct(ctx);
     (void)unit_performance_estimator_direct(ctx);

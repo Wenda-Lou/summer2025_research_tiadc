@@ -1,4 +1,6 @@
 import socket
+import struct
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -10,6 +12,9 @@ from .frame import reconstruct_adc_bytes
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SAVE_DIR = PROJECT_DIR / 'adc_data'
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
+CALIBRATION_CSV_MAGIC = b"CALC"
+CALIBRATION_CSV_HEADER_SIZE = 12
 
 
 def receive_adc_data(
@@ -61,6 +66,91 @@ def receive_adc_data(
     print(f"\nSaved {len(raw)} bytes")
     print(f"File: {filename}")
 
+    return filename
+
+
+def receive_calibration_csv(
+    bind_ip="0.0.0.0",
+    port=6666,
+    timeout=30.0,
+):
+    """Receive a framed, variable-length calibration CSV export."""
+    save_dir = SAVE_DIR / "calibration_exports"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((bind_ip, port))
+    deadline = time.monotonic() + timeout
+    packets = {}
+    expected_count = None
+    expected_length = None
+    sender = None
+
+    print(f"Listening for calibration CSV on {bind_ip}:{port}")
+    print("Run 'adc -cal export' in the FPGA UART terminal.")
+
+    try:
+        while expected_count is None or len(packets) < expected_count:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                received = len(packets)
+                expected = expected_count if expected_count is not None else "unknown"
+                raise TimeoutError(
+                    f"Timed out receiving calibration CSV "
+                    f"({received}/{expected} packets)."
+                )
+            sock.settimeout(remaining)
+            try:
+                data, address = sock.recvfrom(2048)
+            except socket.timeout as exc:
+                received = len(packets)
+                expected = expected_count if expected_count is not None else "unknown"
+                raise TimeoutError(
+                    f"Timed out receiving calibration CSV "
+                    f"({received}/{expected} packets)."
+                ) from exc
+
+            if len(data) < CALIBRATION_CSV_HEADER_SIZE or \
+                    data[:4] != CALIBRATION_CSV_MAGIC:
+                continue
+
+            packet_index, packet_count, total_length = struct.unpack(
+                "!HHI", data[4:CALIBRATION_CSV_HEADER_SIZE]
+            )
+            if packet_count == 0 or packet_index >= packet_count:
+                continue
+            if expected_count is None:
+                expected_count = packet_count
+                expected_length = total_length
+                sender = address
+            elif address != sender or packet_count != expected_count or \
+                    total_length != expected_length:
+                continue
+
+            packets[packet_index] = data[CALIBRATION_CSV_HEADER_SIZE:]
+            print(
+                f"Calibration packet {packet_index + 1}/{packet_count} "
+                f"from {address}"
+            )
+    finally:
+        sock.close()
+
+    payload = b"".join(packets[index] for index in range(expected_count))
+    payload = payload[:expected_length]
+    if len(payload) != expected_length:
+        raise ValueError(
+            f"Incomplete calibration CSV: expected {expected_length} bytes, "
+            f"assembled {len(payload)} bytes."
+        )
+    try:
+        payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Calibration export is not valid UTF-8 CSV data.") from exc
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = save_dir / f"calibration_performance_{timestamp}.csv"
+    filename.write_bytes(payload)
+    print(f"Saved calibration CSV: {filename}")
     return filename
 
 

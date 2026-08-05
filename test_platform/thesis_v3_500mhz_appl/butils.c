@@ -10,6 +10,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include "xil_printf.h"
 #include "xparameters.h"
@@ -135,9 +136,14 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_REPRESENTATIVE_TIE_EPSILON            1.0e-6f
 #define ADC_PERFORMANCE_FRAMES                    30U
 #define ADC_PERFORMANCE_MIN_VALID_FRAMES          20U
+#define ADC_CAL_EXPORT_BUFFER_SIZE              65536U
 #define ADC_PERFORMANCE_FUNDAMENTAL_SEARCH_BINS   3U
 #define ADC_PERFORMANCE_HANN_SIGNAL_HALF_WIDTH    2U
 #define CAL_TONE_REFINE_HALF_RANGE_BINS            0.75
+
+static char g_adc_cal_export_buffer[ADC_CAL_EXPORT_BUFFER_SIZE];
+static size_t g_adc_cal_export_length = 0U;
+static bool g_adc_cal_export_available = false;
 #define CAL_TONE_REFINE_MIN_STEP                  1.0e-12
 #define CAL_TONE_REFINE_MAX_ITERATIONS              40U
 #define CAL_DITHER_EVENT_THRESHOLD_FRACTION         0.25
@@ -236,8 +242,70 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_SKEW_MIN_ACCEPTED_FRAMES                 3U
 #endif
 #ifndef CAL_SKEW_REQUIRED_CONVERGED_BATCHES
-#define CAL_SKEW_REQUIRED_CONVERGED_BATCHES          3U
+#define CAL_SKEW_REQUIRED_CONVERGED_BATCHES          2U
 #endif
+#ifndef CAL_SKEW_CLOSED_LOOP_ENABLE
+#define CAL_SKEW_CLOSED_LOOP_ENABLE                   1
+#endif
+#ifndef CAL_SKEW_MAX_ITERATIONS
+#define CAL_SKEW_MAX_ITERATIONS                       10U
+#endif
+#ifndef CAL_SKEW_CONTROLLER_GAIN
+#define CAL_SKEW_CONTROLLER_GAIN                      0.5
+#endif
+#ifndef CAL_SKEW_MAX_STEPS_PER_ITERATION
+#define CAL_SKEW_MAX_STEPS_PER_ITERATION              16
+#endif
+#ifndef CAL_SKEW_REGISTER_MIN
+#define CAL_SKEW_REGISTER_MIN                         0
+#endif
+#ifndef CAL_SKEW_REGISTER_MAX
+#define CAL_SKEW_REGISTER_MAX                          48
+#endif
+#ifndef CAL_SKEW_ACTUATOR_STEP_SAMPLES
+/* Learned from mandatory hardware characterization. */
+#define CAL_SKEW_ACTUATOR_STEP_SAMPLES                 0.0
+#endif
+#ifndef CAL_SKEW_ACTUATOR_POLARITY
+#define CAL_SKEW_ACTUATOR_POLARITY                    0
+#endif
+
+/* Hardware contract from system.bd:
+ *
+ *   skew_delay_gpio/S_AXI  = 0xA0030000
+ *   GPIO channel 1 DATA    = base + 0x0
+ *   GPIO width             = 10 bits, output-only
+ *   reset/neutral code     = 256
+ *   actuator range         = 0..512 (0..2 samples in Q8 units)
+ *
+ * Require the BSP-generated instance name.  A block-design address alone is
+ * not proof that the currently loaded bitstream contains an AXI slave there;
+ * probing an absent slave with Xil_In32 can block the CPU indefinitely.
+ * The controller does not assume the measurement sign implied by the HDL.
+ * CAL_SKEW_ACTUATOR_POLARITY remains unknown (0) until the mandatory +1-step
+ * characterization measures the sign from fresh capture batches. */
+#if defined(XPAR_SKEW_DELAY_GPIO_BASEADDR)
+#define ADC_SKEW_ACTUATOR_GPIO_BASE_ADDRESS           ((UINTPTR)XPAR_SKEW_DELAY_GPIO_BASEADDR)
+#elif defined(XPAR_SKEW_DELAY_GPIO_0_BASEADDR)
+#define ADC_SKEW_ACTUATOR_GPIO_BASE_ADDRESS           ((UINTPTR)XPAR_SKEW_DELAY_GPIO_0_BASEADDR)
+#endif
+#if defined(ADC_SKEW_ACTUATOR_GPIO_BASE_ADDRESS)
+#define ADC_SKEW_ACTUATOR_REGISTER_ADDRESS            (ADC_SKEW_ACTUATOR_GPIO_BASE_ADDRESS + (UINTPTR)0x0U)
+#define ADC_SKEW_ACTUATOR_REGISTER_MASK               0x000003FFU
+#define ADC_SKEW_ACTUATOR_REGISTER_SHIFT              0U
+#endif
+
+/* The AD9695 has a real per-channel fine sampling-clock delay.  A logical
+ * position applies complementary Channel-A/Channel-B codes whose sum remains
+ * 192.  Four raw 1.725 ps taps move each channel in opposite directions, so
+ * one characterized relative step is about 13.8 ps. */
+#define ADC_SKEW_AD9695_CHANNEL_A_SELECT               0x01U
+#define ADC_SKEW_AD9695_CHANNEL_B_SELECT               0x02U
+#define ADC_SKEW_AD9695_BROADCAST_SELECT               0x03U
+#define ADC_SKEW_AD9695_FINE_DELAY_MODE                AD9695_FINE_DELAY_192
+#define ADC_SKEW_AD9695_RAW_STEPS_PER_CONTROL_STEP      4U
+#define ADC_SKEW_AD9695_RAW_MIDPOINT                    96U
+#define ADC_SKEW_AD9695_INITIAL_CONTROL_CODE           24
 #ifndef CAL_SKEW_TOLERANCE_SAMPLES
 #define CAL_SKEW_TOLERANCE_SAMPLES                   0.01
 #endif
@@ -502,6 +570,18 @@ typedef struct {
 
 typedef struct {
     uint8_t valid;
+    uint8_t capture_valid;
+    uint8_t paired_channels_valid;
+    uint8_t phase_difference_valid;
+    uint8_t primary_estimator_valid;
+    size_t channel_a_sample_count;
+    size_t channel_b_sample_count;
+    size_t window_start;
+    size_t window_length;
+    int8_t canonical_phase;
+    double sample_rate_hz;
+    double tone_frequency_hz;
+    double selected_dac_adc_rate_ratio;
     calibration_skew_estimator_status_t estimator_status;
     calibration_skew_stage_status_t stage_status;
     calibration_skew_reject_reason_t reason;
@@ -514,8 +594,12 @@ typedef struct {
     double corrected_tone_phase_difference_rad;
     double dither_relative_skew_samples;
     double tone_dither_disagreement_samples;
+    uint8_t dither_channel_a_valid;
+    uint8_t dither_channel_b_valid;
     uint8_t dither_crosscheck_valid;
     const char *dither_crosscheck_reason;
+    const char *channel_a_tone_rejection_reason;
+    const char *channel_b_tone_rejection_reason;
     adc_cal_skew_polarity_t selected_polarity;
     adc_cal_skew_branch_reason_t branch_selection_reason;
     double relative_rising_skew_samples;
@@ -542,6 +626,13 @@ typedef struct {
     calibration_skew_reject_reason_t reason;
     uint32_t accepted_frames;
     uint32_t rejected_frames;
+    uint32_t frames_captured;
+    uint32_t valid_paired_channel_frames;
+    uint32_t channel_a_tone_fits_valid;
+    uint32_t channel_b_tone_fits_valid;
+    uint32_t paired_tone_fits_valid;
+    uint32_t phase_differences_valid;
+    uint32_t polarity_branches_valid;
     uint32_t same_polarity_frames;
     uint32_t inverted_polarity_frames;
     uint32_t polarity_branch_changes;
@@ -565,6 +656,8 @@ typedef struct {
     int applied_delay_steps;
     int initial_delay_register;
     int final_delay_register;
+    bool closed_loop_enabled;
+    adc_cal_skew_loop_result_t loop_result;
     const char *failure_reason;
     calibration_skew_frame_result_t latest_frame;
 } calibration_skew_batch_result_t;
@@ -751,6 +844,13 @@ typedef struct {
     adc_cal_overlap_t overlap;
     double reference_frequency_hz;
     double adc_frequency_hz;
+    uint8_t reference_rate_adapted;
+    size_t reference_tone_bin;
+    size_t captured_tone_bin;
+    double nominal_dac_adc_rate_ratio;
+    double selected_dac_adc_rate_ratio;
+    float nominal_rate_correlation;
+    float selected_rate_correlation;
     calibration_timing_diagnostics_t timing_diagnostics;
     const char *rejection_reason;
 } calibration_aligned_frame_t;
@@ -794,6 +894,9 @@ typedef struct {
     double configured_sample_rate_hz;
     double effective_sample_rate_hz;
     double dac_adc_rate_ratio;
+    uint8_t reference_rate_adapted;
+    double nominal_dac_adc_rate_ratio;
+    double selected_dac_adc_rate_ratio;
     int8_t channel_configuration;
     float software_gain_correction;
     float software_offset_correction;
@@ -1155,6 +1258,7 @@ static int adc_run_timing_calibration(uint32_t frame_count);
 static void calibration_automatic_state_reset(void);
 static void calibration_automatic_print_command_help(void);
 static void calibration_automatic_print_summary(void);
+static void handle_adc_calibration_export_cmd(void);
 static const char *calibration_existing_offset_loop_status_name(
     const calibration_offset_loop_state_t *state);
 static const char *calibration_offset_verification_name(uint8_t status);
@@ -1226,6 +1330,9 @@ static const char *calibration_skew_estimator_status_name(
 static const char *calibration_skew_reason_name(
     calibration_skew_reject_reason_t reason);
 static int calibration_run_skew_open_loop(
+    calibration_skew_batch_result_t *batch,
+    bool diagnose_mode);
+static int calibration_run_skew_stage(
     calibration_skew_batch_result_t *batch,
     bool diagnose_mode);
 static void calibration_print_skew_summary(
@@ -1606,22 +1713,23 @@ static int adc_analyze_fractional_overlap(
     }
 
     for (size_t i = 0U; i < sample_count; ++i) {
-        const double source_position = (double)i + total_lag;
+        double source_position = fmod((double)i + total_lag,
+                                      (double)sample_count);
         size_t lower;
+        size_t upper;
         double fraction;
         double interpolated;
         long rounded;
 
-        if ((source_position < 0.0) ||
-            (source_position >= (double)(sample_count - 1U))) {
-            continue;
-        }
+        if (source_position < 0.0) source_position += (double)sample_count;
 
         lower = (size_t)floor(source_position);
+        upper = lower + 1U;
+        if (upper >= sample_count) upper = 0U;
         fraction = source_position - (double)lower;
         interpolated =
             (1.0 - fraction) * (double)measurement[lower] +
-            fraction * (double)measurement[lower + 1U];
+            fraction * (double)measurement[upper];
 
         if (!isfinite(interpolated)) {
             return -2;
@@ -1904,8 +2012,13 @@ void handle_dma_cmd(char* line) {
             return;
         }
         xil_printf("Reading back %d bytes:\r\n", DMA_CMD_BUF_SIZE);
-        for (uint32_t i = 0; i < DMA_CMD_BUF_SIZE; i+=16) {
-            xil_printf("@0x%02X = 0x%02X ", i, RxBufferPtr[i]);
+        for (uint32_t i = 0; i < DMA_CMD_BUF_SIZE; i += 16U) {
+            xil_printf("@0x%04lX :", (unsigned long)i);
+            for (uint32_t byte = 0U;
+                 byte < 16U && i + byte < DMA_CMD_BUF_SIZE;
+                 ++byte) {
+                xil_printf(" %02X", RxBufferPtr[i + byte]);
+            }
             xil_printf("\r\n");
         }
         xil_printf("\r\n");
@@ -1980,6 +2093,9 @@ void handle_udp_cmd(char *line)
 
 static void calibration_automatic_state_reset(void)
 {
+    g_adc_cal_export_length = 0U;
+    g_adc_cal_export_available = false;
+    g_adc_cal_export_buffer[0] = '\0';
     memset(&g_automatic_calibration, 0, sizeof(g_automatic_calibration));
     adc_cal_pipeline_reset(&g_adc_calibration_pipeline);
     g_automatic_calibration.stage = ADC_CAL_STAGE_IDLE;
@@ -2009,6 +2125,7 @@ static void calibration_automatic_print_command_help(void)
     xil_printf("  adc -cal stability [frames]\r\n");
     xil_printf("      Characterize fixed-offset capture stability.\r\n");
     xil_printf("  adc -cal status          Display automatic calibration state and latest metrics.\r\n");
+    xil_printf("  adc -cal export          Send the stored performance CSV over Ethernet.\r\n");
     xil_printf("  adc -cal reset           Reset software coefficients and calibration loop states.\r\n");
     xil_printf("  adc -cal help            Display this help.\r\n");
 }
@@ -2148,6 +2265,14 @@ void handle_adc_cmd(char* line)
             calibration_run_timing_alignment_diagnostic(diagnostic_frames);
             return;
         }
+        if (strcmp(token, "export") == 0) {
+            if (strtok(NULL, " ") != NULL) {
+                ERR("Use adc -cal export.");
+                return;
+            }
+            handle_adc_calibration_export_cmd();
+            return;
+        }
         if (strcmp(token, "gain") == 0) {
             if (strtok(NULL, " ") != NULL) {
                 ERR("Use adc -cal gain.");
@@ -2250,8 +2375,8 @@ void handle_adc_cmd(char* line)
                 (parsed < ADC_CAL_MIN_FRAMES) ||
                 (parsed > ADC_CAL_MAX_FRAMES))
             {
-                ERR("Invalid calibration frame count. Use %u to %u.",
-                    ADC_CAL_MIN_FRAMES, ADC_CAL_MAX_FRAMES);
+            ERR("Invalid calibration frame count. Use %u to %u, or use adc -cal help.",
+                ADC_CAL_MIN_FRAMES, ADC_CAL_MAX_FRAMES);
                 return;
             }
             frame_count = (uint32_t)parsed;
@@ -2272,7 +2397,7 @@ void handle_adc_cmd(char* line)
             ERR("Use adc -ref or adc -ref diagnose.");
         }
     }else {
-        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames|timing|diagnose|gain|offset|skew|stability|status|reset|help], -ref, or -ref diagnose)", option);
+        ERR("Invalid option \"%s\" (use -c, status, -timing [frames], -gain, -offset, -cal [frames|timing|diagnose|gain|offset|skew|stability|status|export|reset|help], -ref, or -ref diagnose)", option);
     }
 }
 

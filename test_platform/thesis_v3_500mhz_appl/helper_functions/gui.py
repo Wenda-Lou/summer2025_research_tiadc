@@ -5,7 +5,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 from .plot import plot_adc_csv, plot_ifc_sweep_capture
-from .receive_data import SAVE_DIR, receive_adc_data
+from .receive_data import (
+    SAVE_DIR,
+    receive_adc_data,
+    receive_calibration_csv,
+)
 from .sweep_test import receive_ifc_sweep
 from .reference_upload import (
     FPGA_IP,
@@ -40,6 +44,23 @@ def gui_receive():
 
     except Exception as e:
         messagebox.showerror("Error", str(e))
+
+
+def gui_receive_calibration_csv():
+    messagebox.showinfo(
+        "Receive Calibration CSV",
+        "After clicking OK, run this command in the FPGA UART terminal:\n\n"
+        "adc -cal export\n\n"
+        "The receiver will wait for 30 seconds.",
+    )
+    try:
+        csv_file = receive_calibration_csv(timeout=30.0)
+        messagebox.showinfo(
+            "Calibration CSV Saved",
+            f"Calibration data saved:\n{csv_file}",
+        )
+    except Exception as exc:
+        messagebox.showerror("Calibration Receive Error", str(exc))
 
 def gui_plot():
     csv_file = filedialog.askopenfilename(
@@ -863,13 +884,21 @@ def create_root():
     global root
     root = tk.Tk()
     root.title('ADC UDP Receiver')
-    root.geometry('420x480')
+    root.geometry('440x540')
 
     title = tk.Label(root, text='ADC UDP Receiver Tool', font=('Arial', 14, 'bold'))
     title.pack(pady=15)
 
     btn_receive = tk.Button(root, text='Receive ADC Data', width=25, command=gui_receive)
     btn_receive.pack(pady=8)
+
+    btn_calibration = tk.Button(
+        root,
+        text='Receive Calibration CSV',
+        width=28,
+        command=gui_receive_calibration_csv,
+    )
+    btn_calibration.pack(pady=8)
 
     btn_plot = tk.Button(root, text='Plot CSV File', width=25, command=gui_plot)
     btn_plot.pack(pady=8)

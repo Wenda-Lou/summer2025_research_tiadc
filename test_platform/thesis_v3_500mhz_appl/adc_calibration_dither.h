@@ -109,7 +109,10 @@ typedef enum {
     ADC_CAL_DITHER_VALIDATION_EVENT_INDICES,
     ADC_CAL_DITHER_VALIDATION_NUMERICAL,
     ADC_CAL_DITHER_VALIDATION_PEAK_BELOW_WEAK,
-    ADC_CAL_DITHER_VALIDATION_PEAK_BELOW_STRONG
+    ADC_CAL_DITHER_VALIDATION_PEAK_BELOW_STRONG,
+    ADC_CAL_DITHER_VALIDATION_EXISTING_TIMING,
+    ADC_CAL_DITHER_VALIDATION_TONE_FIT,
+    ADC_CAL_DITHER_VALIDATION_WINDOW
 } adc_cal_dither_validation_reason_t;
 
 typedef struct {
@@ -338,6 +341,14 @@ int adc_cal_dither_summarize_events(
     double threshold_fraction,
     adc_cal_dither_event_summary_t *summary);
 
+/* Partial boundary events are diagnostic-only; complete events, valid indices,
+ * and a coherent event family determine window usability. */
+int adc_cal_dither_window_is_valid(
+    size_t complete_event_count,
+    size_t minimum_complete_events,
+    int event_indices_valid,
+    int event_family_coherent);
+
 /* Minimize |a + m*frame_period - (b + k*event_spacing)| for canonical
  * origins in [0, frame_period). A positive frame_period checks only the two
  * equivalent circular representations (m = 0 and the adjacent-frame lift),
@@ -346,6 +357,14 @@ int adc_cal_dither_summarize_events(
 int adc_cal_dither_compare_periodic_origins(
     double first_origin_samples,
     double second_origin_samples,
+    double event_spacing_samples,
+    double frame_period_samples,
+    adc_cal_dither_periodic_difference_t *difference);
+
+/* Compare values that already use the same lag/sign convention. */
+int adc_cal_dither_compare_periodic_lags(
+    double first_lag_samples,
+    double second_lag_samples,
     double event_spacing_samples,
     double frame_period_samples,
     adc_cal_dither_periodic_difference_t *difference);
@@ -418,6 +437,13 @@ int adc_cal_dither_resample_dac_reference(
     double dac_phase_samples,
     int16_t *adc_reference_samples,
     size_t adc_sample_count);
+
+int adc_cal_dither_rate_ratio_from_tone_bins(
+    double nominal_dac_adc_ratio,
+    double reference_tone_bin,
+    double captured_tone_bin,
+    double maximum_relative_adjustment,
+    double *matched_dac_adc_ratio);
 
 int adc_cal_dither_reference_event_phase(
     double reference_event_position_samples,

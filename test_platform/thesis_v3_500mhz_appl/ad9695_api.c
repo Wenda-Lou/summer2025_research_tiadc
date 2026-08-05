@@ -137,6 +137,7 @@ void ad9695_adc_fine_delay(uint8_t fine_delay)
 {
     if (fine_delay > 0xC0) {
         xil_printf("ERROR: Fine delay cannot exceed 0xC0!\r\n");
+        return;
     }
     ad9695_write_register(&spi_inst, AD9695_CLK_FINE_DELAY_REG, fine_delay);
 }
@@ -145,8 +146,10 @@ void ad9695_adc_super_fine_delay(uint8_t super_fine_delay)
 {
     if (super_fine_delay > 0x80) {
         xil_printf("ERROR: Super fine delay cannot exceed 0x80!\r\n");
+        return;
     }
-    ad9695_write_register(&spi_inst, AD9695_CLK_FINE_DELAY_REG, super_fine_delay);
+    ad9695_write_register(
+        &spi_inst, AD9695_CLK_SUPER_FINE_DELAY_REG, super_fine_delay);
 }
 
 static uint8_t ad9695_input_fs_to_code(const char *fs)

@@ -25,6 +25,19 @@ The tests call production APIs such as `adc_reconstruct_channels()`,
 reference-buffer upload/finalize functions. Pipeline integration scenarios call
 the shared production stage sequencer in `adc_calibration_pipeline.c`.
 
+The unit suite also performs an end-to-end deterministic replay using the exact
+`sine_100MHz_2p6GSPS_impulse_dither.txt` DAC reference and
+`adc_capture_20260801_180451.csv` DMA capture.  It advances the shared five-stage
+pipeline through timing, offset, gain, open-loop skew, and performance.  The
+recorded frame is replayed for each requested batch/frame; this validates the
+complete software path but does not pretend that one capture contains
+independent analog-noise realizations.
+
+The replay suite also includes the later bin-71 DMA capture
+`adc_capture_20260805_100121.csv`.  It verifies bounded reference-rate matching
+when the measured DAC/ADC sampling step differs from the configured nominal
+ratio, without weakening the timing or dither acceptance thresholds.
+
 `butils.c` and `butils_calibration.c` remain the production UART and FPGA
 adapter source. They are not compiled wholesale in this host target because they
 still contain Xilinx BSP interfaces and board-side orchestration, capture,

@@ -204,7 +204,7 @@ int adc_cal_pipeline_run_skew(
     }
     state->active = true;
     state->stage = ADC_CAL_PIPELINE_STAGE_SKEW;
-    pipeline_print_stage(callbacks, 4U, "Open-Loop Skew Measurement");
+    pipeline_print_stage(callbacks, 4U, "Skew Measurement and Correction");
     if (callbacks->run_skew(callbacks->context, state, &reason) != 0) {
         adc_cal_pipeline_fail(
             state,
@@ -321,7 +321,7 @@ int adc_cal_pipeline_run_all(
     }
 
     state->stage = ADC_CAL_PIPELINE_STAGE_SKEW;
-    pipeline_print_stage(callbacks, 4U, "Open-Loop Skew Measurement");
+    pipeline_print_stage(callbacks, 4U, "Skew Measurement and Correction");
     if (callbacks->run_skew(callbacks->context, state, &reason) != 0) {
         adc_cal_pipeline_fail(
             state,

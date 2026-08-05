@@ -50,6 +50,13 @@ typedef enum {
 } adc_cal_skew_reason_t;
 
 typedef enum {
+    ADC_CAL_SKEW_TONE_CONTEXT_VALID = 0,
+    ADC_CAL_SKEW_TONE_CONTEXT_INVALID_SAMPLE_RATE,
+    ADC_CAL_SKEW_TONE_CONTEXT_INVALID_TONE_FREQUENCY,
+    ADC_CAL_SKEW_TONE_CONTEXT_FREQUENCY_MISMATCH
+} adc_cal_skew_tone_context_status_t;
+
+typedef enum {
     ADC_CAL_SKEW_POLARITY_UNKNOWN = 0,
     ADC_CAL_SKEW_POLARITY_SAME = 1,
     ADC_CAL_SKEW_POLARITY_INVERTED = -1
@@ -131,6 +138,7 @@ typedef enum {
 } adc_cal_skew_stage_result_t;
 
 typedef struct {
+    int measurement_required;
     int primary_estimate_valid;
     double measured_skew_samples;
     uint32_t accepted_frames;
@@ -157,6 +165,87 @@ typedef struct {
     int output_usable;
     const char *reason;
 } adc_cal_skew_stage_policy_result_t;
+
+typedef enum {
+    ADC_CAL_SKEW_LOOP_MEASUREMENT_ONLY = 0,
+    ADC_CAL_SKEW_LOOP_CONVERGED,
+    ADC_CAL_SKEW_LOOP_NOT_CONVERGED,
+    ADC_CAL_SKEW_LOOP_SATURATED,
+    ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE,
+    ADC_CAL_SKEW_LOOP_FAILED
+} adc_cal_skew_loop_status_t;
+
+/* A positive polarity means that increasing the Channel-B register increases
+ * measured B-A skew.  A negative polarity means it decreases measured skew. */
+typedef struct {
+    int skew_closed_loop_enable;
+    double skew_tolerance_samples;
+    uint32_t skew_required_consecutive_passes;
+    uint32_t skew_max_iterations;
+    double skew_controller_gain;
+    int skew_max_steps_per_iteration;
+    int skew_register_min;
+    int skew_register_max;
+    double skew_actuator_step_samples;
+    int skew_actuator_polarity;
+    uint32_t skew_minimum_accepted_frames;
+    double skew_maximum_batch_std_samples;
+    double skew_characterization_step_tolerance_fraction;
+} adc_cal_skew_loop_config_t;
+
+typedef struct {
+    int valid;
+    double skew_samples;
+    double batch_std_samples;
+    uint32_t accepted_frames;
+    uint32_t rejected_frames;
+    const char *reason;
+} adc_cal_skew_batch_measurement_t;
+
+typedef int (*adc_cal_skew_measure_batch_fn)(
+    void *context, adc_cal_skew_batch_measurement_t *measurement);
+typedef int (*adc_cal_skew_register_read_fn)(void *context, int *value);
+typedef int (*adc_cal_skew_register_write_fn)(void *context, int value);
+typedef void (*adc_cal_skew_iteration_report_fn)(
+    void *context,
+    uint32_t iteration,
+    const adc_cal_skew_batch_measurement_t *measurement,
+    int old_register,
+    int new_register,
+    int applied_steps,
+    uint32_t consecutive_passes,
+    int converged);
+
+typedef struct {
+    void *context;
+    adc_cal_skew_measure_batch_fn measure_batch;
+    adc_cal_skew_register_read_fn read_register;
+    adc_cal_skew_register_write_fn write_register;
+    adc_cal_skew_iteration_report_fn report_iteration;
+} adc_cal_skew_loop_io_t;
+
+typedef struct {
+    adc_cal_skew_loop_status_t status;
+    int characterization_valid;
+    double observed_step_samples;
+    double observed_step_ps;
+    int actuator_polarity;
+    double actuator_step_samples;
+    double initial_skew_samples;
+    double final_skew_samples;
+    double best_skew_samples;
+    double final_batch_std_samples;
+    int initial_register;
+    int final_register;
+    int total_register_change;
+    uint32_t iterations_completed;
+    uint32_t consecutive_passes;
+    uint32_t accepted_frames;
+    uint32_t rejected_frames;
+    int correction_applied;
+    int saturated;
+    const char *failure_reason;
+} adc_cal_skew_loop_result_t;
 
 typedef struct {
     size_t minimum_events;
@@ -188,6 +277,14 @@ void adc_cal_skew_default_config(adc_cal_skew_config_t *config);
 void adc_cal_skew_result_reset(adc_cal_skew_result_t *result);
 const char *adc_cal_skew_status_name(adc_cal_skew_status_t status);
 const char *adc_cal_skew_reason_name(adc_cal_skew_reason_t reason);
+const char *adc_cal_skew_tone_context_status_name(
+    adc_cal_skew_tone_context_status_t status);
+adc_cal_skew_tone_context_status_t adc_cal_skew_validate_tone_context(
+    double inherited_tone_frequency_hz,
+    double fitted_tone_frequency_hz,
+    double sample_rate_hz,
+    size_t sample_count,
+    double maximum_error_bins);
 const char *adc_cal_skew_polarity_name(adc_cal_skew_polarity_t polarity);
 const char *adc_cal_skew_branch_reason_name(
     adc_cal_skew_branch_reason_t reason);
@@ -216,12 +313,42 @@ int adc_cal_skew_evaluate_stage_policy(
     const adc_cal_skew_stage_policy_input_t *input,
     adc_cal_skew_stage_policy_result_t *result);
 
+void adc_cal_skew_loop_default_config(adc_cal_skew_loop_config_t *config);
+const char *adc_cal_skew_loop_status_name(adc_cal_skew_loop_status_t status);
+int adc_cal_skew_plan_update(
+    double measured_skew_samples,
+    int current_register,
+    const adc_cal_skew_loop_config_t *config,
+    int *requested_steps,
+    int *applied_steps,
+    int *new_register,
+    int *saturated);
+int adc_cal_skew_run_closed_loop(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_loop_io_t *io,
+    double sample_rate_hz,
+    adc_cal_skew_loop_result_t *result);
+
 int adc_cal_skew_from_tone_phases(
     double channel_a_phase_rad,
     double channel_b_phase_rad,
     double tone_frequency_hz,
     double sample_rate_hz,
     double *relative_skew_samples);
+
+/* Map a single circular coordinate window onto a same-frame physical A/B
+ * pair.  Both channels always use identical source indices and interpolation
+ * weights, preserving their relative phase. */
+int adc_cal_skew_map_paired_window_i16(
+    const int16_t *channel_a,
+    const int16_t *channel_b,
+    size_t frame_sample_count,
+    size_t window_start,
+    size_t window_length,
+    double common_phase_offset_samples,
+    double common_lag_samples,
+    double *mapped_a,
+    double *mapped_b);
 
 int adc_cal_skew_estimate_from_residuals(
     const double *channel_a_residual,

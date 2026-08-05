@@ -69,6 +69,49 @@ const char *adc_cal_skew_reason_name(adc_cal_skew_reason_t reason)
     }
 }
 
+const char *adc_cal_skew_tone_context_status_name(
+    adc_cal_skew_tone_context_status_t status)
+{
+    switch (status) {
+    case ADC_CAL_SKEW_TONE_CONTEXT_VALID: return "VALID";
+    case ADC_CAL_SKEW_TONE_CONTEXT_INVALID_SAMPLE_RATE:
+        return "INVALID_SAMPLE_RATE";
+    case ADC_CAL_SKEW_TONE_CONTEXT_INVALID_TONE_FREQUENCY:
+        return "INVALID_TONE_FREQUENCY";
+    case ADC_CAL_SKEW_TONE_CONTEXT_FREQUENCY_MISMATCH:
+    default: return "FREQUENCY_MISMATCH";
+    }
+}
+
+adc_cal_skew_tone_context_status_t adc_cal_skew_validate_tone_context(
+    double inherited_tone_frequency_hz,
+    double fitted_tone_frequency_hz,
+    double sample_rate_hz,
+    size_t sample_count,
+    double maximum_error_bins)
+{
+    double bin_width_hz;
+    if (!adc_cal_double_isfinite(sample_rate_hz) || sample_rate_hz <= 0.0 ||
+        sample_count == 0U) {
+        return ADC_CAL_SKEW_TONE_CONTEXT_INVALID_SAMPLE_RATE;
+    }
+    if (!adc_cal_double_isfinite(inherited_tone_frequency_hz) ||
+        !adc_cal_double_isfinite(fitted_tone_frequency_hz) ||
+        inherited_tone_frequency_hz <= 0.0 || fitted_tone_frequency_hz <= 0.0 ||
+        inherited_tone_frequency_hz >= 0.5 * sample_rate_hz ||
+        fitted_tone_frequency_hz >= 0.5 * sample_rate_hz ||
+        !adc_cal_double_isfinite(maximum_error_bins) ||
+        maximum_error_bins < 0.0) {
+        return ADC_CAL_SKEW_TONE_CONTEXT_INVALID_TONE_FREQUENCY;
+    }
+    bin_width_hz = sample_rate_hz / (double)sample_count;
+    if (fabs(fitted_tone_frequency_hz - inherited_tone_frequency_hz) >
+        maximum_error_bins * bin_width_hz) {
+        return ADC_CAL_SKEW_TONE_CONTEXT_FREQUENCY_MISMATCH;
+    }
+    return ADC_CAL_SKEW_TONE_CONTEXT_VALID;
+}
+
 const char *adc_cal_skew_polarity_name(adc_cal_skew_polarity_t polarity)
 {
     switch (polarity) {
@@ -283,6 +326,44 @@ int adc_cal_skew_from_tone_phases(
     return 0;
 }
 
+int adc_cal_skew_map_paired_window_i16(
+    const int16_t *channel_a,
+    const int16_t *channel_b,
+    size_t frame_sample_count,
+    size_t window_start,
+    size_t window_length,
+    double common_phase_offset_samples,
+    double common_lag_samples,
+    double *mapped_a,
+    double *mapped_b)
+{
+    if (channel_a == NULL || channel_b == NULL || mapped_a == NULL ||
+        mapped_b == NULL || frame_sample_count < 2U || window_length == 0U ||
+        window_length > frame_sample_count || window_start >= frame_sample_count ||
+        !adc_cal_double_isfinite(common_phase_offset_samples) ||
+        !adc_cal_double_isfinite(common_lag_samples)) return -1;
+    for (size_t i = 0U; i < window_length; ++i) {
+        double position = fmod((double)(window_start + i) +
+            common_phase_offset_samples + common_lag_samples,
+            (double)frame_sample_count);
+        size_t lower;
+        size_t upper;
+        double fraction;
+        if (position < 0.0) position += (double)frame_sample_count;
+        lower = (size_t)floor(position);
+        upper = lower + 1U;
+        if (upper >= frame_sample_count) upper = 0U;
+        fraction = position - (double)lower;
+        mapped_a[i] = (1.0 - fraction) * (double)channel_a[lower] +
+            fraction * (double)channel_a[upper];
+        mapped_b[i] = (1.0 - fraction) * (double)channel_b[lower] +
+            fraction * (double)channel_b[upper];
+        if (!adc_cal_double_isfinite(mapped_a[i]) ||
+            !adc_cal_double_isfinite(mapped_b[i])) return -2;
+    }
+    return 0;
+}
+
 const char *adc_cal_skew_measurement_validity_name(
     adc_cal_skew_measurement_validity_t status)
 {
@@ -375,24 +456,50 @@ int adc_cal_skew_evaluate_stage_policy(
     if (!input->primary_estimate_valid ||
         !adc_cal_double_isfinite(input->measured_skew_samples) ||
         input->accepted_frames == 0U) {
-        result->reason = "no valid primary skew estimate";
+        if (!input->measurement_required) {
+            result->stage_result = ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+            result->pipeline_may_continue = 1;
+            result->output_usable = 1;
+            result->reason =
+                "optional open-loop skew measurement unavailable";
+        } else {
+            result->reason =
+                "mandatory skew measurement has no valid primary estimate";
+        }
         return 0;
     }
     if (input->accepted_frames < input->minimum_accepted_frames) {
-        result->reason = "too few accepted skew frames";
+        if (!input->measurement_required) {
+            result->stage_result = ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+            result->pipeline_may_continue = 1;
+            result->output_usable = 1;
+            result->reason =
+                "optional open-loop skew has too few accepted frames";
+        } else {
+            result->reason =
+                "mandatory skew measurement has too few accepted frames";
+        }
         return 0;
     }
     result->measurement_validity = ADC_CAL_SKEW_MEASUREMENT_VALID;
     if (input->polarity_branch_changes > 0U) {
         result->stability = ADC_CAL_SKEW_STABILITY_UNSTABLE;
-        result->stage_result = ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE;
+        result->stage_result = input->measurement_required ?
+            ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE :
+            ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+        result->pipeline_may_continue = input->measurement_required ? 0 : 1;
+        result->output_usable = input->measurement_required ? 0 : 1;
         result->reason = "polarity branch changed between accepted frames";
         return 0;
     }
     if (!adc_cal_double_isfinite(input->batch_std_samples) ||
         input->batch_std_samples > input->maximum_batch_std_samples) {
         result->stability = ADC_CAL_SKEW_STABILITY_UNSTABLE;
-        result->stage_result = ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE;
+        result->stage_result = input->measurement_required ?
+            ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE :
+            ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+        result->pipeline_may_continue = input->measurement_required ? 0 : 1;
+        result->output_usable = input->measurement_required ? 0 : 1;
         result->reason = "open-loop skew estimate is unstable";
         return 0;
     }
@@ -435,6 +542,377 @@ int adc_cal_skew_evaluate_stage_policy(
     result->correction_status = ADC_CAL_SKEW_CORRECTION_NOT_CONVERGED;
     result->stage_result = ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED;
     result->reason = "skew correction did not converge";
+    return 0;
+}
+
+void adc_cal_skew_loop_default_config(adc_cal_skew_loop_config_t *config)
+{
+    if (config == NULL) return;
+    memset(config, 0, sizeof(*config));
+    config->skew_closed_loop_enable = 0;
+    config->skew_tolerance_samples = 0.01;
+    config->skew_required_consecutive_passes = 2U;
+    config->skew_max_iterations = 10U;
+    config->skew_controller_gain = 0.5;
+    config->skew_max_steps_per_iteration = 4;
+    config->skew_register_min = 0;
+    config->skew_register_max = 255;
+    config->skew_actuator_step_samples = 0.0;
+    config->skew_actuator_polarity = 0;
+    config->skew_minimum_accepted_frames = 3U;
+    config->skew_maximum_batch_std_samples = 0.02;
+    config->skew_characterization_step_tolerance_fraction = 0.35;
+}
+
+const char *adc_cal_skew_loop_status_name(adc_cal_skew_loop_status_t status)
+{
+    switch (status) {
+    case ADC_CAL_SKEW_LOOP_MEASUREMENT_ONLY: return "MEASUREMENT ONLY";
+    case ADC_CAL_SKEW_LOOP_CONVERGED: return "CONVERGED";
+    case ADC_CAL_SKEW_LOOP_NOT_CONVERGED: return "NOT CONVERGED";
+    case ADC_CAL_SKEW_LOOP_SATURATED: return "SATURATED";
+    case ADC_CAL_SKEW_LOOP_FAILED:
+    default: return "FAILED";
+    }
+}
+
+static int adc_cal_skew_loop_config_valid(
+    const adc_cal_skew_loop_config_t *config)
+{
+    return config != NULL &&
+        adc_cal_double_isfinite(config->skew_tolerance_samples) &&
+        config->skew_tolerance_samples >= 0.0 &&
+        config->skew_required_consecutive_passes > 0U &&
+        config->skew_max_iterations > 0U &&
+        adc_cal_double_isfinite(config->skew_controller_gain) &&
+        config->skew_controller_gain > 0.0 &&
+        config->skew_controller_gain <= 1.0 &&
+        config->skew_max_steps_per_iteration > 0 &&
+        config->skew_register_min < config->skew_register_max &&
+        config->skew_minimum_accepted_frames > 0U &&
+        adc_cal_double_isfinite(config->skew_maximum_batch_std_samples) &&
+        config->skew_maximum_batch_std_samples >= 0.0 &&
+        adc_cal_double_isfinite(
+            config->skew_characterization_step_tolerance_fraction) &&
+        config->skew_characterization_step_tolerance_fraction >= 0.0;
+}
+
+static int adc_cal_skew_measurement_valid(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_batch_measurement_t *measurement)
+{
+    return measurement != NULL && measurement->valid &&
+        adc_cal_double_isfinite(measurement->skew_samples) &&
+        adc_cal_double_isfinite(measurement->batch_std_samples) &&
+        measurement->accepted_frames >=
+            config->skew_minimum_accepted_frames &&
+        measurement->batch_std_samples <=
+            config->skew_maximum_batch_std_samples;
+}
+
+int adc_cal_skew_plan_update(
+    double measured_skew_samples,
+    int current_register,
+    const adc_cal_skew_loop_config_t *config,
+    int *requested_steps,
+    int *applied_steps,
+    int *new_register,
+    int *saturated)
+{
+    double signed_step;
+    double requested;
+    int request;
+    int applied;
+    int64_t target;
+    if (requested_steps == NULL || applied_steps == NULL ||
+        new_register == NULL || saturated == NULL ||
+        !adc_cal_skew_loop_config_valid(config) ||
+        !adc_cal_double_isfinite(measured_skew_samples) ||
+        !adc_cal_double_isfinite(config->skew_actuator_step_samples) ||
+        config->skew_actuator_step_samples <= 0.0 ||
+        (config->skew_actuator_polarity != 1 &&
+         config->skew_actuator_polarity != -1) ||
+        current_register < config->skew_register_min ||
+        current_register > config->skew_register_max) return -1;
+    signed_step = config->skew_actuator_step_samples *
+        (double)config->skew_actuator_polarity;
+    requested = -config->skew_controller_gain * measured_skew_samples /
+        signed_step;
+    if (!adc_cal_double_isfinite(requested) ||
+        requested > (double)INT32_MAX || requested < (double)INT32_MIN)
+        return -2;
+    request = (int)lround(requested);
+    applied = request;
+    if (applied > config->skew_max_steps_per_iteration)
+        applied = config->skew_max_steps_per_iteration;
+    if (applied < -config->skew_max_steps_per_iteration)
+        applied = -config->skew_max_steps_per_iteration;
+    target = (int64_t)current_register + (int64_t)applied;
+    *saturated = 0;
+    if (target > config->skew_register_max) {
+        target = config->skew_register_max;
+        *saturated = 1;
+    } else if (target < config->skew_register_min) {
+        target = config->skew_register_min;
+        *saturated = 1;
+    }
+    applied = (int)target - current_register;
+    *requested_steps = request;
+    *applied_steps = applied;
+    *new_register = (int)target;
+    return 0;
+}
+
+static int adc_cal_skew_verified_write(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_loop_io_t *io,
+    int expected_current,
+    int new_value)
+{
+    int current = 0;
+    int readback = 0;
+    if (new_value < config->skew_register_min ||
+        new_value > config->skew_register_max ||
+        io->read_register(io->context, &current) != 0 ||
+        current != expected_current ||
+        io->write_register(io->context, new_value) != 0 ||
+        io->read_register(io->context, &readback) != 0 ||
+        readback != new_value) return -1;
+    return 0;
+}
+
+int adc_cal_skew_run_closed_loop(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_loop_io_t *io,
+    double sample_rate_hz,
+    adc_cal_skew_loop_result_t *result)
+{
+    adc_cal_skew_loop_config_t active;
+    adc_cal_skew_batch_measurement_t measurement;
+    adc_cal_skew_batch_measurement_t stepped;
+    adc_cal_skew_batch_measurement_t stepped_repeat;
+    int current_register = 0;
+    int characterization_register;
+    int characterization_direction = 1;
+    double observed;
+    double observed_repeat;
+    if (result == NULL) return -1;
+    memset(result, 0, sizeof(*result));
+    result->status = ADC_CAL_SKEW_LOOP_FAILED;
+    result->initial_skew_samples = NAN;
+    result->final_skew_samples = NAN;
+    result->best_skew_samples = NAN;
+    result->final_batch_std_samples = NAN;
+    result->observed_step_samples = NAN;
+    result->observed_step_ps = NAN;
+    result->initial_register = -1;
+    result->final_register = -1;
+    result->failure_reason = "closed-loop configuration is invalid";
+    if (!adc_cal_skew_loop_config_valid(config) || io == NULL ||
+        io->measure_batch == NULL || !adc_cal_double_isfinite(sample_rate_hz) ||
+        sample_rate_hz <= 0.0) return -2;
+    memset(&measurement, 0, sizeof(measurement));
+    if (io->measure_batch(io->context, &measurement) != 0 ||
+        !adc_cal_skew_measurement_valid(config, &measurement)) {
+        result->failure_reason = measurement.reason != NULL ?
+            measurement.reason : "invalid primary skew estimate";
+        return -3;
+    }
+    result->initial_skew_samples = measurement.skew_samples;
+    result->final_skew_samples = measurement.skew_samples;
+    result->best_skew_samples = measurement.skew_samples;
+    result->final_batch_std_samples = measurement.batch_std_samples;
+    result->accepted_frames += measurement.accepted_frames;
+    result->rejected_frames += measurement.rejected_frames;
+    if (!config->skew_closed_loop_enable) {
+        result->status = ADC_CAL_SKEW_LOOP_MEASUREMENT_ONLY;
+        result->failure_reason = "closed-loop skew correction is disabled";
+        return 0;
+    }
+    if (io->read_register == NULL || io->write_register == NULL) {
+        result->status = ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE;
+        result->failure_reason = "ACTUATOR_UNAVAILABLE";
+        return 0;
+    }
+    if (io->read_register(io->context, &current_register) != 0 ||
+        current_register < config->skew_register_min ||
+        current_register > config->skew_register_max) {
+        result->failure_reason = "actuator register read failed or is out of range";
+        return -5;
+    }
+    result->initial_register = current_register;
+    result->final_register = current_register;
+    if (current_register == config->skew_register_max)
+        characterization_direction = -1;
+    characterization_register = current_register + characterization_direction;
+    if (adc_cal_skew_verified_write(
+            config, io, current_register, characterization_register) != 0) {
+        result->failure_reason = "actuator characterization write/readback failed";
+        return -6;
+    }
+    memset(&stepped, 0, sizeof(stepped));
+    if (io->measure_batch(io->context, &stepped) != 0 ||
+        !adc_cal_skew_measurement_valid(config, &stepped)) {
+        (void)adc_cal_skew_verified_write(
+            config, io, characterization_register, current_register);
+        result->failure_reason = stepped.reason != NULL ? stepped.reason :
+            "actuator characterization measurement is invalid";
+        return -7;
+    }
+    result->accepted_frames += stepped.accepted_frames;
+    result->rejected_frames += stepped.rejected_frames;
+    observed = (stepped.skew_samples - measurement.skew_samples) /
+        (double)characterization_direction;
+    if (adc_cal_skew_verified_write(
+            config, io, characterization_register, current_register) != 0) {
+        result->failure_reason = "actuator restoration write/readback failed";
+        return -8;
+    }
+    if (adc_cal_skew_verified_write(
+            config, io, current_register, characterization_register) != 0) {
+        result->failure_reason = "repeat characterization write/readback failed";
+        return -8;
+    }
+    memset(&stepped_repeat, 0, sizeof(stepped_repeat));
+    if (io->measure_batch(io->context, &stepped_repeat) != 0 ||
+        !adc_cal_skew_measurement_valid(config, &stepped_repeat)) {
+        (void)adc_cal_skew_verified_write(
+            config, io, characterization_register, current_register);
+        result->failure_reason = stepped_repeat.reason != NULL ?
+            stepped_repeat.reason :
+            "repeat actuator characterization measurement is invalid";
+        return -8;
+    }
+    result->accepted_frames += stepped_repeat.accepted_frames;
+    result->rejected_frames += stepped_repeat.rejected_frames;
+    observed_repeat = (stepped_repeat.skew_samples - measurement.skew_samples) /
+        (double)characterization_direction;
+    if (adc_cal_skew_verified_write(
+            config, io, characterization_register, current_register) != 0) {
+        result->failure_reason = "repeat characterization restoration failed";
+        return -8;
+    }
+    if (!adc_cal_double_isfinite(observed) || fabs(observed) <= 1.0e-9) {
+        result->failure_reason = "actuator characterization produced no measurable step";
+        return -9;
+    }
+    if (!adc_cal_double_isfinite(observed_repeat) ||
+        fabs(observed_repeat) <= 1.0e-9 ||
+        observed * observed_repeat <= 0.0 ||
+        fabs(observed_repeat - observed) / fabs(observed) >
+            config->skew_characterization_step_tolerance_fraction) {
+        result->failure_reason = "actuator step response is not repeatable";
+        return -9;
+    }
+    observed = 0.5 * (observed + observed_repeat);
+    result->observed_step_samples = observed;
+    result->observed_step_ps = observed * 1.0e12 / sample_rate_hz;
+    result->actuator_polarity = observed > 0.0 ? 1 : -1;
+    result->actuator_step_samples = fabs(observed);
+    if (config->skew_actuator_polarity != 0 &&
+        config->skew_actuator_polarity != result->actuator_polarity) {
+        result->failure_reason = "measured actuator polarity disagrees with configuration";
+        return -10;
+    }
+    if (config->skew_actuator_step_samples > 0.0) {
+        const double relative_error = fabs(
+            fabs(observed) - config->skew_actuator_step_samples) /
+            config->skew_actuator_step_samples;
+        if (relative_error >
+            config->skew_characterization_step_tolerance_fraction) {
+            result->failure_reason =
+                "measured actuator step disagrees with configuration";
+            return -11;
+        }
+    }
+    result->characterization_valid = 1;
+    active = *config;
+    active.skew_actuator_polarity = result->actuator_polarity;
+    active.skew_actuator_step_samples = result->actuator_step_samples;
+
+    for (uint32_t iteration = 1U;
+         iteration <= active.skew_max_iterations; ++iteration) {
+        int requested_steps = 0;
+        int applied_steps = 0;
+        int new_register = current_register;
+        int saturated = 0;
+        result->iterations_completed = iteration;
+        result->final_skew_samples = measurement.skew_samples;
+        result->final_batch_std_samples = measurement.batch_std_samples;
+        if (fabs(measurement.skew_samples) <
+            fabs(result->best_skew_samples))
+            result->best_skew_samples = measurement.skew_samples;
+        if (fabs(measurement.skew_samples) <=
+            active.skew_tolerance_samples) {
+            ++result->consecutive_passes;
+            if (io->report_iteration != NULL)
+                io->report_iteration(io->context, iteration, &measurement,
+                    current_register, current_register, 0,
+                    result->consecutive_passes,
+                    result->consecutive_passes >=
+                        active.skew_required_consecutive_passes);
+            if (result->consecutive_passes >=
+                active.skew_required_consecutive_passes) {
+                result->status = ADC_CAL_SKEW_LOOP_CONVERGED;
+                result->final_register = current_register;
+                result->total_register_change = current_register -
+                    result->initial_register;
+                result->failure_reason = "none";
+                return 0;
+            }
+        } else {
+            result->consecutive_passes = 0U;
+            if (adc_cal_skew_plan_update(
+                    measurement.skew_samples, current_register, &active,
+                    &requested_steps, &applied_steps, &new_register,
+                    &saturated) != 0) {
+                result->failure_reason = "unsafe or nonfinite controller update";
+                return -12;
+            }
+            if (applied_steps == 0) {
+                if (io->report_iteration != NULL)
+                    io->report_iteration(io->context, iteration, &measurement,
+                        current_register, current_register, 0, 0U, 0);
+                result->status = saturated ? ADC_CAL_SKEW_LOOP_SATURATED :
+                    ADC_CAL_SKEW_LOOP_NOT_CONVERGED;
+                result->saturated = saturated;
+                result->failure_reason = saturated ?
+                    "required correction exceeds actuator range" :
+                    "actuator resolution cannot reduce residual skew";
+                return 0;
+            }
+            if (adc_cal_skew_verified_write(
+                    &active, io, current_register, new_register) != 0) {
+                result->failure_reason = "actuator update write/readback failed";
+                return -13;
+            }
+            current_register = new_register;
+            if (io->report_iteration != NULL)
+                io->report_iteration(io->context, iteration, &measurement,
+                    current_register - applied_steps, current_register,
+                    applied_steps, 0U, 0);
+            result->final_register = current_register;
+            result->correction_applied = 1;
+            result->saturated |= saturated;
+        }
+        if (iteration == active.skew_max_iterations) break;
+        memset(&measurement, 0, sizeof(measurement));
+        if (io->measure_batch(io->context, &measurement) != 0 ||
+            !adc_cal_skew_measurement_valid(&active, &measurement)) {
+            result->failure_reason = measurement.reason != NULL ?
+                measurement.reason : "post-update skew estimate is invalid";
+            return -14;
+        }
+        result->accepted_frames += measurement.accepted_frames;
+        result->rejected_frames += measurement.rejected_frames;
+    }
+    result->final_register = current_register;
+    result->total_register_change = current_register - result->initial_register;
+    result->status = result->saturated ? ADC_CAL_SKEW_LOOP_SATURATED :
+        ADC_CAL_SKEW_LOOP_NOT_CONVERGED;
+    result->failure_reason = result->saturated ?
+        "actuator saturated before convergence" :
+        "closed-loop iteration limit reached";
     return 0;
 }
 

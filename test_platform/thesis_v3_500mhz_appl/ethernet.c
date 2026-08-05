@@ -38,6 +38,10 @@ extern volatile uint8_t adc_sweep_active;
 #define REFERENCE_PACKET_HEADER_BYTES 8U
 #define REFERENCE_PACKET_MAX_SAMPLES \
     ((512U - REFERENCE_PACKET_HEADER_BYTES) / sizeof(int16_t))
+#define CALIBRATION_CSV_PACKET_BYTES         512U
+#define CALIBRATION_CSV_HEADER_BYTES          12U
+#define CALIBRATION_CSV_PAYLOAD_BYTES \
+    (CALIBRATION_CSV_PACKET_BYTES - CALIBRATION_CSV_HEADER_BYTES)
 
 static uint16_t read_u16_le(const uint8_t *data);
 
@@ -252,6 +256,71 @@ void udp_update(void)
         uart_send_flag = 0;
         udp_send_mem();        
     }
+}
+
+int udp_send_calibration_csv(const uint8_t *data, size_t length)
+{
+    uint8_t packet[CALIBRATION_CSV_PACKET_BYTES];
+    uint16_t packet_count;
+
+    if (udp_pcb_block == NULL || data == NULL || length == 0U ||
+        length > UINT32_MAX) {
+        return -1;
+    }
+
+    packet_count = (uint16_t)(
+        (length + CALIBRATION_CSV_PAYLOAD_BYTES - 1U) /
+        CALIBRATION_CSV_PAYLOAD_BYTES);
+    if (packet_count == 0U) {
+        return -2;
+    }
+
+    for (uint16_t packet_index = 0U;
+         packet_index < packet_count;
+         ++packet_index) {
+        const size_t offset =
+            (size_t)packet_index * CALIBRATION_CSV_PAYLOAD_BYTES;
+        const size_t remaining = length - offset;
+        const uint16_t payload_length = (uint16_t)(
+            remaining < CALIBRATION_CSV_PAYLOAD_BYTES ?
+            remaining : CALIBRATION_CSV_PAYLOAD_BYTES);
+        const uint16_t datagram_length =
+            CALIBRATION_CSV_HEADER_BYTES + payload_length;
+        struct pbuf *out;
+        err_t send_status;
+
+        memcpy(packet, "CALC", 4U);
+        packet[4] = (uint8_t)(packet_index >> 8);
+        packet[5] = (uint8_t)packet_index;
+        packet[6] = (uint8_t)(packet_count >> 8);
+        packet[7] = (uint8_t)packet_count;
+        packet[8] = (uint8_t)((uint32_t)length >> 24);
+        packet[9] = (uint8_t)((uint32_t)length >> 16);
+        packet[10] = (uint8_t)((uint32_t)length >> 8);
+        packet[11] = (uint8_t)(uint32_t)length;
+        memcpy(packet + CALIBRATION_CSV_HEADER_BYTES,
+               data + offset, payload_length);
+
+        out = pbuf_alloc(PBUF_TRANSPORT, datagram_length, PBUF_RAM);
+        if (out == NULL) {
+            return -3;
+        }
+        if (pbuf_take(out, packet, datagram_length) != ERR_OK) {
+            pbuf_free(out);
+            return -4;
+        }
+        send_status = udp_sendto(
+            udp_pcb_block, out, &user_ip, SERVER_PORT);
+        pbuf_free(out);
+        if (send_status != ERR_OK) {
+            return -5;
+        }
+
+        /* Avoid exhausting the MAC/lwIP transmit queue on long reports. */
+        usleep(1000U);
+    }
+
+    return 0;
 }
 
 void udp_service_calibration(void)

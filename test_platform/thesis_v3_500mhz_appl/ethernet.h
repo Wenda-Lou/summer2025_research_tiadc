@@ -10,6 +10,8 @@
 #include "lwip/udp.h"
 #include <lwip/err.h>
 #include <lwip/ip4_addr.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /* Static IPv4: 192.168.1.10/24, gateway 192.168.1.1 */
 #define IP_ADDR0   192
@@ -40,6 +42,7 @@ extern struct netif server_netif; //Make it can be seen by other .c files
 
 int  lwIP_UDP_init(void);
 void udp_send_mem(void);
+int udp_send_calibration_csv(const uint8_t *data, size_t length);
 void udp_update(void);
 void udp_service_calibration(void);
 
