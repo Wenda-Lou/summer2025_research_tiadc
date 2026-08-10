@@ -15,6 +15,7 @@ SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
 CALIBRATION_CSV_DATASETS = {
     b"CALT": "calibration_timing_captures.csv",
+    b"CALB": "calibration_baseline_captures.csv",
     b"CALO": "calibration_offset_captures.csv",
     b"CAOI": "calibration_offset_iterations.csv",
     b"CALG": "calibration_gain_captures.csv",

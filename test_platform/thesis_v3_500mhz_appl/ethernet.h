@@ -42,6 +42,7 @@ extern struct netif server_netif; //Make it can be seen by other .c files
 
 typedef enum {
     CALIBRATION_CSV_TIMING_CAPTURES = 0,
+    CALIBRATION_CSV_BASELINE_CAPTURES,
     CALIBRATION_CSV_OFFSET_CAPTURES,
     CALIBRATION_CSV_OFFSET_ITERATIONS,
     CALIBRATION_CSV_GAIN_CAPTURES,

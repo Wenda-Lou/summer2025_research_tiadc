@@ -139,6 +139,8 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define ADC_CAL_EXPORT_BUFFER_SIZE             524288U
 #define ADC_CAL_TIMING_HISTORY_CAPACITY \
     ADC_TIMING_MAX_FRAMES
+#define ADC_CAL_BASELINE_CAPTURE_HISTORY_CAPACITY \
+    ADC_PERFORMANCE_FRAMES
 #define ADC_CAL_OFFSET_CAPTURE_HISTORY_CAPACITY \
     ((CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS + \
       CALIBRATION_OFFSET_VERIFICATION_MAX_BATCHES) * \
@@ -189,6 +191,30 @@ typedef struct {
     double active_polarity;
     const char *status;
 } adc_cal_timing_history_record_t;
+
+typedef struct {
+    uint32_t capture_group_index;
+    uint32_t capture_index;
+    uint32_t global_capture_index;
+    uint32_t performance_frame_index;
+    bool accepted;
+    const char *rejection_reason;
+    double physical_adc_rate_hz;
+    double configured_dac_rate_hz;
+    double reference_rate_compensation;
+    int8_t channel;
+    int8_t canonical_phase;
+    float offset_correction_active_codes;
+    float gain_correction_active;
+    double delay_register_active;
+    double active_polarity;
+    float correlation;
+    float selected_adc_mean_codes;
+    double channel_a_mean_codes;
+    double channel_b_mean_codes;
+    double channel_a_rms_codes;
+    double channel_b_rms_codes;
+} adc_cal_baseline_capture_record_t;
 
 typedef struct {
     uint32_t iteration;
@@ -359,6 +385,8 @@ typedef struct {
 typedef struct {
     adc_cal_timing_history_record_t timing[
         ADC_CAL_TIMING_HISTORY_CAPACITY];
+    adc_cal_baseline_capture_record_t baseline_captures[
+        ADC_CAL_BASELINE_CAPTURE_HISTORY_CAPACITY];
     adc_cal_offset_capture_record_t offset_captures[
         ADC_CAL_OFFSET_CAPTURE_HISTORY_CAPACITY];
     adc_cal_offset_history_record_t offset[
@@ -372,6 +400,7 @@ typedef struct {
     adc_cal_skew_history_record_t skew[
         ADC_CAL_SKEW_HISTORY_CAPACITY];
     uint32_t timing_count;
+    uint32_t baseline_capture_count;
     uint32_t offset_capture_count;
     uint32_t offset_count;
     uint32_t gain_capture_count;
@@ -380,6 +409,7 @@ typedef struct {
     uint32_t skew_count;
     uint32_t global_capture_count;
     bool timing_truncated;
+    bool baseline_captures_truncated;
     bool offset_captures_truncated;
     bool gain_captures_truncated;
     bool skew_captures_truncated;

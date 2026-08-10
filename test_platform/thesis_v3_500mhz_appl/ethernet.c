@@ -269,6 +269,7 @@ int udp_send_calibration_csv_dataset(
 
     switch (dataset) {
     case CALIBRATION_CSV_TIMING_CAPTURES: magic = "CALT"; break;
+    case CALIBRATION_CSV_BASELINE_CAPTURES: magic = "CALB"; break;
     case CALIBRATION_CSV_OFFSET_CAPTURES: magic = "CALO"; break;
     case CALIBRATION_CSV_OFFSET_ITERATIONS: magic = "CAOI"; break;
     case CALIBRATION_CSV_GAIN_CAPTURES: magic = "CALG"; break;

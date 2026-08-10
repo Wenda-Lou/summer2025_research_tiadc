@@ -522,6 +522,75 @@ static int adc_shared_performance_capture(
     return 0;
 }
 
+static void adc_cal_history_record_baseline_capture(
+    uint32_t capture_index,
+    uint32_t performance_frame_index,
+    bool accepted,
+    const char *reason,
+    const calibration_pending_frame_t *saved_output,
+    const adc_performance_frame_result_t *frame,
+    const double *channel_a,
+    const double *channel_b,
+    size_t sample_count)
+{
+    adc_cal_baseline_capture_record_t *record;
+    double sum_a = 0.0;
+    double sum_b = 0.0;
+    double square_sum_a = 0.0;
+    double square_sum_b = 0.0;
+
+    if (saved_output == NULL || frame == NULL) return;
+    if (g_adc_cal_export_history.baseline_capture_count >=
+        ADC_CAL_BASELINE_CAPTURE_HISTORY_CAPACITY) {
+        g_adc_cal_export_history.baseline_captures_truncated = true;
+        return;
+    }
+    record = &g_adc_cal_export_history.baseline_captures[
+        g_adc_cal_export_history.baseline_capture_count++];
+    memset(record, 0, sizeof(*record));
+    record->capture_group_index = 1U;
+    record->capture_index = capture_index;
+    record->global_capture_index = frame->global_capture_index;
+    record->performance_frame_index = accepted ? performance_frame_index : 0U;
+    record->accepted = accepted;
+    record->rejection_reason = accepted ? "none" :
+        (reason != NULL ? reason : "invalid baseline capture");
+    record->physical_adc_rate_hz = ADC_PHYSICAL_SAMPLE_RATE_HZ;
+    record->configured_dac_rate_hz = DAC_SAMPLE_RATE_HZ;
+    record->reference_rate_compensation =
+        adc_get_sample_rate_correction_factor();
+    record->channel = saved_output->selected_channel;
+    record->canonical_phase = saved_output->canonical_reference_phase;
+    record->offset_correction_active_codes = 0.0f;
+    record->gain_correction_active = 1.0f;
+    record->delay_register_active = NAN;
+    record->active_polarity =
+        saved_output->timing_diagnostics.channel[1].valid ?
+        saved_output->timing_diagnostics.channel[1].sign : NAN;
+    record->correlation = accepted ? frame->correlation : NAN;
+    record->selected_adc_mean_codes = accepted ? frame->raw_adc_mean : NAN;
+    record->channel_a_mean_codes = NAN;
+    record->channel_b_mean_codes = NAN;
+    record->channel_a_rms_codes = NAN;
+    record->channel_b_rms_codes = NAN;
+    if (accepted && channel_a != NULL && channel_b != NULL &&
+        sample_count > 0U) {
+        for (size_t i = 0U; i < sample_count; ++i) {
+            sum_a += channel_a[i];
+            sum_b += channel_b[i];
+            square_sum_a += channel_a[i] * channel_a[i];
+            square_sum_b += channel_b[i] * channel_b[i];
+        }
+        record->channel_a_mean_codes = sum_a / (double)sample_count;
+        record->channel_b_mean_codes = sum_b / (double)sample_count;
+        record->channel_a_rms_codes =
+            sqrt(square_sum_a / (double)sample_count);
+        record->channel_b_rms_codes =
+            sqrt(square_sum_b / (double)sample_count);
+    }
+    g_adc_cal_export_available = true;
+}
+
 static int adc_capture_performance_baseline(
     const calibration_pending_frame_t *saved_output,
     float final_gain_correction,
@@ -555,13 +624,22 @@ static int adc_capture_performance_baseline(
         const uint32_t destination = g_performance_baseline.frames_captured;
         const char *capture_reason = NULL;
         size_t sample_count = 0U;
-        if (adc_shared_performance_capture(
+        const int capture_status = adc_shared_performance_capture(
                 &capture,
                 g_performance_baseline.channel_a[destination],
                 g_performance_baseline.channel_b[destination],
                 reference, CAL_FIXED_WINDOW_LENGTH, &sample_count,
-                &capture_reason) == 0 &&
-            sample_count == CAL_FIXED_WINDOW_LENGTH) {
+                &capture_reason);
+        const bool capture_accepted = capture_status == 0 &&
+            sample_count == CAL_FIXED_WINDOW_LENGTH;
+        adc_cal_history_record_baseline_capture(
+            attempt + 1U, capture_accepted ? destination + 1U : 0U,
+            capture_accepted, capture_reason, saved_output,
+            &g_automatic_calibration.performance.frames[
+                capture.frame_number - 1U],
+            g_performance_baseline.channel_a[destination],
+            g_performance_baseline.channel_b[destination], sample_count);
+        if (capture_accepted) {
             g_performance_baseline.global_capture_index[destination] =
                 g_automatic_calibration.performance.frames[
                     capture.frame_number - 1U].global_capture_index;
@@ -1700,6 +1778,114 @@ static bool adc_store_timing_captures_csv(void)
     return true;
 }
 
+static bool adc_store_baseline_captures_csv(void)
+{
+    static const char header[] =
+        "stage,capture_phase,iteration,capture_group_index,capture_index,global_capture_index,accepted,rejection_reason,"
+        "physical_adc_rate_hz,configured_dac_rate_hz,reference_rate_compensation,"
+        "channel,canonical_phase,offset_correction_active_codes,gain_correction_active,"
+        "delay_register_active,active_polarity,correlation,selected_adc_mean_codes,"
+        "channel_A_mean_codes,channel_B_mean_codes,channel_A_rms_codes,channel_B_rms_codes,"
+        "stage5_raw_metrics_available,"
+        "raw_A_sndr_db,raw_A_sfdr_db,raw_A_enob,raw_A_thd_db,raw_A_signal_hz,raw_A_worst_spur_hz,"
+        "raw_B_sndr_db,raw_B_sfdr_db,raw_B_enob,raw_B_thd_db,raw_B_signal_hz,raw_B_worst_spur_hz,"
+        "raw_parallel_avg_sndr_db,raw_parallel_avg_sfdr_db,raw_parallel_avg_enob,raw_parallel_avg_thd_db,raw_parallel_avg_signal_hz,raw_parallel_avg_worst_spur_hz,"
+        "raw_AB_matching_valid,raw_AB_correlation,raw_AB_rmse_codes,raw_AB_residual_dbc,"
+        "raw_offset_mismatch_codes,raw_gain_ratio_B_over_A,raw_gain_mismatch,"
+        "raw_skew_mismatch_samples,raw_skew_mismatch_ps\r\n";
+    const adc_performance_spectral_metrics_t empty_spectral = {
+        .sndr_db = NAN,
+        .sfdr_db = NAN,
+        .thd_db = NAN,
+        .enob = NAN,
+        .signal_hz = NAN,
+        .worst_spur_hz = NAN
+    };
+
+    if (g_adc_cal_export_history.baseline_capture_count == 0U ||
+        !adc_cal_export_begin(header)) return false;
+    for (uint32_t i = 0U;
+         i < g_adc_cal_export_history.baseline_capture_count; ++i) {
+        const adc_cal_baseline_capture_record_t *r =
+            &g_adc_cal_export_history.baseline_captures[i];
+        const adc_performance_spectral_metrics_t *raw_a = &empty_spectral;
+        const adc_performance_spectral_metrics_t *raw_b = &empty_spectral;
+        const adc_performance_spectral_metrics_t *raw_average =
+            &empty_spectral;
+        const adc_performance_matching_metrics_t *raw_matching = NULL;
+        bool raw_metrics_available = false;
+
+        if (g_automatic_calibration.performance_measurement_available &&
+            r->performance_frame_index > 0U &&
+            r->performance_frame_index <=
+                g_automatic_calibration.performance.frames_attempted) {
+            const adc_performance_frame_result_t *candidate =
+                &g_automatic_calibration.performance.frames[
+                    r->performance_frame_index - 1U];
+            if (candidate->raw_baseline_global_capture_index ==
+                r->global_capture_index) {
+                raw_a = &candidate->raw_a;
+                raw_b = &candidate->raw_b;
+                raw_average = &candidate->raw_parallel_average;
+                raw_matching = &candidate->raw_matching;
+                raw_metrics_available = candidate->raw_matching.valid &&
+                    isfinite(candidate->raw_a.sndr_db) &&
+                    isfinite(candidate->raw_b.sndr_db) &&
+                    isfinite(candidate->raw_parallel_average.sndr_db);
+            }
+        }
+
+        if (!adc_cal_export_append(
+                "baseline,baseline,0,%lu,%lu,%lu,%u,%s,",
+                (unsigned long)r->capture_group_index,
+                (unsigned long)r->capture_index,
+                (unsigned long)r->global_capture_index,
+                r->accepted ? 1U : 0U, r->rejection_reason) ||
+            !adc_cal_export_field(r->physical_adc_rate_hz) ||
+            !adc_cal_export_field(r->configured_dac_rate_hz) ||
+            !adc_cal_export_field(r->reference_rate_compensation) ||
+            !adc_cal_export_append("%d,%d,",
+                (int)r->channel, (int)r->canonical_phase) ||
+            !adc_cal_export_field(r->offset_correction_active_codes) ||
+            !adc_cal_export_field(r->gain_correction_active) ||
+            !adc_cal_export_field(r->delay_register_active) ||
+            !adc_cal_export_field(r->active_polarity) ||
+            !adc_cal_export_field(r->correlation) ||
+            !adc_cal_export_field(r->selected_adc_mean_codes) ||
+            !adc_cal_export_field(r->channel_a_mean_codes) ||
+            !adc_cal_export_field(r->channel_b_mean_codes) ||
+            !adc_cal_export_field(r->channel_a_rms_codes) ||
+            !adc_cal_export_field(r->channel_b_rms_codes) ||
+            !adc_cal_export_append("%u,",
+                raw_metrics_available ? 1U : 0U) ||
+            !adc_cal_export_spectral(raw_a) ||
+            !adc_cal_export_append(",") ||
+            !adc_cal_export_spectral(raw_b) ||
+            !adc_cal_export_append(",") ||
+            !adc_cal_export_spectral(raw_average) ||
+            !adc_cal_export_append(",%u,",
+                raw_matching != NULL && raw_matching->valid ? 1U : 0U) ||
+            !adc_cal_export_field(raw_matching != NULL ?
+                raw_matching->correlation : NAN) ||
+            !adc_cal_export_field(raw_matching != NULL ?
+                raw_matching->waveform_rmse_codes : NAN) ||
+            !adc_cal_export_field(raw_matching != NULL ?
+                raw_matching->residual_dbc : NAN) ||
+            !adc_cal_export_field(raw_matching != NULL ?
+                raw_matching->offset_mismatch_codes : NAN) ||
+            !adc_cal_export_field(raw_matching != NULL ?
+                raw_matching->gain_ratio_b_over_a : NAN) ||
+            !adc_cal_export_field(raw_matching != NULL ?
+                raw_matching->gain_mismatch : NAN) ||
+            !adc_cal_export_field(raw_matching != NULL ?
+                raw_matching->relative_skew_samples : NAN) ||
+            !adc_cal_export_number(raw_matching != NULL ?
+                raw_matching->relative_skew_ps : NAN) ||
+            !adc_cal_export_append("\r\n")) return false;
+    }
+    return true;
+}
+
 static bool adc_store_offset_captures_csv(void)
 {
     static const char header[] =
@@ -2115,10 +2301,11 @@ static bool adc_store_performance_csv(
 
 #define ADC_CAL_GLOBAL_HISTORY_CAPACITY \
     (ADC_CAL_TIMING_HISTORY_CAPACITY + \
+     ADC_CAL_BASELINE_CAPTURE_HISTORY_CAPACITY + \
      ADC_CAL_OFFSET_CAPTURE_HISTORY_CAPACITY + \
      ADC_CAL_GAIN_CAPTURE_HISTORY_CAPACITY + \
      ADC_CAL_SKEW_CAPTURE_HISTORY_CAPACITY + \
-     2U * ADC_PERFORMANCE_FRAMES)
+     ADC_PERFORMANCE_FRAMES)
 
 typedef struct {
     uint32_t unique_indices;
@@ -2177,6 +2364,138 @@ static bool adc_cal_history_iteration_exists(
     return false;
 }
 
+static double calibration_median_double(double *values, size_t count);
+
+static bool adc_cal_history_value_matches(
+    double exported,
+    double captured,
+    double tolerance)
+{
+    return isfinite(exported) && isfinite(captured) &&
+        fabs(exported - captured) <= tolerance;
+}
+
+static uint32_t adc_cal_history_validate_skew_iterations(void)
+{
+    uint32_t matched_batches = 0U;
+    uint32_t missing_batches = 0U;
+    uint32_t count_mismatches = 0U;
+    uint32_t mean_mismatches = 0U;
+    uint32_t median_mismatches = 0U;
+    uint32_t std_mismatches = 0U;
+
+    for (uint32_t i = 0U; i < g_adc_cal_export_history.skew_count; ++i) {
+        const adc_cal_skew_history_record_t *summary =
+            &g_adc_cal_export_history.skew[i];
+        double samples[CAL_SKEW_BATCH_SIZE];
+        double ps_values[CAL_SKEW_BATCH_SIZE];
+        double sum_samples = 0.0;
+        double sum_ps = 0.0;
+        double square_sum_samples = 0.0;
+        double square_sum_ps = 0.0;
+        uint32_t capture_rows = 0U;
+        uint32_t accepted = 0U;
+        uint32_t rejected = 0U;
+        bool row_valid = true;
+
+        for (uint32_t j = 0U;
+             j < g_adc_cal_export_history.skew_capture_count; ++j) {
+            const adc_cal_skew_capture_record_t *capture =
+                &g_adc_cal_export_history.skew_captures[j];
+            if (capture->iteration != summary->iteration ||
+                strcmp(capture->capture_phase, "calibration") != 0)
+                continue;
+            ++capture_rows;
+            if (!capture->accepted) {
+                ++rejected;
+                continue;
+            }
+            if (!isfinite(capture->measured_skew_samples) ||
+                !isfinite(capture->measured_skew_ps) ||
+                accepted >= CAL_SKEW_BATCH_SIZE) {
+                row_valid = false;
+                continue;
+            }
+            samples[accepted] = capture->measured_skew_samples;
+            ps_values[accepted] = capture->measured_skew_ps;
+            sum_samples += samples[accepted];
+            sum_ps += ps_values[accepted];
+            square_sum_samples += samples[accepted] * samples[accepted];
+            square_sum_ps += ps_values[accepted] * ps_values[accepted];
+            ++accepted;
+        }
+
+        if (capture_rows == 0U || accepted == 0U) {
+            ++missing_batches;
+            continue;
+        }
+        ++matched_batches;
+        if (summary->iteration != i + 1U ||
+            summary->accepted_frames != accepted ||
+            summary->rejected_frames != rejected ||
+            summary->accepted_frames + summary->rejected_frames !=
+                capture_rows || !row_valid) {
+            ++count_mismatches;
+        }
+        {
+            const double count = (double)accepted;
+            const double mean_samples = sum_samples / count;
+            const double mean_ps = sum_ps / count;
+            const double median_samples =
+                calibration_median_double(samples, accepted);
+            const double median_ps =
+                calibration_median_double(ps_values, accepted);
+            const double std_samples = sqrt(fmax(0.0,
+                square_sum_samples / count - mean_samples * mean_samples));
+            const double std_ps = sqrt(fmax(0.0,
+                square_sum_ps / count - mean_ps * mean_ps));
+
+            if (!adc_cal_history_value_matches(
+                    summary->skew_mean_samples, mean_samples, 1.0e-9) ||
+                !adc_cal_history_value_matches(
+                    summary->skew_mean_ps, mean_ps, 1.0e-3)) {
+                ++mean_mismatches;
+            }
+            if (!adc_cal_history_value_matches(
+                    summary->skew_median_samples, median_samples, 1.0e-9) ||
+                !adc_cal_history_value_matches(
+                    summary->skew_median_ps, median_ps, 1.0e-3)) {
+                ++median_mismatches;
+            }
+            if (!adc_cal_history_value_matches(
+                    summary->skew_std_samples, std_samples, 1.0e-9) ||
+                !adc_cal_history_value_matches(
+                    summary->skew_std_ps, std_ps, 1.0e-3)) {
+                ++std_mismatches;
+            }
+        }
+    }
+
+    xil_printf("\r\nSkew iteration-history validation\r\n");
+    xil_printf("  measurement rows       : %lu\r\n",
+        (unsigned long)g_adc_cal_export_history.skew_count);
+    xil_printf("  matched capture batches: %lu\r\n",
+        (unsigned long)matched_batches);
+    xil_printf("  missing capture batches: %lu\r\n",
+        (unsigned long)missing_batches);
+    xil_printf("  count mismatches       : %lu\r\n",
+        (unsigned long)count_mismatches);
+    xil_printf("  mean mismatches        : %lu\r\n",
+        (unsigned long)mean_mismatches);
+    xil_printf("  median mismatches      : %lu\r\n",
+        (unsigned long)median_mismatches);
+    xil_printf("  std-dev mismatches     : %lu\r\n",
+        (unsigned long)std_mismatches);
+    xil_printf("  validation result      : %s\r\n",
+        matched_batches == g_adc_cal_export_history.skew_count &&
+        missing_batches == 0U && count_mismatches == 0U &&
+        mean_mismatches == 0U && median_mismatches == 0U &&
+        std_mismatches == 0U ? "PASS" : "FAIL");
+
+    return missing_batches + count_mismatches + mean_mismatches +
+        median_mismatches + std_mismatches;
+}
+
 static void adc_cal_history_print_validation(void)
 {
     static bool seen[ADC_CAL_GLOBAL_HISTORY_CAPACITY + 1U];
@@ -2190,6 +2509,7 @@ static void adc_cal_history_print_validation(void)
     uint32_t skew_calibration = 0U;
     uint32_t controller_iteration_mismatches = 0U;
     uint32_t capture_group_index_errors = 0U;
+    uint32_t skew_iteration_validation_errors = 0U;
     uint32_t missing_indices = 0U;
 
     memset(seen, 0, sizeof(seen));
@@ -2203,10 +2523,24 @@ static void adc_cal_history_print_validation(void)
         if (r->frame_index != i + 1U) ++capture_group_index_errors;
     }
     for (uint32_t i = 0U;
-         i < g_performance_baseline.frames_captured; ++i) {
+         i < g_adc_cal_export_history.baseline_capture_count; ++i) {
+        const adc_cal_baseline_capture_record_t *r =
+            &g_adc_cal_export_history.baseline_captures[i];
         adc_cal_history_validate_index(
-            g_performance_baseline.global_capture_index[i],
-            seen, &validation);
+            r->global_capture_index, seen, &validation);
+        if (r->capture_group_index != 1U ||
+            r->capture_index != i + 1U) {
+            ++capture_group_index_errors;
+        }
+        if (r->accepted &&
+            (r->performance_frame_index == 0U ||
+             r->performance_frame_index >
+                g_performance_baseline.frames_captured ||
+             g_performance_baseline.global_capture_index[
+                r->performance_frame_index - 1U] !=
+                    r->global_capture_index)) {
+            ++capture_group_index_errors;
+        }
     }
     for (uint32_t i = 0U;
          i < g_adc_cal_export_history.offset_capture_count; ++i) {
@@ -2314,6 +2648,9 @@ static void adc_cal_history_print_validation(void)
             }
         }
     }
+    if (g_adc_cal_export_history.skew_count > 0U)
+        skew_iteration_validation_errors =
+            adc_cal_history_validate_skew_iterations();
     for (uint32_t i = 1U;
          i <= g_adc_cal_export_history.global_capture_count &&
          i <= ADC_CAL_GLOBAL_HISTORY_CAPACITY; ++i) {
@@ -2324,7 +2661,7 @@ static void adc_cal_history_print_validation(void)
     xil_printf("  timing captures       : %lu\r\n",
         (unsigned long)g_adc_cal_export_history.timing_count);
     xil_printf("  raw baseline          : %lu\r\n",
-        (unsigned long)g_performance_baseline.frames_captured);
+        (unsigned long)g_adc_cal_export_history.baseline_capture_count);
     xil_printf("  offset calibration    : %lu\r\n",
         (unsigned long)offset_calibration);
     xil_printf("  offset verification   : %lu\r\n",
@@ -2348,6 +2685,8 @@ static void adc_cal_history_print_validation(void)
     xil_printf("  global index range     : %lu..%lu\r\n",
         (unsigned long)validation.minimum_index,
         (unsigned long)validation.maximum_index);
+    xil_printf("  exported captures      : %lu\r\n",
+        (unsigned long)validation.unique_indices);
     xil_printf("  duplicate indices      : %lu\r\n",
         (unsigned long)validation.duplicate_indices);
     xil_printf("  zero indices           : %lu\r\n",
@@ -2363,13 +2702,16 @@ static void adc_cal_history_print_validation(void)
         (unsigned long)controller_iteration_mismatches);
     xil_printf("  capture-index errors   : %lu\r\n",
         (unsigned long)capture_group_index_errors);
+    xil_printf("  skew-summary errors    : %lu\r\n",
+        (unsigned long)skew_iteration_validation_errors);
     xil_printf("  validation result      : %s\r\n",
         validation.duplicate_indices == 0U &&
         validation.zero_indices == 0U &&
         validation.out_of_range_indices == 0U &&
         missing_indices == 0U &&
         controller_iteration_mismatches == 0U &&
-        capture_group_index_errors == 0U ? "PASS" : "FAIL");
+        capture_group_index_errors == 0U &&
+        skew_iteration_validation_errors == 0U ? "PASS" : "FAIL");
 }
 
 static void handle_adc_calibration_export_cmd(void)
@@ -2411,6 +2753,10 @@ static void handle_adc_calibration_export_cmd(void)
         g_adc_cal_export_history.timing_count > 0U,
         adc_store_timing_captures_csv,
         CALIBRATION_CSV_TIMING_CAPTURES, "timing captures");
+    if (status == 0) ADC_CAL_SEND_DATASET(
+        g_adc_cal_export_history.baseline_capture_count > 0U,
+        adc_store_baseline_captures_csv,
+        CALIBRATION_CSV_BASELINE_CAPTURES, "baseline captures");
     if (status == 0) ADC_CAL_SEND_DATASET(
         g_adc_cal_export_history.offset_capture_count > 0U,
         adc_store_offset_captures_csv,
@@ -7828,11 +8174,21 @@ restore_selection:
                                                                         calibration_skew_loop_context_t *loop =
                                                                             (calibration_skew_loop_context_t *)context;
                                                                         if (measurement == NULL) return;
-                                                                        if (loop != NULL && iteration <=
-                                                                            ADC_CAL_SKEW_HISTORY_CAPACITY) {
+                                                                        /* Controller decision N consumes the post-update
+                                                                         * calibration batch captured after decision N-1.  The
+                                                                         * first decision consumes the prepared characterization
+                                                                         * baseline and therefore has no calibration capture row.
+                                                                         * Store decision N against measurement batch N-1 so every
+                                                                         * CSV summary row maps one-to-one to a capture group. */
+                                                                        if (loop != NULL && iteration > 1U &&
+                                                                            iteration - 1U <=
+                                                                                ADC_CAL_SKEW_HISTORY_CAPACITY) {
+                                                                            const uint32_t measurement_iteration =
+                                                                                iteration - 1U;
                                                                             adc_cal_history_record_skew_iteration(
-                                                                                iteration,
-                                                                                &loop->controller_batches[iteration],
+                                                                                measurement_iteration,
+                                                                                &loop->controller_batches[
+                                                                                    measurement_iteration],
                                                                                 measurement,
                                                                                 old_register, new_register,
                                                                                 requested_steps, applied_steps,

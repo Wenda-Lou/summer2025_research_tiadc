@@ -914,6 +914,11 @@ int adc_cal_skew_run_closed_loop(
         if (fabs(measurement.skew_samples) <=
             active.skew_tolerance_samples) {
             ++result->consecutive_passes;
+            /* An iteration row records a controller decision, not a DMA
+             * request.  When this decision establishes convergence, the
+             * loop returns without collecting a post-decision batch.  It is
+             * therefore valid for the final iteration row to have no
+             * same-numbered capture group. */
             if (io->report_iteration != NULL)
                 io->report_iteration(io->context, iteration, &measurement,
                     current_register, current_register, 0, 0,
