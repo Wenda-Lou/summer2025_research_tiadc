@@ -326,6 +326,30 @@ int adc_cal_skew_from_tone_phases(
     return 0;
 }
 
+int adc_cal_skew_dither_crosscheck_is_usable(
+    const adc_cal_skew_result_t *dither_result,
+    double primary_skew_samples,
+    double maximum_disagreement_samples,
+    double *disagreement_samples)
+{
+    double disagreement;
+    if (disagreement_samples == NULL) return -1;
+    *disagreement_samples = NAN;
+    if (dither_result == NULL ||
+        !adc_cal_double_isfinite(primary_skew_samples) ||
+        !adc_cal_double_isfinite(maximum_disagreement_samples) ||
+        maximum_disagreement_samples < 0.0) return -2;
+    if (!dither_result->valid ||
+        !adc_cal_double_isfinite(dither_result->relative_skew_samples)) {
+        return 0;
+    }
+    disagreement = fabs(
+        primary_skew_samples - dither_result->relative_skew_samples);
+    *disagreement_samples = disagreement;
+    if (dither_result->status != ADC_CAL_SKEW_STATUS_PASS) return 0;
+    return disagreement <= maximum_disagreement_samples ? 1 : 0;
+}
+
 int adc_cal_skew_map_paired_window_i16(
     const int16_t *channel_a,
     const int16_t *channel_b,
@@ -571,6 +595,8 @@ const char *adc_cal_skew_loop_status_name(adc_cal_skew_loop_status_t status)
     case ADC_CAL_SKEW_LOOP_CONVERGED: return "CONVERGED";
     case ADC_CAL_SKEW_LOOP_NOT_CONVERGED: return "NOT CONVERGED";
     case ADC_CAL_SKEW_LOOP_SATURATED: return "SATURATED";
+    case ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE:
+        return "ACTUATOR UNAVAILABLE";
     case ADC_CAL_SKEW_LOOP_FAILED:
     default: return "FAILED";
     }
@@ -642,6 +668,19 @@ int adc_cal_skew_plan_update(
         requested > (double)INT32_MAX || requested < (double)INT32_MIN)
         return -2;
     request = (int)lround(requested);
+    /* A fractional-gain controller can round to zero one actuator step before
+     * convergence.  Permit a single final step only when the characterized
+     * linear model predicts that it will land inside the requested tolerance.
+     * This avoids both a false resolution failure and a two-code oscillation
+     * when the actuator is genuinely too coarse. */
+    if (request == 0 &&
+        fabs(measured_skew_samples) > config->skew_tolerance_samples) {
+        const int finish_direction = requested > 0.0 ? 1 : -1;
+        const double projected_skew = measured_skew_samples +
+            (double)finish_direction * signed_step;
+        if (fabs(projected_skew) <= config->skew_tolerance_samples)
+            request = finish_direction;
+    }
     applied = request;
     if (applied > config->skew_max_steps_per_iteration)
         applied = config->skew_max_steps_per_iteration;
@@ -733,6 +772,36 @@ int adc_cal_skew_run_closed_loop(
         result->status = ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE;
         result->failure_reason = "ACTUATOR_UNAVAILABLE";
         return 0;
+    }
+    /* Measurement validity is deliberately established before actuator
+     * preparation.  Board backends may write a neutral/default code while
+     * preparing, so an invalid estimator must never reach this callback. */
+    if (io->prepare_actuator != NULL &&
+        io->prepare_actuator(io->context) != 0) {
+        result->status = ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE;
+        result->failure_reason = "ACTUATOR_UNAVAILABLE";
+        return 0;
+    }
+    if (io->prepare_actuator != NULL) {
+        adc_cal_skew_batch_measurement_t prepared_baseline;
+        memset(&prepared_baseline, 0, sizeof(prepared_baseline));
+        if (io->measure_batch(io->context, &prepared_baseline) != 0 ||
+            !adc_cal_skew_measurement_valid(config, &prepared_baseline)) {
+            result->failure_reason = prepared_baseline.reason != NULL ?
+                prepared_baseline.reason :
+                "post-preparation skew baseline is invalid";
+            return -4;
+        }
+        /* Never characterize an actuator step against a measurement taken
+         * before the backend was prepared. Preparation can change clock-mode
+         * state even when it selects the same nominal register code. */
+        measurement = prepared_baseline;
+        result->initial_skew_samples = measurement.skew_samples;
+        result->final_skew_samples = measurement.skew_samples;
+        result->best_skew_samples = measurement.skew_samples;
+        result->final_batch_std_samples = measurement.batch_std_samples;
+        result->accepted_frames += measurement.accepted_frames;
+        result->rejected_frames += measurement.rejected_frames;
     }
     if (io->read_register(io->context, &current_register) != 0 ||
         current_register < config->skew_register_min ||
@@ -847,7 +916,9 @@ int adc_cal_skew_run_closed_loop(
             ++result->consecutive_passes;
             if (io->report_iteration != NULL)
                 io->report_iteration(io->context, iteration, &measurement,
-                    current_register, current_register, 0,
+                    current_register, current_register, 0, 0,
+                    active.skew_actuator_step_samples,
+                    result->best_skew_samples, 0,
                     result->consecutive_passes,
                     result->consecutive_passes >=
                         active.skew_required_consecutive_passes);
@@ -872,7 +943,11 @@ int adc_cal_skew_run_closed_loop(
             if (applied_steps == 0) {
                 if (io->report_iteration != NULL)
                     io->report_iteration(io->context, iteration, &measurement,
-                        current_register, current_register, 0, 0U, 0);
+                        current_register, current_register,
+                        requested_steps, 0,
+                        active.skew_actuator_step_samples,
+                        result->best_skew_samples,
+                        saturated, 0U, 0);
                 result->status = saturated ? ADC_CAL_SKEW_LOOP_SATURATED :
                     ADC_CAL_SKEW_LOOP_NOT_CONVERGED;
                 result->saturated = saturated;
@@ -890,7 +965,9 @@ int adc_cal_skew_run_closed_loop(
             if (io->report_iteration != NULL)
                 io->report_iteration(io->context, iteration, &measurement,
                     current_register - applied_steps, current_register,
-                    applied_steps, 0U, 0);
+                    requested_steps, applied_steps,
+                    active.skew_actuator_step_samples,
+                    result->best_skew_samples, saturated, 0U, 0);
             result->final_register = current_register;
             result->correction_applied = 1;
             result->saturated |= saturated;

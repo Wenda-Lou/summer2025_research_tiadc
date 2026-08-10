@@ -1735,6 +1735,13 @@ static int unit_dither_correlation_coordinates(sim_assert_context_t *ctx)
         fmod(-(15.976486 + 4.0 * 142.791120) + 1016.0, 1016.0),
         142.791120, 1016.0, &after), 0);
     SIM_ASSERT_NEAR(ctx, after.absolute_difference_samples, 0.0, 1.0e-9);
+    /* Once the tone-cycle ambiguity is resolved, validation must compare the
+     * resolved waveform lag with the independently detected dither lag. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_compare_periodic_lags(
+        14.188080, 316.879182, 142.791120, 1016.0, &after), 0);
+    SIM_ASSERT_NEAR(ctx, after.absolute_difference_samples,
+        0.646702, 5.0e-6);
+    SIM_ASSERT_TRUE(ctx, after.absolute_difference_samples < 1.0);
     {
         double matched_ratio = NAN;
         const double nominal_ratio = 2.6e9 / 1.45e9;
@@ -2423,6 +2430,7 @@ static int fixture_pipeline_prepare(
     const char *capture_path = fixture->capture_path != NULL ?
         fixture->capture_path : ADC_CAL_TEST_CAPTURE_PATH;
     (void)config;
+    memset(&best_timing, 0, sizeof(best_timing));
     memset(fixture, 0, sizeof(*fixture));
     fixture->capture_path = capture_path;
     fixture->nominal_rate_ratio = dac_rate_hz / adc_rate_hz;
@@ -2858,8 +2866,8 @@ static int unit_recorded_fixture_full_pipeline(sim_assert_context_t *ctx)
             adc_cal_skew_stage_result_name(state.skew_policy.stage_result),
             (unsigned long)fixture.performance.frames_valid,
             (unsigned long)fixture.performance.frames_attempted,
-            (double)fixture.performance.sndr_db,
-            (double)fixture.performance.enob,
+            (double)fixture.performance.cal_parallel_average_sndr_db,
+            (double)fixture.performance.cal_parallel_average_enob,
             adc_cal_pipeline_result_name(state.overall_result));
     }
     return 1;
@@ -2931,6 +2939,9 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
     const double omega = two_pi * frequency_hz / sample_rate_hz;
     adc_cal_skew_phase_config_t config;
     adc_cal_skew_phase_result_t result;
+    adc_cal_skew_result_t dither_result;
+    double dither_disagreement = NAN;
+    int dither_usable;
 
     adc_cal_skew_phase_default_config(&config);
 
@@ -3058,6 +3069,35 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
     SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.185847, 1.0e-9);
     SIM_ASSERT_TRUE(ctx, result.dither_disagreement_samples < 0.06);
     SIM_ASSERT_TRUE(ctx, fabs(result.corrected_skew_samples) < 0.25);
+
+    /* A finite dither WARNING is not a valid cross-check and must not control
+     * the primary polarity branch. This mirrors the hardware frames that
+     * reported roughly -0.77 dither samples against +0.186 tone samples. */
+    adc_cal_skew_result_reset(&dither_result);
+    dither_result.valid = 1;
+    dither_result.status = ADC_CAL_SKEW_STATUS_WARNING;
+    dither_result.reason = ADC_CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE;
+    dither_result.relative_skew_samples = -0.768105;
+    dither_usable = adc_cal_skew_dither_crosscheck_is_usable(
+        &dither_result, 0.186103, 0.03, &dither_disagreement);
+    SIM_ASSERT_EQ_INT(ctx, dither_usable, 0);
+    SIM_ASSERT_NEAR(ctx, dither_disagreement, 0.954208, 1.0e-9);
+    adc_cal_skew_phase_default_config(&config);
+    config.dither_valid = dither_usable == 1;
+    config.dither_skew_samples = dither_result.relative_skew_samples;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_resolve_tone_phase(
+        0.0, omega * -7.064153, frequency_hz, sample_rate_hz,
+        &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.corrected_skew_samples, 0.185847, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, result.selection_reason,
+        ADC_CAL_SKEW_BRANCH_REASON_PHYSICAL_BOUND);
+
+    dither_result.status = ADC_CAL_SKEW_STATUS_PASS;
+    dither_result.reason = ADC_CAL_SKEW_REASON_NONE;
+    dither_result.relative_skew_samples = 0.18;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_dither_crosscheck_is_usable(
+        &dither_result, 0.186103, 0.03, &dither_disagreement), 1);
+    SIM_ASSERT_NEAR(ctx, dither_disagreement, 0.006103, 1.0e-9);
     return 1;
 }
 
@@ -3070,7 +3110,10 @@ typedef struct {
     uint32_t reads;
     uint32_t writes;
     uint32_t measurements;
+    uint32_t preparations;
     int invalid_measurement;
+    int preparation_failure;
+    int preparation_register_delta;
     int readback_mismatch;
 } simulated_skew_actuator_t;
 
@@ -3099,6 +3142,16 @@ static int simulated_skew_read(void *context, int *value)
     if (sim == NULL || value == NULL) return -1;
     ++sim->reads;
     *value = sim->register_value;
+    return 0;
+}
+
+static int simulated_skew_prepare(void *context)
+{
+    simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
+    if (sim == NULL) return -1;
+    ++sim->preparations;
+    if (sim->preparation_failure) return -1;
+    sim->register_value += sim->preparation_register_delta;
     return 0;
 }
 
@@ -3134,6 +3187,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     config.skew_max_iterations = 10U;
     memset(&io, 0, sizeof(io));
     io.measure_batch = simulated_skew_measure;
+    io.prepare_actuator = simulated_skew_prepare;
     io.read_register = simulated_skew_read;
     io.write_register = simulated_skew_write;
 
@@ -3144,6 +3198,14 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, requested < 0);
     SIM_ASSERT_EQ_INT(ctx, applied, -4);
     SIM_ASSERT_EQ_INT(ctx, target, 16);
+    SIM_ASSERT_TRUE(ctx, !saturated);
+    /* Do not stall just outside tolerance when one characterized actuator
+     * step is predicted to finish the correction. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_plan_update(
+        0.015, 20, &config, &requested, &applied, &target, &saturated), 0);
+    SIM_ASSERT_EQ_INT(ctx, requested, -1);
+    SIM_ASSERT_EQ_INT(ctx, applied, -1);
+    SIM_ASSERT_EQ_INT(ctx, target, 19);
     SIM_ASSERT_TRUE(ctx, !saturated);
     config.skew_actuator_polarity = -1;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_plan_update(
@@ -3197,6 +3259,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, 1.45e9, &result) != 0);
     SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_FAILED);
+    SIM_ASSERT_EQ_INT(ctx, sim.preparations, 0U);
     SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
 
     /* An unavailable actuator is discovered only after a valid measurement.
@@ -3222,6 +3285,41 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
         "ACTUATOR_UNAVAILABLE") == 0);
     io.read_register = simulated_skew_read;
     io.write_register = simulated_skew_write;
+
+    /* Backend preparation also occurs only after a valid measurement. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.preparation_failure = 1;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status,
+        ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE);
+    SIM_ASSERT_EQ_INT(ctx, sim.measurements, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.preparations, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.reads, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
+    SIM_ASSERT_TRUE(ctx, strcmp(result.failure_reason,
+        "ACTUATOR_UNAVAILABLE") == 0);
+
+    /* Characterization must use a fresh baseline if preparation changed the
+     * backend's register/mode state. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.preparation_register_delta = 2;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, 1.45e9, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.initial_skew_samples, 0.226, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.initial_register, 22);
+    SIM_ASSERT_EQ_INT(ctx, sim.preparations, 1U);
+    SIM_ASSERT_TRUE(ctx, sim.measurements >= 4U);
 
     /* A readback mismatch during the mandatory +1 characterization fails. */
     memset(&sim, 0, sizeof(sim));
@@ -3357,6 +3455,12 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
         &input, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_UNSTABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_VALID);
+    SIM_ASSERT_EQ_INT(ctx, result.actuator_status,
+        ADC_CAL_SKEW_ACTUATOR_UNAVAILABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_status,
+        ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE);
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
         ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE);
     SIM_ASSERT_TRUE(ctx, !result.pipeline_may_continue);
@@ -3583,6 +3687,7 @@ typedef struct {
     uint32_t frame;
     bool fail_all;
     double noise;
+    bool invert_b;
 } perf_capture_test_context_t;
 
 static int perf_capture_test(
@@ -3608,6 +3713,9 @@ static int perf_capture_test(
     make_perf_tone(raw_b, capacity, 1450000000.0, 145000000.0,
                    1000.0, 5.0, ctx->noise, 0.0, 0.0, 0.0, 0.0, false,
                    &ctx->seed);
+    if (ctx->invert_b) {
+        for (size_t i = 0U; i < capacity; ++i) raw_b[i] = -raw_b[i];
+    }
     if (sample_count != NULL) *sample_count = capacity;
     return 0;
 }
@@ -3631,6 +3739,8 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     uint32_t rng = 42U;
     uint32_t rng_repeat = 42U;
     double repeat[800];
+    static double baseline_a[800];
+    static double baseline_b[800];
 
     adc_cal_perf_default_config(&config);
     config.sample_count = 800U;
@@ -3641,6 +3751,9 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
                    1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(clean, 800U, config.sample_rate_hz, &clean_metrics), 0);
     SIM_ASSERT_TRUE(ctx, clean_metrics.sndr_db > 60.0f);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(
+        clean, 800U, 1300000000.0, &distorted_metrics), 0);
+    SIM_ASSERT_NEAR(ctx, distorted_metrics.signal_hz, 130000000.0, 1.0);
 
     make_perf_tone(noisy, 800U, config.sample_rate_hz, 147000000.0,
                    1000.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
@@ -3687,6 +3800,40 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(clean, raw_b, clean, raw_b, ref, &config, 1U, &frame), 0);
     SIM_ASSERT_TRUE(ctx, frame.raw_a.sndr_db > frame.raw_b.sndr_db);
 
+    /* Parallel A/B matching uses the frozen polarity and never interleaves. */
+    for (size_t i = 0U; i < 800U; ++i) raw_b[i] = -clean[i];
+    config.channel_polarity[0] = 1.0;
+    config.channel_polarity[1] = -1.0;
+    config.initial_relative_skew_samples = 0.174;
+    config.initial_relative_skew_ps = 120.0;
+    config.final_relative_skew_samples = -0.0041;
+    config.final_relative_skew_ps = -2.83;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
+        clean, raw_b, clean, clean, ref, &config, 2U, &frame), 0);
+    SIM_ASSERT_TRUE(ctx, frame.parallel_average_available);
+    SIM_ASSERT_TRUE(ctx, !frame.interleaved_metrics_available);
+    SIM_ASSERT_TRUE(ctx, frame.raw_matching.correlation > 0.9999f);
+    SIM_ASSERT_TRUE(ctx, frame.raw_matching.waveform_rmse_codes < 1.0e-4f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_matching.waveform_rmse_codes < 1.0e-4f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_a_reference_correlation > 0.9999f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_b_reference_correlation > 0.9999f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_a_reference_rmse_codes < 1.0e-4f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_b_reference_rmse_codes < 1.0e-4f);
+    SIM_ASSERT_NEAR(ctx, frame.raw_matching.relative_skew_ps, 120.0, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, frame.cal_matching.relative_skew_ps, -2.83, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, frame.raw_parallel_average.signal_hz,
+                    frame.raw_a.signal_hz, 1.0);
+    SIM_ASSERT_NEAR(ctx, frame.sample_rate_hz, config.sample_rate_hz, 1.0);
+
+    /* Offset and gain mismatch are measured after polarity normalization. */
+    for (size_t i = 0U; i < 800U; ++i) raw_b[i] = -(1.10 * clean[i] + 7.0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
+        clean, raw_b, clean, clean, ref, &config, 3U, &frame), 0);
+    SIM_ASSERT_NEAR(ctx, frame.raw_matching.offset_mismatch_codes, -7.0, 0.05);
+    SIM_ASSERT_NEAR(ctx, frame.raw_matching.gain_ratio_b_over_a, 1.10, 1.0e-4);
+    SIM_ASSERT_NEAR(ctx, frame.raw_matching.gain_mismatch, 0.10, 1.0e-4);
+
+    config.channel_polarity[1] = 1.0;
     for (size_t i = 0U; i < 800U; ++i) noisy[i] = clean[i] + 10.0;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(noisy, noisy, clean, clean, ref, &config, 2U, &frame), 0);
     SIM_ASSERT_TRUE(ctx, frame.rmse < 1.0f);
@@ -3701,6 +3848,70 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     config.nominal_system_gain = 1.0;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_run_batch(&config, perf_capture_test, &capture_ctx, &batch), 0);
     SIM_ASSERT_TRUE(ctx, batch.valid);
+
+    /* Stage 5 must reuse the frozen timing polarity and selected channel. */
+    memset(&capture_ctx, 0, sizeof(capture_ctx));
+    capture_ctx.seed = 99U;
+    capture_ctx.invert_b = true;
+    config.frame_count = 1U;
+    config.minimum_valid_frames = 1U;
+    config.final_offset_correction = 5.0;
+    config.canonical_channel = 1;
+    config.channel_polarity[0] = 1.0;
+    config.channel_polarity[1] = -1.0;
+    config.final_relative_skew_samples = -0.003685;
+    config.final_relative_skew_ps = -2.541726;
+    config.frame_results = &frame;
+    config.frame_result_capacity = 1U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_run_batch(
+        &config, perf_capture_test, &capture_ctx, &batch), 0);
+    SIM_ASSERT_TRUE(ctx, frame.correlation_before_polarity < -0.99f);
+    SIM_ASSERT_TRUE(ctx, frame.correlation > 0.99f);
+    SIM_ASSERT_TRUE(ctx, frame.rmse < frame.rmse_before_polarity);
+    SIM_ASSERT_TRUE(ctx, !frame.raw_cal_buffers_identical);
+    SIM_ASSERT_NEAR(ctx, frame.cal_matching.relative_skew_ps,
+                    -2.541726, 1.0e-9);
+
+    /* A genuine separate baseline may match when no correction is active. */
+    memset(&capture_ctx, 0, sizeof(capture_ctx));
+    capture_ctx.seed = 99U;
+    make_perf_tone(baseline_a, 800U, config.sample_rate_hz, 145000000.0,
+                   1000.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, false,
+                   &capture_ctx.seed);
+    make_perf_tone(baseline_b, 800U, config.sample_rate_hz, 145000000.0,
+                   1000.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, false,
+                   &capture_ctx.seed);
+    config.final_offset_correction = 0.0;
+    config.canonical_channel = 1;
+    config.channel_polarity[0] = 1.0;
+    config.channel_polarity[1] = 1.0;
+    config.baseline_a = baseline_a;
+    config.baseline_b = baseline_b;
+    config.baseline_frame_stride = 800U;
+    config.baseline_frame_count = 1U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_run_batch(
+        &config, perf_capture_test, &capture_ctx, &batch), 0);
+    SIM_ASSERT_TRUE(ctx, frame.raw_cal_a_identical);
+    SIM_ASSERT_TRUE(ctx, frame.raw_cal_b_identical);
+    SIM_ASSERT_TRUE(ctx, frame.raw_a_address != frame.cal_a_address);
+    SIM_ASSERT_TRUE(ctx, frame.raw_b_address != frame.cal_b_address);
+    SIM_ASSERT_TRUE(ctx, frame.parallel_average_available);
+    SIM_ASSERT_TRUE(ctx, !frame.interleaved_metrics_available);
+    SIM_ASSERT_NEAR(ctx, frame.raw_parallel_average.signal_hz,
+                    frame.raw_a.signal_hz, 1.0);
+    SIM_ASSERT_NEAR(ctx, frame.sample_rate_hz, 1450000000.0, 1.0);
+
+    /* Applying a correction changes values, but never shifts post-DMA data. */
+    memset(&capture_ctx, 0, sizeof(capture_ctx));
+    capture_ctx.seed = 99U;
+    config.final_offset_correction = -4.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_run_batch(
+        &config, perf_capture_test, &capture_ctx, &batch), 0);
+    SIM_ASSERT_TRUE(ctx, !frame.raw_cal_a_identical);
+    SIM_ASSERT_TRUE(ctx, !frame.raw_cal_b_identical);
+    SIM_ASSERT_TRUE(ctx, frame.correlation > 0.99f);
+    SIM_ASSERT_NEAR(ctx, frame.cal_parallel_average.signal_hz,
+                    frame.raw_parallel_average.signal_hz, 1.0);
 
     capture_ctx.fail_all = true;
     config.minimum_valid_frames = 1U;
@@ -4276,10 +4487,14 @@ static int sim_pipeline_run_performance(
                                      state->performance_failure_reason, state);
         return -4;
     }
-    ctx->latest_perf.sndr_db = ctx->latest_perf_batch.sndr_db;
-    ctx->latest_perf.sfdr_db = ctx->latest_perf_batch.sfdr_db;
-    ctx->latest_perf.thd_db = ctx->latest_perf_batch.thd_db;
-    ctx->latest_perf.enob = ctx->latest_perf_batch.enob;
+    ctx->latest_perf.sndr_db =
+        ctx->latest_perf_batch.cal_parallel_average_sndr_db;
+    ctx->latest_perf.sfdr_db =
+        ctx->latest_perf_batch.cal_parallel_average_sfdr_db;
+    ctx->latest_perf.thd_db =
+        ctx->latest_perf_batch.cal_parallel_average_thd_db;
+    ctx->latest_perf.enob =
+        ctx->latest_perf_batch.cal_parallel_average_enob;
     state->performance_valid = true;
     sim_pipeline_write_iteration(ctx, "performance_measurement", 1,
                                  "none", state);

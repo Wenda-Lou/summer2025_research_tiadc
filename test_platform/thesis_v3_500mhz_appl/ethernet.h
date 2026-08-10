@@ -40,9 +40,24 @@
 
 extern struct netif server_netif; //Make it can be seen by other .c files
 
+typedef enum {
+    CALIBRATION_CSV_TIMING_CAPTURES = 0,
+    CALIBRATION_CSV_OFFSET_CAPTURES,
+    CALIBRATION_CSV_OFFSET_ITERATIONS,
+    CALIBRATION_CSV_GAIN_CAPTURES,
+    CALIBRATION_CSV_GAIN_ITERATIONS,
+    CALIBRATION_CSV_SKEW_CAPTURES,
+    CALIBRATION_CSV_SKEW_ITERATIONS,
+    CALIBRATION_CSV_PERFORMANCE
+} calibration_csv_dataset_t;
+
 int  lwIP_UDP_init(void);
 void udp_send_mem(void);
 int udp_send_calibration_csv(const uint8_t *data, size_t length);
+int udp_send_calibration_csv_dataset(
+    calibration_csv_dataset_t dataset,
+    const uint8_t *data,
+    size_t length);
 void udp_update(void);
 void udp_service_calibration(void);
 

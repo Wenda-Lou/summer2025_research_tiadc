@@ -16,6 +16,8 @@ from .reference_upload import (
     FPGA_PORT,
     REFERENCE_SAMPLE_COUNT,
     DAC_REFERENCE_SAMPLE_COUNT,
+    DAC_SAMPLE_RATE_HZ,
+    ADC_SAMPLE_RATE_HZ,
     REFERENCE_FORMAT_DAC_RATE_2X,
     clear_reference,
     load_reference_txt,
@@ -54,10 +56,11 @@ def gui_receive_calibration_csv():
         "The receiver will wait for 30 seconds.",
     )
     try:
-        csv_file = receive_calibration_csv(timeout=30.0)
+        csv_files = receive_calibration_csv(timeout=30.0)
+        saved_list = "\n".join(str(path) for path in csv_files.values())
         messagebox.showinfo(
-            "Calibration CSV Saved",
-            f"Calibration data saved:\n{csv_file}",
+            "Calibration CSVs Saved",
+            f"Calibration datasets saved:\n\n{saved_list}",
         )
     except Exception as exc:
         messagebox.showerror("Calibration Receive Error", str(exc))
@@ -550,8 +553,8 @@ def gui_open_ifc_sweep_folder():
 
 def gui_upload_reference_txt():
     """
-    Select a periodic AD9164 TXT waveform and upload one 4064-sample raw DAC
-    block. Firmware explicitly builds its EVEN and ODD ADC-rate candidates.
+    Select a periodic AD9164 TXT waveform and upload one raw DAC-rate block.
+    Firmware explicitly builds its EVEN and ODD ADC-rate candidates.
     """
     txt_file = filedialog.askopenfilename(
         parent=root,
@@ -613,7 +616,9 @@ def gui_upload_reference_txt():
             f"File: {selected_path.name}\n"
             f"Total numeric samples: {all_samples.size}\n"
             f"Uploaded DAC samples: {DAC_REFERENCE_SAMPLE_COUNT}\n"
-            "DAC rate: 2.6 GSPS; ADC rate: 1.45 GSPS; ADC: signed 14-bit"
+            f"DAC rate: {DAC_SAMPLE_RATE_HZ / 1e9:.3f} GSPS; "
+            f"ADC rate: {ADC_SAMPLE_RATE_HZ / 1e9:.3f} GSPS; "
+            "ADC: signed 14-bit"
         ),
         justify="left",
         anchor="w",

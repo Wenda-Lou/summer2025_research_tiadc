@@ -204,6 +204,7 @@ typedef struct {
 
 typedef int (*adc_cal_skew_measure_batch_fn)(
     void *context, adc_cal_skew_batch_measurement_t *measurement);
+typedef int (*adc_cal_skew_actuator_prepare_fn)(void *context);
 typedef int (*adc_cal_skew_register_read_fn)(void *context, int *value);
 typedef int (*adc_cal_skew_register_write_fn)(void *context, int value);
 typedef void (*adc_cal_skew_iteration_report_fn)(
@@ -212,13 +213,18 @@ typedef void (*adc_cal_skew_iteration_report_fn)(
     const adc_cal_skew_batch_measurement_t *measurement,
     int old_register,
     int new_register,
+    int requested_steps,
     int applied_steps,
+    double actuator_step_samples,
+    double best_skew_samples,
+    int saturated,
     uint32_t consecutive_passes,
     int converged);
 
 typedef struct {
     void *context;
     adc_cal_skew_measure_batch_fn measure_batch;
+    adc_cal_skew_actuator_prepare_fn prepare_actuator;
     adc_cal_skew_register_read_fn read_register;
     adc_cal_skew_register_write_fn write_register;
     adc_cal_skew_iteration_report_fn report_iteration;
@@ -335,6 +341,15 @@ int adc_cal_skew_from_tone_phases(
     double tone_frequency_hz,
     double sample_rate_hz,
     double *relative_skew_samples);
+
+/* Returns 1 only when the dither estimator passed all of its own checks and
+ * agrees with the independent primary estimate. Returns 0 for a finite but
+ * warning/discordant dither estimate and a negative value for invalid input. */
+int adc_cal_skew_dither_crosscheck_is_usable(
+    const adc_cal_skew_result_t *dither_result,
+    double primary_skew_samples,
+    double maximum_disagreement_samples,
+    double *disagreement_samples);
 
 /* Map a single circular coordinate window onto a same-frame physical A/B
  * pair.  Both channels always use identical source indices and interpolation

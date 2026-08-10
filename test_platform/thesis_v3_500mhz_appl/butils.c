@@ -136,7 +136,22 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 #define CAL_REPRESENTATIVE_TIE_EPSILON            1.0e-6f
 #define ADC_PERFORMANCE_FRAMES                    30U
 #define ADC_PERFORMANCE_MIN_VALID_FRAMES          20U
-#define ADC_CAL_EXPORT_BUFFER_SIZE              65536U
+#define ADC_CAL_EXPORT_BUFFER_SIZE             524288U
+#define ADC_CAL_TIMING_HISTORY_CAPACITY \
+    ADC_TIMING_MAX_FRAMES
+#define ADC_CAL_OFFSET_CAPTURE_HISTORY_CAPACITY \
+    ((CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS + \
+      CALIBRATION_OFFSET_VERIFICATION_MAX_BATCHES) * \
+     CALIBRATION_OFFSET_BATCH_SIZE + CAL_UPDATE_FRAME_BATCH_SIZE)
+#define ADC_CAL_OFFSET_HISTORY_CAPACITY \
+    CALIBRATION_OFFSET_MAX_ACCEPTED_ITERATIONS
+#define ADC_CAL_GAIN_CAPTURE_HISTORY_CAPACITY \
+    ((CALIBRATION_GAIN_MAX_ACCEPTED_ITERATIONS + 1U) * \
+     CALIBRATION_GAIN_BATCH_SIZE)
+#define ADC_CAL_GAIN_HISTORY_CAPACITY \
+    CALIBRATION_GAIN_MAX_ACCEPTED_ITERATIONS
+#define ADC_CAL_SKEW_CAPTURE_HISTORY_CAPACITY       160U
+#define ADC_CAL_SKEW_HISTORY_CAPACITY              10U
 #define ADC_PERFORMANCE_FUNDAMENTAL_SEARCH_BINS   3U
 #define ADC_PERFORMANCE_HANN_SIGNAL_HALF_WIDTH    2U
 #define CAL_TONE_REFINE_HALF_RANGE_BINS            0.75
@@ -144,6 +159,244 @@ bool adc_set_effective_sample_rate_hz(double rate_hz)
 static char g_adc_cal_export_buffer[ADC_CAL_EXPORT_BUFFER_SIZE];
 static size_t g_adc_cal_export_length = 0U;
 static bool g_adc_cal_export_available = false;
+
+typedef struct {
+    uint32_t frame_index;
+    uint32_t global_capture_index;
+    bool accepted;
+    int8_t channel;
+    int32_t integer_lag_samples;
+    float fractional_lag_samples;
+    float total_lag_samples;
+    float correlation;
+    int8_t canonical_phase;
+    double expected_tone_frequency_hz;
+    double fitted_tone_frequency_hz;
+    double tone_fit_error_hz;
+    float tone_fit_rmse_codes;
+    float tone_correlation;
+    bool dither_valid;
+    double dither_peak;
+    double dither_lag_samples;
+    bool selected_reference_frame;
+    double physical_adc_rate_hz;
+    double configured_dac_rate_hz;
+    double reference_rate_compensation;
+    double selected_reference_ratio;
+    float offset_correction_active_codes;
+    float gain_correction_active;
+    double delay_register_active;
+    double active_polarity;
+    const char *status;
+} adc_cal_timing_history_record_t;
+
+typedef struct {
+    uint32_t iteration;
+    uint32_t capture_group_index;
+    uint32_t capture_index;
+    uint32_t global_capture_index;
+    const char *capture_phase;
+    bool accepted;
+    const char *rejection_reason;
+    double physical_adc_rate_hz;
+    double configured_dac_rate_hz;
+    double reference_rate_compensation;
+    int8_t channel;
+    int8_t canonical_phase;
+    float offset_correction_active_codes;
+    float gain_correction_active;
+    double delay_register_active;
+    double active_polarity;
+    float filtered_residual_at_iteration_start;
+    float measured_offset_residual_codes;
+    float fit_offset_codes;
+    float correlation;
+    float rmse_codes;
+    float tolerance_codes;
+} adc_cal_offset_capture_record_t;
+
+typedef struct {
+    uint32_t iteration;
+    uint32_t accepted_frames;
+    uint32_t rejected_frames;
+    float residual_offset_codes;
+    float filtered_residual_codes;
+    float correction_before_codes;
+    float correction_after_codes;
+    float correction_delta_codes;
+    float tolerance_codes;
+    uint32_t consecutive_passes;
+    uint32_t required_passes;
+    float residual_std_codes;
+    float residual_min_codes;
+    float residual_max_codes;
+    const char *status;
+} adc_cal_offset_history_record_t;
+
+typedef struct {
+    uint32_t iteration;
+    uint32_t capture_group_index;
+    uint32_t capture_index;
+    uint32_t global_capture_index;
+    const char *capture_phase;
+    bool accepted;
+    const char *rejection_reason;
+    double physical_adc_rate_hz;
+    double configured_dac_rate_hz;
+    double reference_rate_compensation;
+    int8_t channel;
+    int8_t canonical_phase;
+    float offset_correction_active_codes;
+    float gain_correction_active;
+    double delay_register_active;
+    double active_polarity;
+    float measured_gain;
+    float gain_error;
+    float correlation;
+    float rmse_codes;
+    double dither_gain;
+    bool dither_valid;
+    const char *dither_reason;
+} adc_cal_gain_capture_record_t;
+
+typedef struct {
+    uint32_t iteration;
+    uint32_t accepted_frames;
+    uint32_t rejected_frames;
+    float measured_gain;
+    float gain_error;
+    float correction_before;
+    float correction_after;
+    float correction_delta;
+    float tolerance;
+    uint32_t consecutive_passes;
+    uint32_t required_passes;
+    float verification_correlation;
+    double dither_gain;
+    const char *dither_gain_status;
+    uint32_t dither_event_count;
+    const char *dither_warning_reason;
+    const char *status;
+} adc_cal_gain_history_record_t;
+
+typedef struct {
+    uint32_t iteration;
+    uint32_t capture_group_index;
+    uint32_t capture_index;
+    uint32_t global_capture_index;
+    const char *capture_phase;
+    bool accepted;
+    const char *rejection_reason;
+    double physical_adc_rate_hz;
+    double configured_dac_rate_hz;
+    double reference_rate_compensation;
+    int8_t channel;
+    int8_t canonical_phase;
+    int delay_register_active;
+    float offset_correction_active_codes;
+    float gain_correction_active;
+    double active_polarity;
+    bool primary_valid;
+    const char *primary_rejection_reason;
+    double raw_phase_difference_rad;
+    int polarity_hypothesis;
+    double applied_phase_adjustment_rad;
+    double corrected_phase_difference_rad;
+    double measured_skew_samples;
+    double measured_skew_ps;
+    double tone_a_frequency_hz;
+    double tone_b_frequency_hz;
+    double tone_a_amplitude;
+    double tone_b_amplitude;
+    double tone_a_correlation;
+    double tone_b_correlation;
+    double tone_a_rmse;
+    double tone_b_rmse;
+    bool dither_a_valid;
+    bool dither_b_valid;
+    bool dither_skew_valid;
+    double dither_skew_samples;
+    double dither_skew_ps;
+    double tone_dither_disagreement_samples;
+    double tone_dither_disagreement_ps;
+} adc_cal_skew_capture_record_t;
+
+typedef struct {
+    uint32_t iteration;
+    uint32_t accepted_frames;
+    uint32_t rejected_frames;
+    double skew_mean_samples;
+    double skew_mean_ps;
+    double skew_median_samples;
+    double skew_median_ps;
+    double skew_std_samples;
+    double skew_std_ps;
+    double best_skew_samples;
+    double best_skew_ps;
+    int delay_register_before;
+    int delay_register_after;
+    int register_change;
+    double actuator_resolution_samples_per_step;
+    double actuator_resolution_ps_per_step;
+    int correction_requested_steps;
+    int correction_applied_steps;
+    double skew_tolerance_samples;
+    double skew_tolerance_ps;
+    uint32_t consecutive_passes;
+    uint32_t required_passes;
+    bool estimator_valid;
+    bool estimator_stable;
+    bool correction_applied;
+    bool saturated;
+    double dither_skew_samples;
+    double dither_skew_ps;
+    double tone_dither_disagreement_ps;
+    uint32_t dither_valid_frames;
+    uint32_t dither_invalid_frames;
+    const char *status;
+} adc_cal_skew_history_record_t;
+
+typedef struct {
+    adc_cal_timing_history_record_t timing[
+        ADC_CAL_TIMING_HISTORY_CAPACITY];
+    adc_cal_offset_capture_record_t offset_captures[
+        ADC_CAL_OFFSET_CAPTURE_HISTORY_CAPACITY];
+    adc_cal_offset_history_record_t offset[
+        ADC_CAL_OFFSET_HISTORY_CAPACITY];
+    adc_cal_gain_capture_record_t gain_captures[
+        ADC_CAL_GAIN_CAPTURE_HISTORY_CAPACITY];
+    adc_cal_gain_history_record_t gain[
+        ADC_CAL_GAIN_HISTORY_CAPACITY];
+    adc_cal_skew_capture_record_t skew_captures[
+        ADC_CAL_SKEW_CAPTURE_HISTORY_CAPACITY];
+    adc_cal_skew_history_record_t skew[
+        ADC_CAL_SKEW_HISTORY_CAPACITY];
+    uint32_t timing_count;
+    uint32_t offset_capture_count;
+    uint32_t offset_count;
+    uint32_t gain_capture_count;
+    uint32_t gain_count;
+    uint32_t skew_capture_count;
+    uint32_t skew_count;
+    uint32_t global_capture_count;
+    bool timing_truncated;
+    bool offset_captures_truncated;
+    bool gain_captures_truncated;
+    bool skew_captures_truncated;
+} adc_cal_export_history_t;
+
+static adc_cal_export_history_t g_adc_cal_export_history;
+
+typedef struct {
+    uint32_t iteration;
+    uint32_t capture_group_index;
+    int active_delay_register;
+    const char *capture_phase;
+} adc_cal_skew_capture_context_t;
+
+static adc_cal_skew_capture_context_t g_adc_cal_skew_capture_context = {
+    0U, 0U, -1, "baseline"
+};
 #define CAL_TONE_REFINE_MIN_STEP                  1.0e-12
 #define CAL_TONE_REFINE_MAX_ITERATIONS              40U
 #define CAL_DITHER_EVENT_THRESHOLD_FRACTION         0.25
@@ -245,7 +498,12 @@ static bool g_adc_cal_export_available = false;
 #define CAL_SKEW_REQUIRED_CONVERGED_BATCHES          2U
 #endif
 #ifndef CAL_SKEW_CLOSED_LOOP_ENABLE
+/* The automatic adc -cal pipeline runs the validated Stage 4 correction
+ * loop. Stage-only `adc -cal skew` remains open-loop by default. */
 #define CAL_SKEW_CLOSED_LOOP_ENABLE                   1
+#endif
+#ifndef CAL_SKEW_BATCH_DIAGNOSTICS
+#define CAL_SKEW_BATCH_DIAGNOSTICS                    1
 #endif
 #ifndef CAL_SKEW_MAX_ITERATIONS
 #define CAL_SKEW_MAX_ITERATIONS                       10U
@@ -636,6 +894,7 @@ typedef struct {
     uint32_t same_polarity_frames;
     uint32_t inverted_polarity_frames;
     uint32_t polarity_branch_changes;
+    uint32_t dither_estimate_available_frames;
     uint32_t dither_crosscheck_valid_frames;
     uint32_t dither_crosscheck_invalid_frames;
     uint32_t consecutive_passes;
@@ -646,6 +905,9 @@ typedef struct {
     double best_relative_skew_ps;
     double median_relative_skew_samples;
     double median_relative_skew_ps;
+    double mean_relative_skew_samples;
+    double minimum_relative_skew_samples;
+    double maximum_relative_skew_samples;
     double relative_skew_std_samples;
     double relative_skew_std_ps;
     double rising_skew_ps;
@@ -659,6 +921,7 @@ typedef struct {
     bool closed_loop_enabled;
     adc_cal_skew_loop_result_t loop_result;
     const char *failure_reason;
+    const char *correction_reason;
     calibration_skew_frame_result_t latest_frame;
 } calibration_skew_batch_result_t;
 
@@ -806,6 +1069,7 @@ typedef struct {
 
 typedef struct {
     uint32_t capture_sequence;
+    uint32_t global_capture_index;
     uint32_t retained_frame_number;
     bool capture_succeeded;
     bool reconstruction_succeeded;
@@ -970,9 +1234,12 @@ typedef struct {
 } calibration_offset_stability_record_t;
 
 typedef adc_cal_perf_spectral_metrics_t adc_performance_spectral_metrics_t;
+typedef adc_cal_perf_matching_metrics_t adc_performance_matching_metrics_t;
 
 typedef struct {
     uint32_t frame_number;
+    uint32_t global_capture_index;
+    uint32_t raw_baseline_global_capture_index;
     uint32_t iteration;
     uint32_t cycles;
     int32_t rotation;
@@ -989,6 +1256,12 @@ typedef struct {
     float mean_residual;
     float rmse;
     float correlation;
+    float cal_a_reference_correlation;
+    float cal_b_reference_correlation;
+    float cal_a_reference_rmse_codes;
+    float cal_b_reference_rmse_codes;
+    float rmse_before_polarity;
+    float correlation_before_polarity;
     float normalized_gain;
     float raw_reference_mean;
     float scaled_reference_mean;
@@ -1021,11 +1294,21 @@ typedef struct {
     adc_performance_spectral_metrics_t raw_b;
     adc_performance_spectral_metrics_t cal_a;
     adc_performance_spectral_metrics_t cal_b;
-    adc_performance_spectral_metrics_t raw_combined;
-    adc_performance_spectral_metrics_t cal_combined;
-    float raw_difference_dbc;
-    float cal_difference_dbc;
-    float cal_dc_difference_codes;
+    adc_performance_spectral_metrics_t raw_parallel_average;
+    adc_performance_spectral_metrics_t cal_parallel_average;
+    adc_performance_matching_metrics_t raw_matching;
+    adc_performance_matching_metrics_t cal_matching;
+    float raw_cal_b_rms_difference;
+    float raw_cal_b_max_abs_difference;
+    float raw_cal_a_rms_difference;
+    float raw_cal_a_max_abs_difference;
+    uintptr_t raw_a_address;
+    uintptr_t cal_a_address;
+    uintptr_t raw_b_address;
+    uintptr_t cal_b_address;
+    bool raw_cal_a_identical;
+    bool raw_cal_b_identical;
+    bool raw_cal_buffers_identical;
     float raw_offset_spur_dbc;
     float raw_image_spur_dbc;
     float cal_offset_spur_dbc;
@@ -1063,23 +1346,44 @@ typedef struct {
     float rmse_stddev;
     float correlation;
     float minimum_correlation;
-    float sndr_db;
+    float cal_parallel_average_sndr_db;
     float sndr_stddev;
     float minimum_sndr_db;
-    float sfdr_db;
-    float thd_db;
-    float enob;
+    float cal_parallel_average_sfdr_db;
+    float cal_parallel_average_thd_db;
+    float cal_parallel_average_enob;
     float enob_stddev;
     float minimum_enob;
-    float raw_sndr_db;
-    float raw_sfdr_db;
-    float raw_thd_db;
-    float raw_enob;
+    float raw_parallel_average_sndr_db;
+    float raw_parallel_average_sfdr_db;
+    float raw_parallel_average_thd_db;
+    float raw_parallel_average_enob;
+    float raw_a_sndr_db;
+    float raw_a_sfdr_db;
+    float raw_a_thd_db;
+    float raw_a_enob;
+    float cal_a_sndr_db;
+    float cal_a_sfdr_db;
+    float cal_a_thd_db;
+    float cal_a_enob;
+    float raw_b_sndr_db;
+    float raw_b_sfdr_db;
+    float raw_b_thd_db;
+    float raw_b_enob;
+    float cal_b_sndr_db;
+    float cal_b_sfdr_db;
+    float cal_b_thd_db;
+    float cal_b_enob;
+    float rmse_before_polarity;
+    float correlation_before_polarity;
+    float raw_cal_b_rms_difference;
+    float raw_cal_b_max_abs_difference;
+    float raw_cal_a_rms_difference;
+    float raw_cal_a_max_abs_difference;
     float raw_image_spur_dbc;
     float cal_image_spur_dbc;
-    float raw_difference_dbc;
-    float cal_difference_dbc;
-    float cal_dc_difference_codes;
+    adc_performance_matching_metrics_t raw_matching;
+    adc_performance_matching_metrics_t cal_matching;
     float mean_normalized_gain;
     float normalized_gain_stddev;
     float offset_verification_residual;
@@ -1101,9 +1405,33 @@ typedef struct {
     size_t fixed_window_length;
     float final_offset_correction;
     float final_gain_correction;
+    double channel_a_polarity;
+    double channel_b_polarity;
+    double initial_relative_skew_samples;
+    double initial_relative_skew_ps;
+    double final_relative_skew_samples;
+    double final_relative_skew_ps;
+    bool raw_cal_buffers_identical;
+    bool raw_cal_a_identical;
+    bool raw_cal_b_identical;
+    bool captures_include_final_skew;
     const char *failure_reason;
     adc_performance_frame_result_t frames[ADC_PERFORMANCE_FRAMES];
 } adc_performance_result_t;
+
+typedef struct {
+    bool valid;
+    uint32_t frames_captured;
+    size_t sample_count;
+    double sample_rate_hz;
+    int8_t canonical_reference_phase;
+    size_t window_start;
+    size_t window_length;
+    double channel_a[ADC_PERFORMANCE_FRAMES][CAL_FIXED_WINDOW_LENGTH];
+    double channel_b[ADC_PERFORMANCE_FRAMES][CAL_FIXED_WINDOW_LENGTH];
+    uint32_t global_capture_index[ADC_PERFORMANCE_FRAMES];
+    const char *failure_reason;
+} adc_performance_baseline_t;
 
 typedef enum {
     ADC_CAL_STAGE_IDLE = 0,
@@ -1132,6 +1460,7 @@ typedef struct {
     bool gain_pass;
     bool skew_pass;
     bool skew_warning;
+    bool skew_correction_applied;
     bool gain_verification_pass;
     bool output_valid;
     bool performance_measurement_available;
@@ -1153,8 +1482,11 @@ typedef struct {
     float nominal_system_gain;
     float final_normalized_gain;
     float gain_verification_error;
+    double initial_relative_skew_samples;
+    double initial_relative_skew_ps;
     double final_relative_skew_samples;
     double final_relative_skew_ps;
+    int final_delay_register;
     adc_cal_skew_stage_policy_result_t skew_policy;
     const char *failure_reason;
     adc_performance_result_t performance;
@@ -1191,6 +1523,7 @@ static calibration_pending_frame_t g_stored_offset_reference;
 static calibration_pending_frame_t g_pending_calibration_frame;
 static adc_automatic_calibration_state_t g_automatic_calibration;
 static adc_cal_pipeline_state_t g_adc_calibration_pipeline;
+static adc_performance_baseline_t g_performance_baseline;
 static bool g_quiet_calibration_capture;
 
 void calibration_pending_frame_invalidate(void)
@@ -1212,6 +1545,9 @@ void calibration_pending_frame_invalidate(void)
     g_pending_calibration_frame.selected_channel = -1;
     g_pending_calibration_frame.selected_reference_phase = -1;
     g_pending_calibration_frame.canonical_reference_phase = -1;
+    g_performance_baseline.valid = false;
+    g_performance_baseline.frames_captured = 0U;
+    g_performance_baseline.failure_reason = "baseline not captured";
 }
 
 void calibration_gain_input_frame_invalidate(void)
@@ -1252,7 +1588,8 @@ static void handle_adc_offset_stability_cmd(uint32_t frame_count);
 static void handle_adc_timing_calibration_stage_cmd(uint32_t frame_count);
 static void handle_adc_gain_calibration_loop_cmd(void);
 static void handle_adc_gain_calibration_status_cmd(void);
-static void handle_adc_skew_calibration_cmd(bool diagnose_mode);
+static void handle_adc_skew_calibration_cmd(
+    bool diagnose_mode, bool closed_loop_requested);
 static void handle_adc_skew_step_cmd(int requested_steps);
 static int adc_run_timing_calibration(uint32_t frame_count);
 static void calibration_automatic_state_reset(void);
@@ -1311,6 +1648,8 @@ static void calibration_print_timing_diagnostics_detail(
 static void calibration_validate_timing_alignment(
     const calibration_aligned_frame_t *frame,
     calibration_timing_diagnostics_t *diagnostics);
+static bool calibration_timing_diagnostics_are_storage_eligible(
+    const calibration_timing_diagnostics_t *diagnostics);
 static const char *calibration_dither_offset_status_name(
     calibration_dither_offset_status_t status);
 static const char *calibration_dither_offset_reason_name(
@@ -1334,7 +1673,8 @@ static int calibration_run_skew_open_loop(
     bool diagnose_mode);
 static int calibration_run_skew_stage(
     calibration_skew_batch_result_t *batch,
-    bool diagnose_mode);
+    bool diagnose_mode,
+    bool closed_loop_requested);
 static void calibration_print_skew_summary(
     const calibration_skew_batch_result_t *batch,
     bool diagnose_mode);
@@ -2096,6 +2436,8 @@ static void calibration_automatic_state_reset(void)
     g_adc_cal_export_length = 0U;
     g_adc_cal_export_available = false;
     g_adc_cal_export_buffer[0] = '\0';
+    memset(&g_adc_cal_export_history, 0,
+           sizeof(g_adc_cal_export_history));
     memset(&g_automatic_calibration, 0, sizeof(g_automatic_calibration));
     adc_cal_pipeline_reset(&g_adc_calibration_pipeline);
     g_automatic_calibration.stage = ADC_CAL_STAGE_IDLE;
@@ -2103,6 +2445,9 @@ static void calibration_automatic_state_reset(void)
     g_automatic_calibration.calibration_channel = -1;
     g_automatic_calibration.canonical_reference_phase = -1;
     g_automatic_calibration.gain_correction = 1.0f;
+    g_automatic_calibration.final_delay_register = -1;
+    g_automatic_calibration.initial_relative_skew_ps = NAN;
+    g_automatic_calibration.initial_relative_skew_samples = NAN;
     g_automatic_calibration.final_relative_skew_ps = NAN;
     g_automatic_calibration.final_relative_skew_samples = NAN;
     g_automatic_calibration.performance_measurement_available = false;
@@ -2111,7 +2456,7 @@ static void calibration_automatic_state_reset(void)
 static void calibration_automatic_print_command_help(void)
 {
     xil_printf("\r\nADC calibration commands:\r\n");
-    xil_printf("  adc -cal\r\n");
+    xil_printf("  adc -cal                  Run all stages, including closed-loop skew correction.\r\n");
     xil_printf("      Run timing, offset, gain, open-loop skew measurement, and final performance characterization.\r\n");
     xil_printf("\r\nDebug/development stage commands:\r\n");
     xil_printf("  adc -cal timing [frames]  Run timing/reference selection only.\r\n");
@@ -2120,12 +2465,15 @@ static void calibration_automatic_print_command_help(void)
     xil_printf("  adc -cal offset           Run offset stage only.\r\n");
     xil_printf("  adc -cal gain             Run gain stage only.\r\n");
     xil_printf("  adc -cal skew             Run open-loop Channel B-A skew measurement.\r\n");
+    xil_printf("  adc -cal skew open        Explicitly select open-loop measurement.\r\n");
     xil_printf("  adc -cal skew diagnose    Run verbose open-loop skew characterization.\r\n");
-    xil_printf("  adc -cal skew step +/-N   Reserved manual skew step; no write until configured.\r\n");
+    xil_printf("  adc -cal skew closed-loop [diagnose]\r\n");
+    xil_printf("      Run characterized closed-loop skew correction with readback.\r\n");
+    xil_printf("  adc -cal skew step +/-N   Apply a manual verified actuator step.\r\n");
     xil_printf("  adc -cal stability [frames]\r\n");
     xil_printf("      Characterize fixed-offset capture stability.\r\n");
     xil_printf("  adc -cal status          Display automatic calibration state and latest metrics.\r\n");
-    xil_printf("  adc -cal export          Send the stored performance CSV over Ethernet.\r\n");
+    xil_printf("  adc -cal export          Send stored per-stage CSV histories over Ethernet.\r\n");
     xil_printf("  adc -cal reset           Reset software coefficients and calibration loop states.\r\n");
     xil_printf("  adc -cal help            Display this help.\r\n");
 }
@@ -2284,16 +2632,40 @@ void handle_adc_cmd(char* line)
         if (strcmp(token, "skew") == 0) {
             token = strtok(NULL, " ");
             if (token == NULL) {
-                handle_adc_skew_calibration_cmd(false);
+                handle_adc_skew_calibration_cmd(false, false);
                 return;
             }
-            if (strcmp(token, "diagnose") == 0 ||
-                strcmp(token, "open") == 0) {
+            if (strcmp(token, "diagnose") == 0) {
                 if (strtok(NULL, " ") != NULL) {
                     ERR("Use adc -cal skew diagnose.");
                     return;
                 }
-                handle_adc_skew_calibration_cmd(true);
+                handle_adc_skew_calibration_cmd(true, false);
+                return;
+            }
+            if (strcmp(token, "open") == 0 ||
+                strcmp(token, "open-loop") == 0) {
+                if (strtok(NULL, " ") != NULL) {
+                    ERR("Use adc -cal skew open.");
+                    return;
+                }
+                handle_adc_skew_calibration_cmd(false, false);
+                return;
+            }
+            if (strcmp(token, "closed") == 0 ||
+                strcmp(token, "close-loop") == 0 ||
+                strcmp(token, "closed-loop") == 0) {
+                bool diagnose_mode = false;
+                token = strtok(NULL, " ");
+                if (token != NULL) {
+                    if (strcmp(token, "diagnose") != 0 ||
+                        strtok(NULL, " ") != NULL) {
+                        ERR("Use adc -cal skew closed-loop [diagnose].");
+                        return;
+                    }
+                    diagnose_mode = true;
+                }
+                handle_adc_skew_calibration_cmd(diagnose_mode, true);
                 return;
             }
             if (strcmp(token, "step") == 0) {
@@ -2314,7 +2686,7 @@ void handle_adc_cmd(char* line)
                 handle_adc_skew_step_cmd((int)parsed);
                 return;
             }
-            ERR("Use adc -cal skew [diagnose] or adc -cal skew step +/-N.");
+            ERR("Use adc -cal skew [open|diagnose|closed-loop [diagnose]] or adc -cal skew step +/-N.");
             return;
         }
         if (strcmp(token, "help") == 0 || strcmp(token, "?") == 0) {

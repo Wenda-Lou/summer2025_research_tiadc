@@ -1,0 +1,39 @@
+scenario,stage,stage_iteration,frame_index,accepted,rejection_reason,estimated_lag,correlation,offset_correction,gain_correction,estimated_skew_samples,SNDR,SFDR,THD,ENOB,valid
+offset_positive,performance_measurement,0,0,1,none,nan,nan,-19.375000,1.000000,0.000000,40.219477,46.477461,-56.166290,6.388617,1
+offset_negative,performance_measurement,0,0,1,none,nan,nan,19.375000,1.000000,0.000000,40.219477,46.477461,-56.166290,6.388617,1
+noisy,performance_measurement,0,0,1,none,nan,nan,-11.390440,1.000000,0.001049,37.336757,46.374293,-54.133072,5.909760,1
+gain_low,performance_measurement,0,0,1,none,nan,nan,0.000000,1.239464,0.000000,40.225459,46.483807,-56.116414,6.389611,1
+gain_high,performance_measurement,0,0,1,none,nan,nan,0.000000,0.840771,0.000000,40.209905,46.471382,-56.164418,6.387027,1
+gain_saturation,performance_measurement,0,0,0,gain correction saturated or outside supported range,nan,nan,0.000000,8.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+nominal,performance_measurement,0,0,1,none,nan,nan,-3.512426,1.000000,-0.000444,40.169093,46.428715,-56.111247,6.380248,1
+timing_shift,performance_measurement,0,0,1,none,nan,nan,0.000000,1.000000,0.000000,40.543823,46.451633,-56.859957,6.442496,1
+noisy,performance_measurement,0,0,1,none,nan,nan,-11.390440,1.000000,0.001049,37.336757,46.374293,-54.133072,5.909760,1
+bad_reference,performance_measurement,0,0,0,reference frequency mismatch,nan,nan,0.000000,0.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+offset_positive,performance_measurement,0,0,1,none,nan,nan,-19.375000,1.000000,0.000000,40.219477,46.477461,-56.166290,6.388617,1
+offset_negative,performance_measurement,0,0,1,none,nan,nan,19.375000,1.000000,0.000000,40.219477,46.477461,-56.166290,6.388617,1
+gain_low,performance_measurement,0,0,1,none,nan,nan,0.000000,1.239464,0.000000,40.225459,46.483807,-56.116414,6.389611,1
+gain_high,performance_measurement,0,0,1,none,nan,nan,0.000000,0.840771,0.000000,40.209905,46.471382,-56.164418,6.387027,1
+gain_saturation,performance_measurement,0,0,0,gain correction saturated or outside supported range,nan,nan,0.000000,8.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+skew_positive,performance_measurement,0,0,1,none,nan,nan,0.000000,1.000000,-173.992216,40.219477,46.477461,-56.166290,6.388617,1
+skew_negative,performance_measurement,0,0,1,none,nan,nan,0.000000,1.000000,173.992215,40.219477,46.477461,-56.166290,6.388617,1
+skew_outside_range,performance_measurement,0,0,0,skew outside supported linear range,nan,nan,0.000000,1.000000,-260.007828,40.219477,46.477461,-56.166290,6.388617,0
+insufficient_dither,performance_measurement,0,0,0,too few complete dither events,nan,nan,0.000000,0.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+clipped_input,performance_measurement,0,0,0,input clipping detected,nan,nan,0.000000,0.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+performance_noise,performance_measurement,0,0,1,none,nan,nan,0.000000,1.000000,-29.009958,24.001652,42.874293,-43.718145,3.694627,1
+performance_harmonic,performance_measurement,0,0,1,none,nan,nan,0.000000,1.000000,0.000000,29.601418,29.995243,-29.984879,4.624820,1
+performance_spur,performance_measurement,0,0,1,none,nan,nan,0.000000,1.000000,0.000000,17.479338,17.616388,-54.403693,2.611186,1
+invalidation,host_invalidation_hooks,0,0,1,host invalidation hook wiring only,nan,nan,nan,nan,nan,nan,nan,nan,nan,1
+nominal,pipeline,0,7,1,none,1.000000,-0.000290,-3.516363,0.997493,-0.000104,40.552052,46.263897,-43.842773,6.443862,1
+timing_shift,pipeline,0,3,1,none,0.999908,-213.000690,0.000000,1.000000,0.001250,40.942963,46.278896,-44.176147,6.508798,1
+noisy,pipeline,0,7,1,none,0.999954,-0.002469,-11.308255,1.000000,-0.000104,38.864147,40.089565,-43.172905,6.163480,1
+gain_saturation,pipeline,0,2,0,gain correction saturated or outside supported range,0.999990,-0.000692,0.000000,1.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+skew_positive,pipeline,0,3,1,none,1.000000,0.000000,0.000000,1.000000,0.201303,40.770794,46.295315,-44.025436,6.480199,1
+skew_negative,pipeline,0,3,1,none,1.000000,0.000000,0.000000,1.000000,-0.198743,40.776730,46.274899,-44.044189,6.481184,1
+performance_distortion,pipeline,0,3,1,none,1.000000,0.000000,0.000000,1.000000,0.001278,29.638594,29.939011,-29.827288,4.630996,1
+timing_failure,pipeline,0,0,0,reference frequency mismatch,0.000000,nan,0.000000,0.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+offset_nonconvergence,pipeline,0,1,0,offset did not converge,1.000000,0.000000,0.000000,0.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+gain_verification_failure,pipeline,0,2,0,gain verification frames failed acceptance,1.000000,0.000001,0.000000,1.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+insufficient_dither,pipeline,0,3,0,TOO_FEW_EVENTS,1.000000,0.000000,0.000000,1.000000,nan,0.000000,0.000000,0.000000,0.000000,0
+performance_invalid,pipeline,0,7,1,insufficient valid performance frames,1.000000,-0.000290,-3.516363,0.997493,-0.000104,0.000000,0.000000,0.000000,0.000000,1
+invalidation_after_complete,pipeline,0,7,1,none,1.000000,-0.000290,-3.516363,0.997493,-0.000104,40.552052,46.263897,-43.842773,6.443862,0
+standalone_sequence,pipeline,0,7,1,none,1.000000,-0.000290,-3.516363,0.997493,-0.000104,40.552052,46.263897,-43.842773,6.443862,1

@@ -1,0 +1,14 @@
+# ninja log v5
+98	361	8080168502899598	CMakeFiles/adc_cal_sim.dir/sim_dma.c.obj	248d56b8f2defed
+165	493	8080168503971504	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/adc_frame.c.obj	64856f6e8f52109c
+58	569	8080168504765966	CMakeFiles/adc_cal_sim.dir/sim_main.c.obj	2278cda2f9cd9609
+124	570	8080168504658849	CMakeFiles/adc_cal_sim.dir/sim_platform.c.obj	2a0cd144300f8de3
+75	619	8080168505322607	CMakeFiles/adc_cal_sim.dir/sim_signal.c.obj	70d8e76402b4e44d
+250	624	8080168505492016	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/timing_alignment.c.obj	c81ba0864021454b
+176	672	8080168506025917	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/adc_calibration_pipeline.c.obj	c309fb71fab7a0da
+267	673	8080168506035907	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/reference_buffer.c.obj	35fe560a68ea6d4a
+234	692	8080168506224253	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/calibration.c.obj	d1b9fd00fbdfffdf
+216	835	8080168507661543	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/adc_calibration_performance.c.obj	47a12d5c7d18156f
+189	1041	8080168509712485	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/adc_calibration_dither.c.obj	e2ca2dc56b2a35f5
+200	1054	8080168509870539	CMakeFiles/adc_cal_sim.dir/C_/TIDIAC/summer2025_research_tiadc/test_platform/thesis_v3_500mhz_appl/adc_calibration_skew.c.obj	4e7b9b8a16eeb9bc
+149	1714	8080168516434994	CMakeFiles/adc_cal_sim.dir/sim_tests.c.obj	e59ce24aaa80ba46

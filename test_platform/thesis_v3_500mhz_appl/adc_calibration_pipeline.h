@@ -46,6 +46,7 @@ typedef struct {
     bool gain_verification_pass;
     bool skew_pass;
     bool skew_warning;
+    bool skew_correction_applied;
     bool output_valid;
     bool performance_measurement_available;
     bool performance_valid;

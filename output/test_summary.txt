@@ -1,0 +1,88 @@
+Config nonfinite regression offset_tolerance_codes      nan    : PASS
+Config nonfinite regression offset_tolerance_codes      posinf : PASS
+Config nonfinite regression offset_tolerance_codes      neginf : PASS
+Config nonfinite regression gain_tolerance_ratio        nan    : PASS
+Config nonfinite regression gain_tolerance_ratio        posinf : PASS
+Config nonfinite regression gain_tolerance_ratio        neginf : PASS
+Config nonfinite regression offset_step                 nan    : PASS
+Config nonfinite regression offset_step                 posinf : PASS
+Config nonfinite regression offset_step                 neginf : PASS
+Config nonfinite regression gain_step                   nan    : PASS
+Config nonfinite regression gain_step                   posinf : PASS
+Config nonfinite regression gain_step                   neginf : PASS
+Config nonfinite regression min_gain_correction         nan    : PASS
+Config nonfinite regression min_gain_correction         posinf : PASS
+Config nonfinite regression min_gain_correction         neginf : PASS
+Config nonfinite regression max_gain_correction         nan    : PASS
+Config nonfinite regression max_gain_correction         posinf : PASS
+Config nonfinite regression max_gain_correction         neginf : PASS
+Config nonfinite regression min_offset_correction       nan    : PASS
+Config nonfinite regression min_offset_correction       posinf : PASS
+Config nonfinite regression min_offset_correction       neginf : PASS
+Config nonfinite regression max_offset_correction       nan    : PASS
+Config nonfinite regression max_offset_correction       posinf : PASS
+Config nonfinite regression max_offset_correction       neginf : PASS
+Recorded fixture pipeline : PASS
+  files                  : C:/TIDIAC/summer2025_research_tiadc/calibration_sim/../test_platform/thesis_v3_500mhz_appl/waveform_generation/generated_samples/sine_100MHz_2p6GSPS_impulse_dither.txt | C:/TIDIAC/summer2025_research_tiadc/calibration_sim/../test_platform/thesis_v3_500mhz_appl/adc_data/adc_capture_20260801_180451.csv
+  timing                 : 0.993299 correlation, 10.012351 samples, 10 frames
+  offset                 : -2.539752 correction, 0.551875 verification, 4 batches
+  gain                   : 1.000000000 correction, 1.000000000 normalized, 2 batches, dither VALID
+  dither cross-check     : VALID, 0.010756 samples
+  open-loop skew         : 0.185875 samples, 128.189645 ps, PASS WITH WARNING
+  performance            : 30/30 valid, SNDR 4.566 dB, ENOB 0.466
+  pipeline               : PASS, output usable YES
+Rate-mismatched fixture pipeline : PASS
+  capture                : C:/TIDIAC/summer2025_research_tiadc/calibration_sim/../test_platform/thesis_v3_500mhz_appl/adc_data/adc_capture_20260805_100121.csv
+  reference/capture bins : 70 / 71
+  nominal/selected ratio : 1.793103448 / 1.818719212
+  timing correlation     : 0.990577
+  dither gain/skew       : VALID / VALID
+  pipeline               : PASS, output usable YES
+KNOWN GAP C:/TIDIAC/summer2025_research_tiadc/calibration_sim/sim_tests.c:3978 reference_buffer_generation wrap cannot be forced without production test seam
+Scenario offset_positive          : PASS (none)
+Scenario offset_negative          : PASS (none)
+Scenario noisy                    : PASS (none)
+Scenario gain_low                 : PASS (none)
+Scenario gain_high                : PASS (none)
+Scenario gain_saturation          : FAIL (gain correction saturated or outside supported range)
+Scenario nominal                  : PASS (none)
+Scenario timing_shift             : PASS (none)
+Scenario noisy                    : PASS (none)
+Scenario bad_reference            : FAIL (reference frequency mismatch)
+Scenario offset_positive          : PASS (none)
+Scenario offset_negative          : PASS (none)
+Scenario gain_low                 : PASS (none)
+Scenario gain_high                : PASS (none)
+Scenario gain_saturation          : FAIL (gain correction saturated or outside supported range)
+Scenario skew_positive            : PASS (none)
+Scenario skew_negative            : PASS (none)
+Scenario skew_outside_range       : FAIL (skew outside supported linear range)
+Scenario insufficient_dither      : FAIL (too few complete dither events)
+Scenario clipped_input            : FAIL (input clipping detected)
+Scenario performance_noise        : PASS (none)
+Scenario performance_harmonic     : PASS (none)
+Scenario performance_spur         : PASS (none)
+Scenario invalidation             : PASS (host invalidation hook wiring only)
+Pipeline scenario nominal                  : PASS (none, final=PASS, performance=VALID)
+Pipeline scenario timing_shift             : PASS (none, final=PASS, performance=VALID)
+Pipeline scenario noisy                    : PASS (none, final=PASS, performance=VALID)
+Pipeline scenario gain_saturation          : PASS (gain correction saturated or outside supported range, final=FAILED, performance=NOT RUN)
+Pipeline scenario skew_positive            : PASS (none, final=PASS, performance=VALID)
+Pipeline scenario skew_negative            : PASS (none, final=PASS, performance=VALID)
+Pipeline scenario performance_distortion   : PASS (none, final=PASS, performance=VALID)
+Pipeline scenario timing_failure           : PASS (reference frequency mismatch, final=FAILED, performance=NOT RUN)
+Pipeline scenario offset_nonconvergence    : PASS (offset did not converge, final=FAILED, performance=NOT RUN)
+Pipeline scenario gain_verification_failure : PASS (gain verification frames failed acceptance, final=FAILED, performance=NOT RUN)
+Pipeline scenario insufficient_dither      : PASS (TOO_FEW_EVENTS, final=FAILED, performance=NOT RUN)
+Pipeline scenario performance_invalid      : PASS (insufficient valid performance frames, final=PASS, performance=INVALID)
+Pipeline scenario invalidation_after_complete : PASS (none, final=PASS, performance=NOT RUN)
+Pipeline scenario standalone_sequence      : PASS (none, final=NOT COMPLETE, performance=VALID)
+
+Tests passed      : 5217
+Tests failed      : 0
+Scenarios passed  : 18
+Scenarios failed  : 0
+Pipeline passed   : 14
+Pipeline failed   : 0
+Stress passed     : 0
+Stress failed     : 0

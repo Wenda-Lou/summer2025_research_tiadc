@@ -13,7 +13,18 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 SAVE_DIR = PROJECT_DIR / 'adc_data'
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
-CALIBRATION_CSV_MAGIC = b"CALC"
+CALIBRATION_CSV_DATASETS = {
+    b"CALT": "calibration_timing_captures.csv",
+    b"CALO": "calibration_offset_captures.csv",
+    b"CAOI": "calibration_offset_iterations.csv",
+    b"CALG": "calibration_gain_captures.csv",
+    b"CAGI": "calibration_gain_iterations.csv",
+    b"CALS": "calibration_skew_captures.csv",
+    b"CASI": "calibration_skew_iterations.csv",
+    # Keep CALC assigned to performance for compatibility with existing FPGA
+    # exports and receivers.
+    b"CALC": "calibration_performance.csv",
+}
 CALIBRATION_CSV_HEADER_SIZE = 12
 
 
@@ -73,85 +84,120 @@ def receive_calibration_csv(
     bind_ip="0.0.0.0",
     port=6666,
     timeout=30.0,
+    idle_timeout=1.5,
 ):
-    """Receive a framed, variable-length calibration CSV export."""
+    """Receive all typed CSV datasets sent by one ``adc -cal export``.
+
+    Each dataset uses the existing packet-index/count/length framing.  The
+    four-byte magic identifies its stage, allowing incomplete calibration runs
+    to return only the histories that actually exist.
+    """
     save_dir = SAVE_DIR / "calibration_exports"
     save_dir.mkdir(parents=True, exist_ok=True)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((bind_ip, port))
     deadline = time.monotonic() + timeout
-    packets = {}
-    expected_count = None
-    expected_length = None
-    sender = None
+    transfers = {}
+    completed = {}
+    last_packet_time = None
 
     print(f"Listening for calibration CSV on {bind_ip}:{port}")
     print("Run 'adc -cal export' in the FPGA UART terminal.")
 
     try:
-        while expected_count is None or len(packets) < expected_count:
+        while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0.0:
-                received = len(packets)
-                expected = expected_count if expected_count is not None else "unknown"
-                raise TimeoutError(
-                    f"Timed out receiving calibration CSV "
-                    f"({received}/{expected} packets)."
+                if completed:
+                    break
+                raise TimeoutError("Timed out before receiving a calibration CSV dataset.")
+            if completed and last_packet_time is not None:
+                idle_remaining = idle_timeout - (
+                    time.monotonic() - last_packet_time
                 )
+                if idle_remaining <= 0.0:
+                    break
+                remaining = min(remaining, idle_remaining)
             sock.settimeout(remaining)
             try:
                 data, address = sock.recvfrom(2048)
             except socket.timeout as exc:
-                received = len(packets)
-                expected = expected_count if expected_count is not None else "unknown"
+                if completed:
+                    break
                 raise TimeoutError(
-                    f"Timed out receiving calibration CSV "
-                    f"({received}/{expected} packets)."
+                    "Timed out before receiving a calibration CSV dataset."
                 ) from exc
 
-            if len(data) < CALIBRATION_CSV_HEADER_SIZE or \
-                    data[:4] != CALIBRATION_CSV_MAGIC:
+            if len(data) < CALIBRATION_CSV_HEADER_SIZE:
                 continue
+            magic = data[:4]
+            if magic not in CALIBRATION_CSV_DATASETS:
+                continue
+            last_packet_time = time.monotonic()
 
             packet_index, packet_count, total_length = struct.unpack(
                 "!HHI", data[4:CALIBRATION_CSV_HEADER_SIZE]
             )
             if packet_count == 0 or packet_index >= packet_count:
                 continue
-            if expected_count is None:
-                expected_count = packet_count
-                expected_length = total_length
-                sender = address
-            elif address != sender or packet_count != expected_count or \
-                    total_length != expected_length:
+            transfer = transfers.setdefault(
+                magic,
+                {
+                    "packet_count": packet_count,
+                    "total_length": total_length,
+                    "sender": address,
+                    "packets": {},
+                },
+            )
+            if address != transfer["sender"] or \
+                    packet_count != transfer["packet_count"] or \
+                    total_length != transfer["total_length"]:
                 continue
 
-            packets[packet_index] = data[CALIBRATION_CSV_HEADER_SIZE:]
+            transfer["packets"][packet_index] = data[
+                CALIBRATION_CSV_HEADER_SIZE:
+            ]
             print(
-                f"Calibration packet {packet_index + 1}/{packet_count} "
-                f"from {address}"
+                f"{CALIBRATION_CSV_DATASETS[magic]} packet "
+                f"{packet_index + 1}/{packet_count} from {address}"
             )
+            if len(transfer["packets"]) == packet_count:
+                payload = b"".join(
+                    transfer["packets"][index]
+                    for index in range(packet_count)
+                )[:total_length]
+                if len(payload) != total_length:
+                    raise ValueError(
+                        f"Incomplete {CALIBRATION_CSV_DATASETS[magic]}: "
+                        f"expected {total_length} bytes, assembled "
+                        f"{len(payload)} bytes."
+                    )
+                try:
+                    payload.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ValueError(
+                        f"{CALIBRATION_CSV_DATASETS[magic]} is not valid "
+                        "UTF-8 CSV data."
+                    ) from exc
+                completed[magic] = payload
     finally:
         sock.close()
 
-    payload = b"".join(packets[index] for index in range(expected_count))
-    payload = payload[:expected_length]
-    if len(payload) != expected_length:
-        raise ValueError(
-            f"Incomplete calibration CSV: expected {expected_length} bytes, "
-            f"assembled {len(payload)} bytes."
-        )
-    try:
-        payload.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError("Calibration export is not valid UTF-8 CSV data.") from exc
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = save_dir / f"calibration_performance_{timestamp}.csv"
-    filename.write_bytes(payload)
-    print(f"Saved calibration CSV: {filename}")
-    return filename
+    run_dir = save_dir / f"calibration_run_{timestamp}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+    saved = {}
+    for magic, filename in CALIBRATION_CSV_DATASETS.items():
+        if magic not in completed:
+            continue
+        path = run_dir / filename
+        path.write_bytes(completed[magic])
+        saved[filename] = path
+        print(f"Saved calibration CSV: {path}")
+    if not saved:
+        raise TimeoutError("No complete calibration CSV dataset was received.")
+    return saved
 
 
 

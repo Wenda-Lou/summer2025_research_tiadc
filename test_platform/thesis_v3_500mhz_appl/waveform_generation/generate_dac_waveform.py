@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +27,7 @@ import numpy as np
 
 # Desired main tone frequency in Hz. The generator selects the nearest
 # coherent bin for the configured output length.
-TONE_FREQUENCY_HZ = 350_000_000.0
+TONE_FREQUENCY_HZ = 200_000_000.0
 
 # Sine-wave peak level in dBFS.
 # Examples:
@@ -46,7 +47,7 @@ ENABLE_DITHER = True
 
 # Impulse-dither settings copied from calibration_loop/dither.py. All lengths
 # are in DAC samples.
-DITHER_PERIOD_DAC = 256
+DITHER_PERIOD_DAC = 260
 DITHER_POSITION_DAC = 96
 DITHER_EDGE_DAC = 16
 DITHER_TOP_DAC = 32
@@ -67,15 +68,36 @@ ADC_FRAME_SAMPLES = 2_032
 DAC_TO_ADC_RATE_RATIO = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ
 GENERATED_SAMPLES_DIR = Path(__file__).resolve().parent / "generated_samples"
 
-# The ADC and DAC rates are not an integer ratio. Generate a periodic file
-# whose length is compatible with both the analysis-frame bookkeeping and the
-# AD9164 downloader's 256-sample alignment requirement.
+# The scope shows that the effective playback clock remains 2.600 GSPS. Its
+# ratio to the 1.450-GSPS ADC is exactly 52/29. A 260-DAC-sample dither period
+# therefore spans exactly 145 ADC samples, keeping every pulse at the same ADC
+# phase even though the converter-rate ratio itself is not an integer.
+DAC_ADC_RATIO_FRACTION = Fraction(
+    int(round(DAC_SAMPLE_RATE_HZ)),
+    int(round(ADC_SAMPLE_RATE_HZ)),
+)
+DAC_RATE_NUMERATOR = DAC_ADC_RATIO_FRACTION.numerator
+DAC_RATE_DENOMINATOR = DAC_ADC_RATIO_FRACTION.denominator
+event_period_adc_numerator = DITHER_PERIOD_DAC * DAC_RATE_DENOMINATOR
+if event_period_adc_numerator % DAC_RATE_NUMERATOR != 0:
+    raise RuntimeError(
+        "Dither period must map to a whole number of ADC samples."
+    )
+DITHER_PERIOD_ADC = event_period_adc_numerator // DAC_RATE_NUMERATOR
 DAC_FILE_ALIGNMENT_SAMPLES = 256
-NUM_SAMPLES = math.lcm(ADC_FRAME_SAMPLES, DAC_FILE_ALIGNMENT_SAMPLES)
-# One normal record contains an odd number of 256-sample dither slots. Use two
-# records in dither mode so the slots retain the existing frame/alignment
-# constraints and the +1/-1 polarity sequence can be exactly balanced.
-DITHER_NUM_SAMPLES = 2 * NUM_SAMPLES
+# The loop length is aligned for DPG download, contains whole dither periods,
+# and closes on an ADC sample boundary. Double it only if polarity balancing
+# would otherwise leave an odd event count.
+NUM_SAMPLES = math.lcm(
+    DAC_FILE_ALIGNMENT_SAMPLES,
+    DITHER_PERIOD_DAC,
+    DAC_RATE_NUMERATOR,
+)
+DITHER_NUM_SAMPLES = (
+    NUM_SAMPLES
+    if (NUM_SAMPLES // DITHER_PERIOD_DAC) % 2 == 0
+    else 2 * NUM_SAMPLES
+)
 INT16_MIN = -32_768
 INT16_MAX = 32_767
 
@@ -228,8 +250,12 @@ def output_path_for_frequency(
 ) -> Path:
     """Return a frequency-named path without replacing an existing bundle."""
     frequency_label = frequency_filename_label(frequency_hz)
+    sample_rate_label = (
+        f"{DAC_SAMPLE_RATE_HZ / 1e9:.9f}".rstrip("0").rstrip(".")
+        .replace(".", "p")
+    )
     mode_suffix = "impulse_dither" if dither_enabled else "non_dither"
-    stem = f"sine_{frequency_label}MHz_2p6GSPS_{mode_suffix}"
+    stem = f"sine_{frequency_label}MHz_{sample_rate_label}GSPS_{mode_suffix}"
 
     sequence_number = 0
     while True:
@@ -370,6 +396,10 @@ def main() -> None:
         "dac_sample_rate_hz": DAC_SAMPLE_RATE_HZ,
         "adc_sample_rate_hz": ADC_SAMPLE_RATE_HZ,
         "dac_to_adc_rate_ratio": DAC_TO_ADC_RATE_RATIO,
+        "dac_adc_ratio_fraction": (
+            f"{DAC_RATE_NUMERATOR}/{DAC_RATE_DENOMINATOR}"
+        ),
+        "dither_period_adc": DITHER_PERIOD_ADC if ENABLE_DITHER else None,
         "adc_frame_samples": ADC_FRAME_SAMPLES,
         "periodic_dac_file_samples": num_samples,
         "dac_file_alignment_samples": DAC_FILE_ALIGNMENT_SAMPLES,

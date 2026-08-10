@@ -258,10 +258,26 @@ void udp_update(void)
     }
 }
 
-int udp_send_calibration_csv(const uint8_t *data, size_t length)
+int udp_send_calibration_csv_dataset(
+    calibration_csv_dataset_t dataset,
+    const uint8_t *data,
+    size_t length)
 {
     uint8_t packet[CALIBRATION_CSV_PACKET_BYTES];
     uint16_t packet_count;
+    const char *magic;
+
+    switch (dataset) {
+    case CALIBRATION_CSV_TIMING_CAPTURES: magic = "CALT"; break;
+    case CALIBRATION_CSV_OFFSET_CAPTURES: magic = "CALO"; break;
+    case CALIBRATION_CSV_OFFSET_ITERATIONS: magic = "CAOI"; break;
+    case CALIBRATION_CSV_GAIN_CAPTURES: magic = "CALG"; break;
+    case CALIBRATION_CSV_GAIN_ITERATIONS: magic = "CAGI"; break;
+    case CALIBRATION_CSV_SKEW_CAPTURES: magic = "CALS"; break;
+    case CALIBRATION_CSV_SKEW_ITERATIONS: magic = "CASI"; break;
+    case CALIBRATION_CSV_PERFORMANCE: magic = "CALC"; break;
+    default: return -6;
+    }
 
     if (udp_pcb_block == NULL || data == NULL || length == 0U ||
         length > UINT32_MAX) {
@@ -289,7 +305,7 @@ int udp_send_calibration_csv(const uint8_t *data, size_t length)
         struct pbuf *out;
         err_t send_status;
 
-        memcpy(packet, "CALC", 4U);
+        memcpy(packet, magic, 4U);
         packet[4] = (uint8_t)(packet_index >> 8);
         packet[5] = (uint8_t)packet_index;
         packet[6] = (uint8_t)(packet_count >> 8);
@@ -321,6 +337,12 @@ int udp_send_calibration_csv(const uint8_t *data, size_t length)
     }
 
     return 0;
+}
+
+int udp_send_calibration_csv(const uint8_t *data, size_t length)
+{
+    return udp_send_calibration_csv_dataset(
+        CALIBRATION_CSV_PERFORMANCE, data, length);
 }
 
 void udp_service_calibration(void)
