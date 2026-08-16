@@ -3,6 +3,9 @@
 Impulse-dither background calibration of gain, offset and timing skew for the
 ZCU102 + AD9164 (DPG) + AD9695 test bench.
 
+The default hardware model is ADC 1.300 GSPS, DAC 2.600 GSPS, for an exact
+DAC/ADC ratio of 2.
+
 A short flat-topped impulse with balanced random polarity is summed into the DPG
 vector alongside the main tone. Averaging the dither windows with the polarity
 weight gives gain and skew; averaging without it gives offset. All three come

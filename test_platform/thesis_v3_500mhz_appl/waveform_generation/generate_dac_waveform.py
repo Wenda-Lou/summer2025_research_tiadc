@@ -45,9 +45,9 @@ SINE_PHASE_DEG = 0.0
 #   True  = coherent sine plus balanced impulse dither
 ENABLE_DITHER = True
 
-# Impulse-dither settings copied from calibration_loop/dither.py. All lengths
-# are in DAC samples.
-DITHER_PERIOD_DAC = 260
+# Impulse-dither settings copied from calibration_loop/dither.py. The event
+# interval is a physical time; pulse geometry remains in DAC samples.
+DITHER_EVENT_PERIOD_SECONDS = 100.0e-9
 DITHER_POSITION_DAC = 96
 DITHER_EDGE_DAC = 16
 DITHER_TOP_DAC = 32
@@ -62,16 +62,36 @@ HEADROOM_CODES = 16
 # FIXED PROJECT SETTINGS — normally do not change
 # =====================================================================
 
-ADC_SAMPLE_RATE_HZ = 1_450_000_000.0
+ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
 DAC_SAMPLE_RATE_HZ = 2_600_000_000.0
-ADC_FRAME_SAMPLES = 2_032
+# Each 2032-word DMA payload reconstructs to 1016 chronological samples per
+# ADC channel; FFT-bin metadata is expressed on that per-channel axis.
+ADC_FRAME_SAMPLES = 1_016
 DAC_TO_ADC_RATE_RATIO = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ
 GENERATED_SAMPLES_DIR = Path(__file__).resolve().parent / "generated_samples"
 
-# The scope shows that the effective playback clock remains 2.600 GSPS. Its
-# ratio to the 1.450-GSPS ADC is exactly 52/29. A 260-DAC-sample dither period
-# therefore spans exactly 145 ADC samples, keeping every pulse at the same ADC
-# phase even though the converter-rate ratio itself is not an integer.
+# Derive the DAC- and ADC-domain event spacing from the physical interval so a
+# future clock update cannot leave a stale sample count behind.
+DITHER_PERIOD_DAC = int(round(
+    DITHER_EVENT_PERIOD_SECONDS * DAC_SAMPLE_RATE_HZ
+))
+DITHER_PERIOD_ADC = int(round(
+    DITHER_EVENT_PERIOD_SECONDS * ADC_SAMPLE_RATE_HZ
+))
+if not math.isclose(
+    DITHER_PERIOD_DAC / DAC_SAMPLE_RATE_HZ,
+    DITHER_EVENT_PERIOD_SECONDS,
+    rel_tol=0.0,
+    abs_tol=1.0e-18,
+) or not math.isclose(
+    DITHER_PERIOD_ADC / ADC_SAMPLE_RATE_HZ,
+    DITHER_EVENT_PERIOD_SECONDS,
+    rel_tol=0.0,
+    abs_tol=1.0e-18,
+):
+    raise RuntimeError(
+        "Dither event period must map to whole DAC and ADC samples."
+    )
 DAC_ADC_RATIO_FRACTION = Fraction(
     int(round(DAC_SAMPLE_RATE_HZ)),
     int(round(ADC_SAMPLE_RATE_HZ)),
@@ -83,7 +103,8 @@ if event_period_adc_numerator % DAC_RATE_NUMERATOR != 0:
     raise RuntimeError(
         "Dither period must map to a whole number of ADC samples."
     )
-DITHER_PERIOD_ADC = event_period_adc_numerator // DAC_RATE_NUMERATOR
+if DITHER_PERIOD_ADC != event_period_adc_numerator // DAC_RATE_NUMERATOR:
+    raise RuntimeError("Dither spacing derivations disagree.")
 DAC_FILE_ALIGNMENT_SAMPLES = 256
 # The loop length is aligned for DPG download, contains whole dither periods,
 # and closes on an ADC sample boundary. Double it only if polarity balancing
@@ -400,6 +421,9 @@ def main() -> None:
             f"{DAC_RATE_NUMERATOR}/{DAC_RATE_DENOMINATOR}"
         ),
         "dither_period_adc": DITHER_PERIOD_ADC if ENABLE_DITHER else None,
+        "dither_event_period_seconds": (
+            DITHER_EVENT_PERIOD_SECONDS if ENABLE_DITHER else None
+        ),
         "adc_frame_samples": ADC_FRAME_SAMPLES,
         "periodic_dac_file_samples": num_samples,
         "dac_file_alignment_samples": DAC_FILE_ALIGNMENT_SAMPLES,

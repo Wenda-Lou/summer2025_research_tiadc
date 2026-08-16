@@ -34,6 +34,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* Recorded replay captures predate the clock fix and must retain their own
+ * coordinate system. This value is never a normal simulator default. */
+#define SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ 1450000000.0
+
 typedef struct {
     double sndr_db;
     double sfdr_db;
@@ -504,14 +508,35 @@ static int unit_reference_buffer(sim_assert_context_t *ctx)
 {
     int16_t reference[64];
     for (size_t i = 0U; i < 64U; ++i) reference[i] = (int16_t)i;
-    SIM_ASSERT_EQ_INT(ctx, reference_buffer_begin_with_format(64U, REFERENCE_FORMAT_DAC_RATE_2X), REFERENCE_BUFFER_OK);
+    SIM_ASSERT_EQ_INT(ctx, reference_buffer_begin_with_metadata(
+        64U, REFERENCE_FORMAT_DAC_RATE_2X,
+        1300000000.0, 2600000000.0), REFERENCE_BUFFER_OK);
     SIM_ASSERT_EQ_INT(ctx, reference_buffer_write_chunk(0U, reference, 32U), REFERENCE_BUFFER_OK);
     SIM_ASSERT_EQ_INT(ctx, reference_buffer_write_chunk(32U, &reference[32], 32U), REFERENCE_BUFFER_OK);
     SIM_ASSERT_EQ_INT(ctx, reference_buffer_finalize(), REFERENCE_BUFFER_OK);
     SIM_ASSERT_TRUE(ctx, reference_buffer_is_ready());
     SIM_ASSERT_EQ_INT(ctx, reference_buffer_length(), 64U);
+    SIM_ASSERT_TRUE(ctx, reference_buffer_has_rate_metadata());
+    SIM_ASSERT_NEAR(ctx, reference_buffer_adc_sample_rate_hz(),
+                    1300000000.0, 1.0);
+    SIM_ASSERT_NEAR(ctx, reference_buffer_dac_sample_rate_hz(),
+                    2600000000.0, 1.0);
+    SIM_ASSERT_EQ_INT(ctx, reference_buffer_validate_sample_rates(
+        1300000000.0, 2600000000.0, 1.0), REFERENCE_BUFFER_OK);
+
+    /* Regression for the original failure: 1.45-GSPS waveform metadata must
+     * not be silently adapted to 1.30-GSPS hardware. */
+    SIM_ASSERT_EQ_INT(ctx, reference_buffer_begin_with_metadata(
+        64U, REFERENCE_FORMAT_DAC_RATE_2X,
+        1450000000.0, 2600000000.0), REFERENCE_BUFFER_OK);
+    SIM_ASSERT_EQ_INT(ctx, reference_buffer_validate_sample_rates(
+        1300000000.0, 2600000000.0, 1.0),
+        REFERENCE_BUFFER_ERR_RATE_MISMATCH);
 
     SIM_ASSERT_EQ_INT(ctx, reference_buffer_begin_with_format(64U, REFERENCE_FORMAT_DAC_RATE_2X), REFERENCE_BUFFER_OK);
+    SIM_ASSERT_EQ_INT(ctx, reference_buffer_validate_sample_rates(
+        1300000000.0, 2600000000.0, 1.0),
+        REFERENCE_BUFFER_ERR_RATE_METADATA);
     SIM_ASSERT_EQ_INT(ctx, reference_buffer_write_chunk(0U, reference, 32U), REFERENCE_BUFFER_OK);
     SIM_ASSERT_TRUE(ctx, reference_buffer_finalize() != REFERENCE_BUFFER_OK);
     return 1;
@@ -1308,11 +1333,14 @@ static int unit_dither_joint_alignment(sim_assert_context_t *ctx)
         214.175561, 0.0, 142.791120, &event_phase), 0);
     SIM_ASSERT_NEAR(ctx, event_phase, 71.384441, 1.0e-9);
 
-    /* Raw DAC metadata converts into the selected resampled ADC phase. */
+    /* Historical 2.6/1.45 replay coordinates still exercise the general
+     * rate-matching primitive; production no longer applies this adaptation. */
     SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_dac_position_to_adc_position(
-        181.25, 2600.0 / 1450.0, 1.0, 0.25, &adc_position), 0);
+        181.25, 2600000000.0 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ,
+        1.0, 0.25, &adc_position), 0);
     SIM_ASSERT_NEAR(ctx, adc_position,
-                    180.0 / (2600.0 / 1450.0), 1.0e-12);
+        180.0 / (2600000000.0 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ),
+        1.0e-12);
 
     /* Fixed-window coordinates do not change the full-frame lag origin. */
     SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_map_reference_position(
@@ -1680,14 +1708,20 @@ static int unit_dither_correlation_coordinates(sim_assert_context_t *ctx)
     }
 
     /* The DAC reconstruction is point evaluation by linear interpolation.
-     * Its symmetric two-tap fractional kernel adds no coordinate delay. */
+     * Its symmetric two-tap fractional kernel adds no coordinate delay. This
+     * case deliberately preserves the historical replay rate. */
     SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_dac_position_to_adc_position(
-        96.0, 2600.0 / 1450.0, 0.0, 0.0, &adc_even), 0);
+        96.0, 2600000000.0 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ,
+        0.0, 0.0, &adc_even), 0);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_dac_position_to_adc_position(
-        96.0, 2600.0 / 1450.0, 1.0, 0.0, &adc_odd), 0);
-    SIM_ASSERT_NEAR(ctx, adc_even, 96.0 / (2600.0 / 1450.0), 1.0e-12);
+        96.0, 2600000000.0 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ,
+        1.0, 0.0, &adc_odd), 0);
+    SIM_ASSERT_NEAR(ctx, adc_even,
+        96.0 / (2600000000.0 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ),
+        1.0e-12);
     SIM_ASSERT_NEAR(ctx, adc_even - adc_odd,
-        1.0 / (2600.0 / 1450.0), 1.0e-12);
+        1.0 / (2600000000.0 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ),
+        1.0e-12);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_map_reference_position(
         71.38461538461539, 108.0, 15.976486, 1016.0, &mapping), 0);
     SIM_ASSERT_NEAR(ctx, mapping.window_relative_position_samples,
@@ -1744,7 +1778,8 @@ static int unit_dither_correlation_coordinates(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, after.absolute_difference_samples < 1.0);
     {
         double matched_ratio = NAN;
-        const double nominal_ratio = 2.6e9 / 1.45e9;
+        const double nominal_ratio =
+            2600000000.0 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
         SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_rate_ratio_from_tone_bins(
             nominal_ratio, 70.0, 71.0, 0.05, &matched_ratio), 0);
         SIM_ASSERT_NEAR(ctx, matched_ratio,
@@ -1817,7 +1852,7 @@ static int unit_txt_waveform_timing_and_dither_diagnostics(
     adc_cal_dither_periodic_difference_t cycle_residual;
     const int16_t *selected_reference = NULL;
     const int16_t *selected_channel = NULL;
-    const double adc_rate_hz = 1450000000.0;
+    const double adc_rate_hz = SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
     const double dac_rate_hz = 2600000000.0;
     const double tone_hz = 100003075.78740157;
     const double timing_lags[] = {0.25, 17.25, -31.25, 71.25, -67.25};
@@ -2322,7 +2357,7 @@ static int fixture_prepare_dither_skew(fixture_pipeline_context_t *fixture)
     adc_cal_skew_result_t skew_result;
     size_t candidate_count = 0U;
     const double tone_hz = fixture->analysis_tone_hz;
-    const double adc_rate_hz = 1450000000.0;
+    const double adc_rate_hz = SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
 
     fixture->dither_valid = 0;
     fixture->gain_dither_valid = 0;
@@ -2424,7 +2459,7 @@ static int fixture_pipeline_prepare(
     timing_alignment_result_t best_timing;
     float best_fractional = 0.0f;
     float best_correlation = -2.0f;
-    const double adc_rate_hz = 1450000000.0;
+    const double adc_rate_hz = SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
     const double dac_rate_hz = 2600000000.0;
     const double tone_hz = 100003075.78740157;
     const char *capture_path = fixture->capture_path != NULL ?
@@ -2695,7 +2730,7 @@ static int fixture_pipeline_skew(
     phase_config.dither_skew_samples = fixture->dither_skew_samples;
     if (adc_cal_skew_resolve_tone_phase(
             fixture->tone_phase_a, fixture->tone_phase_b,
-            fixture->analysis_tone_hz, 1450000000.0,
+            fixture->analysis_tone_hz, SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ,
             &phase_config, &phase_result) != 0 || !phase_result.valid) {
         if (reason != NULL) *reason = "recorded skew phase branch is invalid";
         return -1;
@@ -2706,7 +2741,10 @@ static int fixture_pipeline_skew(
     policy_input.accepted_frames = 10U;
     policy_input.minimum_accepted_frames = 7U;
     policy_input.batch_std_samples = 0.0;
-    policy_input.maximum_batch_std_samples = 0.02;
+    policy_input.maximum_batch_std_samples =
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    policy_input.characterization_maximum_batch_std_samples =
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES;
     policy_input.tolerance_samples = 0.01;
     policy_input.advisory_warning = !fixture->dither_valid ||
         (fixture->dither_valid &&
@@ -2722,7 +2760,7 @@ static int fixture_pipeline_skew(
     state->final_relative_skew_samples =
         phase_result.corrected_skew_samples;
     state->final_relative_skew_ps = phase_result.corrected_skew_samples *
-        1.0e12 / 1450000000.0;
+        1.0e12 / SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
     state->skew_pass = state->skew_policy.pipeline_may_continue != 0;
     state->skew_warning = state->skew_policy.stage_result ==
         ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
@@ -2766,7 +2804,7 @@ static int fixture_pipeline_performance(
     adc_cal_perf_config_t config;
     adc_cal_perf_default_config(&config);
     config.sample_count = 800U;
-    config.sample_rate_hz = 1450000000.0;
+    config.sample_rate_hz = SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
     config.expected_fundamental_hz = fixture->analysis_tone_hz;
     config.frame_count = 30U;
     config.minimum_valid_frames = 20U;
@@ -2935,7 +2973,7 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
     const double pi = 3.14159265358979323846;
     const double two_pi = 6.28318530717958647692;
     const double frequency_hz = 100.0e6;
-    const double sample_rate_hz = 1.45e9;
+    const double sample_rate_hz = SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
     const double omega = two_pi * frequency_hz / sample_rate_hz;
     adc_cal_skew_phase_config_t config;
     adc_cal_skew_phase_result_t result;
@@ -2948,10 +2986,12 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
     /* Stage 1's rate-matched tone context is accepted; the stale nominal
      * bin-70 frequency is specifically rejected against the bin-71 fit. */
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_validate_tone_context(
-        101.328740e6, 101.314711e6, 1.45e9, 800U, 0.75),
+        101.328740e6, 101.314711e6,
+        SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ, 800U, 0.75),
         ADC_CAL_SKEW_TONE_CONTEXT_VALID);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_validate_tone_context(
-        99.901574e6, 101.314711e6, 1.45e9, 800U, 0.75),
+        99.901574e6, 101.314711e6,
+        SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ, 800U, 0.75),
         ADC_CAL_SKEW_TONE_CONTEXT_FREQUENCY_MISMATCH);
     SIM_ASSERT_TRUE(ctx, strcmp(adc_cal_skew_tone_context_status_name(
         ADC_CAL_SKEW_TONE_CONTEXT_FREQUENCY_MISMATCH),
@@ -3107,13 +3147,20 @@ typedef struct {
     double initial_skew_samples;
     double signed_step_samples;
     double std_samples;
+    double measurement_adjustment_samples[16];
+    double measurement_std_samples[16];
+    uint32_t measurement_override_count;
     uint32_t reads;
     uint32_t writes;
     uint32_t measurements;
-    uint32_t preparations;
+    uint32_t readiness_verifications;
+    uint32_t sequence_counter;
+    uint32_t readiness_sequence;
+    uint32_t baseline_sequence;
+    uint32_t first_write_sequence;
+    int register_at_verification;
     int invalid_measurement;
-    int preparation_failure;
-    int preparation_register_delta;
+    int readiness_failure;
     int readback_mismatch;
 } simulated_skew_actuator_t;
 
@@ -3124,11 +3171,20 @@ static int simulated_skew_measure(
     if (sim == NULL || measurement == NULL) return -1;
     memset(measurement, 0, sizeof(*measurement));
     ++sim->measurements;
+    ++sim->sequence_counter;
+    if (sim->measurements == 1U)
+        sim->baseline_sequence = sim->sequence_counter;
     measurement->valid = !sim->invalid_measurement;
     measurement->skew_samples = sim->initial_skew_samples +
         sim->signed_step_samples *
-        (double)(sim->register_value - sim->initial_register);
-    measurement->batch_std_samples = sim->std_samples;
+        (double)(sim->register_value - sim->initial_register) +
+        (sim->measurements <= sim->measurement_override_count ?
+            sim->measurement_adjustment_samples[sim->measurements - 1U] :
+            0.0);
+    measurement->batch_std_samples =
+        sim->measurements <= sim->measurement_override_count ?
+            sim->measurement_std_samples[sim->measurements - 1U] :
+            sim->std_samples;
     measurement->accepted_frames = measurement->valid ? 10U : 0U;
     measurement->rejected_frames = measurement->valid ? 0U : 10U;
     measurement->reason = measurement->valid ? "none" :
@@ -3145,14 +3201,14 @@ static int simulated_skew_read(void *context, int *value)
     return 0;
 }
 
-static int simulated_skew_prepare(void *context)
+static int simulated_skew_verify_ready(void *context)
 {
     simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
     if (sim == NULL) return -1;
-    ++sim->preparations;
-    if (sim->preparation_failure) return -1;
-    sim->register_value += sim->preparation_register_delta;
-    return 0;
+    ++sim->readiness_verifications;
+    sim->readiness_sequence = ++sim->sequence_counter;
+    sim->register_at_verification = sim->register_value;
+    return sim->readiness_failure ? -1 : 0;
 }
 
 static int simulated_skew_write(void *context, int value)
@@ -3160,8 +3216,445 @@ static int simulated_skew_write(void *context, int value)
     simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
     if (sim == NULL) return -1;
     ++sim->writes;
+    ++sim->sequence_counter;
+    if (sim->writes == 1U) sim->first_write_sequence = sim->sequence_counter;
     sim->register_value = sim->readback_mismatch ? value + 1 : value;
     return 0;
+}
+
+enum {
+    PREP_DIAG_EVENT_SNAPSHOT_BASE = 100,
+    PREP_DIAG_EVENT_MEASURE_PRE = 200,
+    PREP_DIAG_EVENT_MEASURE_POST = 201,
+    PREP_DIAG_EVENT_JESD_RESET = 300,
+    PREP_DIAG_EVENT_ACTUATOR_PREPARE = 301,
+    PREP_DIAG_EVENT_INTRINSIC_JESD_RESET = 302,
+    PREP_DIAG_EVENT_RESTORE = 303,
+    PREP_DIAG_EVENT_WARMUP = 400
+};
+
+typedef struct {
+    int events[64];
+    size_t event_count;
+    uint32_t measurements;
+    uint32_t measurement_frames;
+    uint32_t warmup_captures;
+    uint32_t snapshots;
+    uint32_t standalone_jesd_resets;
+    uint32_t actuator_preparations;
+    uint32_t intrinsic_jesd_resets;
+    uint32_t correction_writes;
+    uint32_t restore_calls;
+    uint32_t fullprep_helper_calls;
+    uint32_t register_writes[3];
+    uint8_t initial_registers[3];
+    uint8_t current_registers[3];
+    adc_cal_skew_prep_diag_mode_t mode;
+    int preparation_intrinsically_resets_jesd;
+} simulated_skew_prep_diag_t;
+
+static int simulated_skew_prep_diag_event(
+    simulated_skew_prep_diag_t *sim, int event)
+{
+    if (sim == NULL || sim->event_count >=
+        sizeof(sim->events) / sizeof(sim->events[0])) return -1;
+    sim->events[sim->event_count++] = event;
+    return 0;
+}
+
+static int simulated_skew_prep_diag_measure(
+    void *context, adc_cal_skew_batch_measurement_t *measurement)
+{
+    simulated_skew_prep_diag_t *sim =
+        (simulated_skew_prep_diag_t *)context;
+    const uint32_t call = sim != NULL ? sim->measurements : 0U;
+    if (sim == NULL || measurement == NULL || call >= 2U) return -1;
+    if (simulated_skew_prep_diag_event(sim,
+            call == 0U ? PREP_DIAG_EVENT_MEASURE_PRE :
+                PREP_DIAG_EVENT_MEASURE_POST) != 0) return -1;
+    memset(measurement, 0, sizeof(*measurement));
+    measurement->valid = 1;
+    measurement->skew_samples = call == 0U ? -0.057 : -0.144;
+    measurement->batch_std_samples = call == 0U ? 0.003 : 0.033;
+    measurement->accepted_frames = 10U;
+    measurement->reason = "simulated independent diagnostic batch";
+    ++sim->measurements;
+    sim->measurement_frames += measurement->accepted_frames;
+    return 0;
+}
+
+static int simulated_skew_prep_diag_snapshot(
+    void *context, adc_cal_skew_prep_snapshot_point_t point)
+{
+    simulated_skew_prep_diag_t *sim =
+        (simulated_skew_prep_diag_t *)context;
+    if (sim == NULL || point >= ADC_CAL_SKEW_PREP_SNAPSHOT_COUNT)
+        return -1;
+    if (simulated_skew_prep_diag_event(sim,
+            PREP_DIAG_EVENT_SNAPSHOT_BASE + (int)point) != 0) return -1;
+    ++sim->snapshots;
+    return 0;
+}
+
+static int simulated_skew_prep_diag_discard(
+    void *context, uint32_t capture_index, uint32_t capture_count)
+{
+    simulated_skew_prep_diag_t *sim =
+        (simulated_skew_prep_diag_t *)context;
+    if (sim == NULL || capture_index != sim->warmup_captures + 1U ||
+        capture_count != ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES ||
+        sim->measurements != 1U) return -1;
+    if (simulated_skew_prep_diag_event(sim,
+            PREP_DIAG_EVENT_WARMUP) != 0) return -1;
+    ++sim->warmup_captures;
+    return 0;
+}
+
+static int simulated_skew_prep_diag_jesd(void *context)
+{
+    simulated_skew_prep_diag_t *sim =
+        (simulated_skew_prep_diag_t *)context;
+    if (simulated_skew_prep_diag_event(
+            sim, PREP_DIAG_EVENT_JESD_RESET) != 0) return -1;
+    ++sim->standalone_jesd_resets;
+    return 0;
+}
+
+static int simulated_skew_prep_diag_actuator(void *context)
+{
+    simulated_skew_prep_diag_t *sim =
+        (simulated_skew_prep_diag_t *)context;
+    if (simulated_skew_prep_diag_event(
+            sim, PREP_DIAG_EVENT_ACTUATOR_PREPARE) != 0) return -1;
+    ++sim->actuator_preparations;
+    switch (sim->mode) {
+    case ADC_CAL_SKEW_PREP_DIAG_CTRL_ONLY:
+        sim->current_registers[0] = 0x04U;
+        ++sim->register_writes[0];
+        ++sim->standalone_jesd_resets;
+        break;
+    case ADC_CAL_SKEW_PREP_DIAG_ANALOG_ONLY:
+        sim->current_registers[1] = 0x60U;
+        ++sim->register_writes[1];
+        break;
+    case ADC_CAL_SKEW_PREP_DIAG_DIGITAL_ONLY:
+        sim->current_registers[2] = 0x60U;
+        ++sim->register_writes[2];
+        break;
+    case ADC_CAL_SKEW_PREP_DIAG_ANALOG_DIGITAL:
+        sim->current_registers[1] = 0x60U;
+        sim->current_registers[2] = 0x60U;
+        ++sim->register_writes[1];
+        ++sim->register_writes[2];
+        break;
+    case ADC_CAL_SKEW_PREP_DIAG_ENABLE_AFTER_VALUES:
+        sim->current_registers[1] = 0x60U;
+        sim->current_registers[2] = 0x60U;
+        sim->current_registers[0] = 0x04U;
+        ++sim->register_writes[1];
+        ++sim->register_writes[2];
+        ++sim->register_writes[0];
+        ++sim->standalone_jesd_resets;
+        break;
+    case ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY:
+    case ADC_CAL_SKEW_PREP_DIAG_COMBINED:
+        sim->current_registers[0] = 0x04U;
+        sim->current_registers[1] = 0x60U;
+        sim->current_registers[2] = 0x60U;
+        ++sim->register_writes[0];
+        ++sim->register_writes[1];
+        ++sim->register_writes[2];
+        ++sim->fullprep_helper_calls;
+        break;
+    default:
+        return -1;
+    }
+    if (sim->preparation_intrinsically_resets_jesd) {
+        if (simulated_skew_prep_diag_event(
+                sim, PREP_DIAG_EVENT_INTRINSIC_JESD_RESET) != 0) return -1;
+        ++sim->intrinsic_jesd_resets;
+    }
+    return 0;
+}
+
+static int simulated_skew_prep_diag_restore(void *context)
+{
+    simulated_skew_prep_diag_t *sim =
+        (simulated_skew_prep_diag_t *)context;
+    if (simulated_skew_prep_diag_event(
+            sim, PREP_DIAG_EVENT_RESTORE) != 0) return -1;
+    memcpy(sim->current_registers, sim->initial_registers,
+           sizeof(sim->current_registers));
+    ++sim->restore_calls;
+    return 0;
+}
+
+static void simulated_skew_prep_diag_init(
+    simulated_skew_prep_diag_t *sim,
+    adc_cal_skew_prep_diag_mode_t mode)
+{
+    memset(sim, 0, sizeof(*sim));
+    sim->mode = mode;
+    sim->initial_registers[0] = 0x00U;
+    sim->initial_registers[1] = 0xC0U;
+    sim->initial_registers[2] = 0xC0U;
+    memcpy(sim->current_registers, sim->initial_registers,
+           sizeof(sim->current_registers));
+}
+
+static int unit_skew_measurement_conditioning(sim_assert_context_t *ctx)
+{
+    adc_cal_skew_conditioning_input_t input;
+    adc_cal_skew_conditioning_input_t original;
+    adc_cal_skew_conditioning_result_t result;
+
+    memset(&input, 0, sizeof(input));
+    input.mode = ADC_CAL_SKEW_CONDITIONING_DIAGNOSTIC_RAW_WINDOW;
+    input.production_offset_correction = 23.0;
+    input.production_gain_correction = 4.0;
+    original = input;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_select_measurement_conditioning(
+        &input, &result), 0);
+    SIM_ASSERT_TRUE(ctx, !result.permitted);
+    SIM_ASSERT_TRUE(ctx, strcmp(result.reason,
+        "timing context is invalid") == 0);
+
+    input.timing_context_valid = 1;
+    original = input;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_select_measurement_conditioning(
+        &input, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.permitted);
+    SIM_ASSERT_TRUE(ctx, result.offset_dependency_bypassed);
+    SIM_ASSERT_TRUE(ctx, result.gain_dependency_bypassed);
+    SIM_ASSERT_NEAR(ctx, result.offset_correction, 0.0, 0.0);
+    SIM_ASSERT_NEAR(ctx, result.gain_correction, 1.0, 0.0);
+    SIM_ASSERT_TRUE(ctx, memcmp(&input, &original, sizeof(input)) == 0);
+
+    input.mode = ADC_CAL_SKEW_CONDITIONING_PRODUCTION;
+    input.offset_result_usable = 0;
+    input.gain_result_usable = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_select_measurement_conditioning(
+        &input, &result), 0);
+    SIM_ASSERT_TRUE(ctx, !result.permitted);
+    SIM_ASSERT_TRUE(ctx, strcmp(result.reason,
+        "offset stage result is not usable") == 0);
+
+    input.offset_result_usable = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_select_measurement_conditioning(
+        &input, &result), 0);
+    SIM_ASSERT_TRUE(ctx, !result.permitted);
+    SIM_ASSERT_TRUE(ctx, strcmp(result.reason,
+        "gain stage result is not usable") == 0);
+
+    input.gain_result_usable = 1;
+    input.production_offset_correction = -0.25;
+    input.production_gain_correction = 1.125;
+    original = input;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_select_measurement_conditioning(
+        &input, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.permitted);
+    SIM_ASSERT_TRUE(ctx, !result.offset_dependency_bypassed);
+    SIM_ASSERT_TRUE(ctx, !result.gain_dependency_bypassed);
+    SIM_ASSERT_NEAR(ctx, result.offset_correction, -0.25, 0.0);
+    SIM_ASSERT_NEAR(ctx, result.gain_correction, 1.125, 0.0);
+    SIM_ASSERT_TRUE(ctx, memcmp(&input, &original, sizeof(input)) == 0);
+    return 1;
+}
+
+static int unit_skew_preparation_diagnostic(sim_assert_context_t *ctx)
+{
+    adc_cal_skew_loop_config_t config;
+    adc_cal_skew_prep_diag_io_t io;
+    adc_cal_skew_prep_diag_result_t result;
+    simulated_skew_prep_diag_t sim;
+    const double expected_threshold = ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    const uint32_t expected_warmups =
+        ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES;
+    adc_cal_fixed6_parts_t rate_parts;
+
+    adc_cal_skew_loop_default_config(&config);
+    memset(&io, 0, sizeof(io));
+    io.measure_batch = simulated_skew_prep_diag_measure;
+    io.discard_capture = simulated_skew_prep_diag_discard;
+    io.capture_snapshot = simulated_skew_prep_diag_snapshot;
+    io.jesd_reset_only = simulated_skew_prep_diag_jesd;
+    io.actuator_prepare = simulated_skew_prep_diag_actuator;
+    io.restore_initial_state = simulated_skew_prep_diag_restore;
+
+    /* Test A: reset is the sole operation between two independent batches. */
+    simulated_skew_prep_diag_init(
+        &sim, ADC_CAL_SKEW_PREP_DIAG_JESD_ONLY);
+    io.context = &sim;
+    io.actuator_only_supported = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_preparation_diagnostic(
+        ADC_CAL_SKEW_PREP_DIAG_JESD_ONLY, &config, &io, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.completed);
+    SIM_ASSERT_EQ_INT(ctx, sim.standalone_jesd_resets, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.actuator_preparations, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.warmup_captures, expected_warmups);
+    SIM_ASSERT_EQ_INT(ctx, sim.snapshots, ADC_CAL_SKEW_PREP_SNAPSHOT_COUNT);
+    SIM_ASSERT_EQ_INT(ctx, sim.measurements, 2U);
+    SIM_ASSERT_EQ_INT(ctx, sim.measurement_frames, 20U);
+    SIM_ASSERT_EQ_INT(ctx, result.pre_measurement.accepted_frames, 10U);
+    SIM_ASSERT_EQ_INT(ctx, result.post_measurement.accepted_frames, 10U);
+    SIM_ASSERT_NEAR(ctx, result.pre_measurement.skew_samples, -0.057, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, result.post_measurement.skew_samples, -0.144, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_write_calls, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.correction_writes, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[0],
+        PREP_DIAG_EVENT_SNAPSHOT_BASE +
+            ADC_CAL_SKEW_PREP_SNAPSHOT_BEFORE_BASELINE);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[1], PREP_DIAG_EVENT_MEASURE_PRE);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[2],
+        PREP_DIAG_EVENT_SNAPSHOT_BASE +
+            ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_BASELINE);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[3],
+        PREP_DIAG_EVENT_SNAPSHOT_BASE +
+            ADC_CAL_SKEW_PREP_SNAPSHOT_BEFORE_OPERATION);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[4], PREP_DIAG_EVENT_JESD_RESET);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[5],
+        PREP_DIAG_EVENT_SNAPSHOT_BASE +
+            ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_OPERATION);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[6U + expected_warmups],
+        PREP_DIAG_EVENT_SNAPSHOT_BASE +
+            ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_WARMUP);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[7U + expected_warmups],
+        PREP_DIAG_EVENT_MEASURE_POST);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[8U + expected_warmups],
+        PREP_DIAG_EVENT_SNAPSHOT_BASE +
+            ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_FINAL_MEASUREMENT);
+
+    /* A separable actuator backend receives no standalone reset. */
+    simulated_skew_prep_diag_init(
+        &sim, ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY);
+    io.context = &sim;
+    io.actuator_only_supported = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_preparation_diagnostic(
+        ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY, &config, &io, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.completed);
+    SIM_ASSERT_EQ_INT(ctx, sim.actuator_preparations, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.standalone_jesd_resets, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.intrinsic_jesd_resets, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.warmup_captures, expected_warmups);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_write_calls, 0U);
+    SIM_ASSERT_TRUE(ctx, result.restore_attempted);
+    SIM_ASSERT_TRUE(ctx, result.restore_succeeded);
+    SIM_ASSERT_EQ_INT(ctx, sim.restore_calls, 1U);
+    SIM_ASSERT_TRUE(ctx, memcmp(sim.current_registers,
+        sim.initial_registers, sizeof(sim.current_registers)) == 0);
+
+    /* The AD9695-style dependency is reported before any callback or snapshot. */
+    simulated_skew_prep_diag_init(
+        &sim, ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY);
+    io.context = &sim;
+    io.actuator_only_supported = 0;
+    io.actuator_only_unsupported_reason =
+        "simulated intrinsic receiver reset dependency";
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_preparation_diagnostic(
+        ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY, &config, &io, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.unsupported);
+    SIM_ASSERT_TRUE(ctx, !result.completed);
+    SIM_ASSERT_EQ_INT(ctx, sim.event_count, 0U);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_write_calls, 0U);
+
+    /* Combined production preparation preserves actuator-then-intrinsic-reset
+     * callback order and still never exposes a correction callback. */
+    simulated_skew_prep_diag_init(
+        &sim, ADC_CAL_SKEW_PREP_DIAG_COMBINED);
+    sim.preparation_intrinsically_resets_jesd = 1;
+    io.context = &sim;
+    io.actuator_only_supported = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_preparation_diagnostic(
+        ADC_CAL_SKEW_PREP_DIAG_COMBINED, &config, &io, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.completed);
+    SIM_ASSERT_EQ_INT(ctx, sim.actuator_preparations, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.standalone_jesd_resets, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.intrinsic_jesd_resets, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[4], PREP_DIAG_EVENT_ACTUATOR_PREPARE);
+    SIM_ASSERT_EQ_INT(ctx, sim.events[5],
+        PREP_DIAG_EVENT_INTRINSIC_JESD_RESET);
+    SIM_ASSERT_EQ_INT(ctx, sim.warmup_captures, expected_warmups);
+    SIM_ASSERT_EQ_INT(ctx, sim.measurement_frames, 20U);
+    SIM_ASSERT_EQ_INT(ctx, result.correction_write_calls, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.fullprep_helper_calls, 1U);
+    SIM_ASSERT_TRUE(ctx, result.restore_succeeded);
+
+    /* Register-isolation modes touch only their named delay registers, use
+     * independent pre/post batches, exclude warm-ups, and restore entry state. */
+    {
+        static const adc_cal_skew_prep_diag_mode_t modes[] = {
+            ADC_CAL_SKEW_PREP_DIAG_CTRL_ONLY,
+            ADC_CAL_SKEW_PREP_DIAG_ANALOG_ONLY,
+            ADC_CAL_SKEW_PREP_DIAG_DIGITAL_ONLY,
+            ADC_CAL_SKEW_PREP_DIAG_ANALOG_DIGITAL,
+            ADC_CAL_SKEW_PREP_DIAG_ENABLE_AFTER_VALUES
+        };
+        static const unsigned int expected_masks[] = {
+            0x1U, 0x2U, 0x4U, 0x6U, 0x7U
+        };
+        for (size_t test = 0U;
+             test < sizeof(modes) / sizeof(modes[0]); ++test) {
+            unsigned int observed_mask = 0U;
+            simulated_skew_prep_diag_init(&sim, modes[test]);
+            io.context = &sim;
+            io.actuator_only_supported = 0;
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_preparation_diagnostic(
+                modes[test], &config, &io, &result), 0);
+            for (size_t reg = 0U; reg < 3U; ++reg) {
+                if (sim.register_writes[reg] > 0U)
+                    observed_mask |= 1U << reg;
+            }
+            SIM_ASSERT_EQ_INT(ctx, observed_mask, expected_masks[test]);
+            SIM_ASSERT_EQ_INT(ctx, sim.measurements, 2U);
+            SIM_ASSERT_EQ_INT(ctx, sim.measurement_frames, 20U);
+            SIM_ASSERT_EQ_INT(ctx, sim.warmup_captures, expected_warmups);
+            SIM_ASSERT_EQ_INT(ctx, sim.restore_calls, 1U);
+            SIM_ASSERT_TRUE(ctx, result.restore_attempted);
+            SIM_ASSERT_TRUE(ctx, result.restore_succeeded);
+            SIM_ASSERT_TRUE(ctx, memcmp(sim.current_registers,
+                sim.initial_registers, sizeof(sim.current_registers)) == 0);
+            SIM_ASSERT_EQ_INT(ctx, result.correction_write_calls, 0U);
+            SIM_ASSERT_EQ_INT(ctx, sim.correction_writes, 0U);
+            SIM_ASSERT_EQ_INT(ctx, sim.standalone_jesd_resets,
+                modes[test] == ADC_CAL_SKEW_PREP_DIAG_CTRL_ONLY ||
+                modes[test] == ADC_CAL_SKEW_PREP_DIAG_ENABLE_AFTER_VALUES ?
+                    1U : 0U);
+        }
+    }
+
+    /* Diagnostic sequencing cannot mutate the production safety constants. */
+    SIM_ASSERT_NEAR(ctx, config.skew_maximum_batch_std_samples,
+        expected_threshold, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, config.skew_initial_warmup_frames,
+        expected_warmups);
+    SIM_ASSERT_NEAR(ctx, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, 1.3e9, 0.5);
+    SIM_ASSERT_NEAR(ctx, SIM_DEFAULT_DAC_SAMPLE_RATE_HZ, 2.6e9, 0.5);
+    SIM_ASSERT_NEAR(ctx,
+        SIM_DEFAULT_DAC_SAMPLE_RATE_HZ / SIM_DEFAULT_ADC_SAMPLE_RATE_HZ,
+        2.0, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_fixed6_parts(
+        SIM_DEFAULT_DAC_SAMPLE_RATE_HZ, &rate_parts), 0);
+    SIM_ASSERT_TRUE(ctx, !rate_parts.negative);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.billions, 2U);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.units_below_billion, 600000000U);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.millionths, 0U);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_fixed6_parts(10.123456, &rate_parts), 0);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.units_below_billion, 10U);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.millionths, 123456U);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_fixed6_parts(20.799726, &rate_parts), 0);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.units_below_billion, 20U);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.millionths, 799726U);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_fixed6_parts(200.000001, &rate_parts), 0);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.units_below_billion, 200U);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.millionths, 1U);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_fixed6_parts(19.230769, &rate_parts), 0);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.units_below_billion, 19U);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.millionths, 230769U);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_fixed6_parts(-52.884194, &rate_parts), 0);
+    SIM_ASSERT_TRUE(ctx, rate_parts.negative);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.units_below_billion, 52U);
+    SIM_ASSERT_EQ_INT(ctx, rate_parts.millionths, 884194U);
+    return 1;
 }
 
 static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
@@ -3176,6 +3669,21 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     int saturated = 0;
 
     adc_cal_skew_loop_default_config(&config);
+    SIM_ASSERT_EQ_INT(ctx, config.skew_initial_warmup_frames,
+        ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES);
+    SIM_ASSERT_NEAR(ctx, config.skew_maximum_batch_std_samples,
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx,
+        config.skew_characterization_maximum_batch_std_samples,
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES,
+        0.025, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx, ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES,
+        0.035, 1.0e-12);
+    SIM_ASSERT_NEAR(ctx,
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES * 1.0e12 /
+            SIM_DEFAULT_ADC_SAMPLE_RATE_HZ,
+        19.2307692307692, 1.0e-9);
     config.skew_closed_loop_enable = 1;
     config.skew_register_min = 0;
     config.skew_register_max = 63;
@@ -3187,7 +3695,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     config.skew_max_iterations = 10U;
     memset(&io, 0, sizeof(io));
     io.measure_batch = simulated_skew_measure;
-    io.prepare_actuator = simulated_skew_prepare;
+    io.verify_actuator_ready = simulated_skew_verify_ready;
     io.read_register = simulated_skew_read;
     io.write_register = simulated_skew_write;
 
@@ -3220,16 +3728,165 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.std_samples = 0.001;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
     SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_cautious);
     SIM_ASSERT_EQ_INT(ctx, result.actuator_polarity, 1);
     SIM_ASSERT_NEAR(ctx, result.observed_step_samples, 0.02, 1.0e-12);
     SIM_ASSERT_TRUE(ctx, fabs(result.final_skew_samples) <=
         config.skew_tolerance_samples);
     SIM_ASSERT_TRUE(ctx, result.consecutive_passes >= 2U);
     SIM_ASSERT_TRUE(ctx, result.correction_applied);
+    SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
     SIM_ASSERT_TRUE(ctx, result.final_register < result.initial_register);
+    SIM_ASSERT_EQ_INT(ctx, sim.readiness_verifications, 1U);
+    SIM_ASSERT_TRUE(ctx, result.actuator_ready_verified);
+    SIM_ASSERT_EQ_INT(ctx, sim.register_at_verification, sim.initial_register);
+    SIM_ASSERT_TRUE(ctx, sim.readiness_sequence < sim.baseline_sequence);
+    SIM_ASSERT_TRUE(ctx, sim.baseline_sequence < sim.first_write_sequence);
+    SIM_ASSERT_NEAR(ctx, result.initial_skew_samples, 0.186, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.accepted_frames, sim.measurements * 10U);
+
+    /* Exact stable board baseline: NORMAL dispatch must reach the first
+     * readback-verified probe from neutral code 24. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 24;
+    sim.initial_skew_samples = -0.238981;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 1U;
+    sim.measurement_std_samples[0] = 0.016051;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_EQ_INT(ctx, result.initial_register, 24);
+    SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
+    SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason,
+        "marginal baseline requires") == NULL);
+
+    /* The preferred threshold remains inclusive and dispatches NORMAL. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 24;
+    sim.initial_skew_samples = 0.005;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 1U;
+    sim.measurement_std_samples[0] = ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
+
+    /* A marginal probe batch cannot overwrite a stable baseline's NORMAL
+     * policy. The probe remains characterization-eligible through 0.035. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 24;
+    sim.initial_skew_samples = 0.005;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 3U;
+    sim.measurement_std_samples[0] = 0.016051;
+    sim.measurement_std_samples[1] = 0.025659;
+    sim.measurement_std_samples[2] = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.first_probe_stability,
+        ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_EQ_INT(ctx, result.repeat_probe_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
+
+    /* Exact marginal board batch: CAUTIOUS policy remains attached to the
+     * initial baseline even when both later probe batches are stable. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 24;
+    sim.initial_skew_samples = 0.005;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 3U;
+    sim.measurement_std_samples[0] = 0.025659;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_EQ_INT(ctx, result.first_probe_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.repeat_probe_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
+
+    /* Both observed -160 ps marginal board baselines must reach the first
+     * cautious probe; neither spread is an entry blocker. */
+    {
+        static const double board_medians[] = {-0.207771, -0.207762};
+        static const double board_std_samples[] = {
+            20.257258e-12 * SIM_DEFAULT_ADC_SAMPLE_RATE_HZ,
+            22.044405e-12 * SIM_DEFAULT_ADC_SAMPLE_RATE_HZ
+        };
+        for (size_t board_case = 0U; board_case < 2U; ++board_case) {
+            memset(&sim, 0, sizeof(sim));
+            sim.register_value = sim.initial_register = 24;
+            sim.initial_skew_samples = board_medians[board_case];
+            sim.signed_step_samples = 0.02;
+            sim.std_samples = 0.001;
+            sim.measurement_override_count = 3U;
+            sim.measurement_std_samples[0] = board_std_samples[board_case];
+            sim.measurement_std_samples[1] = 0.001;
+            sim.measurement_std_samples[2] = 0.001;
+            io.context = &sim;
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+                &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+            SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+                ADC_CAL_SKEW_STABILITY_MARGINAL);
+            SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+            SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+            SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+            SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
+        }
+    }
+
+    /* The upper marginal boundary also reaches cautious characterization. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 24;
+    sim.initial_skew_samples = 0.005;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 3U;
+    sim.measurement_std_samples[0] = 0.0349;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
 
     /* Production leaves actuator polarity unknown until the mandatory +1
      * characterization.  Verify that a negative hardware response is learned
@@ -3242,28 +3899,46 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.std_samples = 0.001;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
     SIM_ASSERT_EQ_INT(ctx, result.actuator_polarity, -1);
     SIM_ASSERT_TRUE(ctx, result.final_register > result.initial_register);
     config.skew_actuator_polarity = 1;
 
-    /* Invalid primary estimate is rejected before any actuator access. */
+    /* Read-only readiness verification precedes the authoritative baseline;
+     * an invalid baseline cannot authorize any correction write. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.030;
+    sim.invalid_measurement = 1;
+    io.context = &sim;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_FAILED);
+    SIM_ASSERT_EQ_INT(ctx, sim.readiness_verifications, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
+
+    /* Stage 4 requires a readiness verifier and never initializes or warms
+     * the actuator itself. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.186;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.001;
-    sim.invalid_measurement = 1;
     io.context = &sim;
-    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result) != 0);
-    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_FAILED);
-    SIM_ASSERT_EQ_INT(ctx, sim.preparations, 0U);
+    io.verify_actuator_ready = NULL;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status,
+        ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE);
+    SIM_ASSERT_EQ_INT(ctx, sim.measurements, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.reads, 0U);
     SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
+    io.verify_actuator_ready = simulated_skew_verify_ready;
 
-    /* An unavailable actuator is discovered only after a valid measurement.
-     * Preserve and publish that measurement as a distinct loop outcome. */
+    /* Missing register access is rejected before the skew baseline. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.186;
@@ -3273,12 +3948,12 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     io.read_register = NULL;
     io.write_register = NULL;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status,
         ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE);
-    SIM_ASSERT_NEAR(ctx, result.initial_skew_samples, 0.186, 1.0e-12);
-    SIM_ASSERT_NEAR(ctx, result.final_skew_samples, 0.186, 1.0e-12);
-    SIM_ASSERT_TRUE(ctx, result.accepted_frames > 0U);
+    SIM_ASSERT_TRUE(ctx, isnan(result.initial_skew_samples));
+    SIM_ASSERT_EQ_INT(ctx, sim.measurements, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.readiness_verifications, 0U);
     SIM_ASSERT_EQ_INT(ctx, sim.reads, 0U);
     SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
     SIM_ASSERT_TRUE(ctx, strcmp(result.failure_reason,
@@ -3286,52 +3961,224 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     io.read_register = simulated_skew_read;
     io.write_register = simulated_skew_write;
 
-    /* Backend preparation also occurs only after a valid measurement. */
+    /* Unexpected mode/readback state fails safely before measurement and
+     * cannot trigger a destructive late reinitialization. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.186;
     sim.signed_step_samples = 0.02;
-    sim.std_samples = 0.001;
-    sim.preparation_failure = 1;
+    sim.std_samples = 0.030;
+    sim.readiness_failure = 1;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status,
         ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE);
-    SIM_ASSERT_EQ_INT(ctx, sim.measurements, 1U);
-    SIM_ASSERT_EQ_INT(ctx, sim.preparations, 1U);
+    SIM_ASSERT_EQ_INT(ctx, sim.measurements, 0U);
+    SIM_ASSERT_EQ_INT(ctx, sim.readiness_verifications, 1U);
     SIM_ASSERT_EQ_INT(ctx, sim.reads, 0U);
     SIM_ASSERT_EQ_INT(ctx, sim.writes, 0U);
     SIM_ASSERT_TRUE(ctx, strcmp(result.failure_reason,
-        "ACTUATOR_UNAVAILABLE") == 0);
+        "ACTUATOR_NOT_READY") == 0);
 
-    /* Characterization must use a fresh baseline if preparation changed the
-     * backend's register/mode state. */
+    /* A hard-valid 0.040-sample baseline is HIGH-NOISE, not invalid. It may
+     * reach the cautious minimum probe; significance decides continuation. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.186;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.001;
-    sim.preparation_register_delta = 2;
+    sim.measurement_override_count = 3U;
+    sim.measurement_std_samples[0] = 0.040;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
-    SIM_ASSERT_NEAR(ctx, result.initial_skew_samples, 0.226, 1.0e-12);
-    SIM_ASSERT_EQ_INT(ctx, result.initial_register, 22);
-    SIM_ASSERT_EQ_INT(ctx, sim.preparations, 1U);
-    SIM_ASSERT_TRUE(ctx, sim.measurements >= 4U);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, sim.readiness_verifications, 1U);
+    SIM_ASSERT_NEAR(ctx, result.initial_skew_samples, 0.186, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_HIGH_NOISE);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_TRUE(ctx, sim.writes > 0U);
 
-    /* A readback mismatch during the mandatory +1 characterization fails. */
+    /* Marginal intermediate batches remain hard-valid controller inputs and
+     * do not abort correction solely because they exceed 0.025. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.186;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.001;
+    sim.measurement_override_count = 4U;
+    sim.measurement_std_samples[0] = 0.001;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
+    sim.measurement_std_samples[3] = 0.030;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, result.correction_applied);
+
+    /* The same is true for a HIGH-NOISE intermediate batch. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 4U;
+    sim.measurement_std_samples[0] = 0.001;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
+    sim.measurement_std_samples[3] = 0.040;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, result.correction_applied);
+
+    /* Marginal baseline plus a clearly significant, repeatable +1 response
+     * may proceed into the unchanged controller. Later batches are strict. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 3U;
+    for (uint32_t i = 0U; i < sim.measurement_override_count; ++i)
+        sim.measurement_std_samples[i] = 0.027;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, result.characterization_minimum_response_samples <
+        result.actuator_step_samples);
+
+    /* A marginal probe response below 1.5 times the combined batch standard
+     * error is restored and blocked before controller correction. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.01;
+    sim.std_samples = 0.027;
+    io.context = &sim;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_valid);
+    SIM_ASSERT_TRUE(ctx, !result.correction_applied);
+    SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason,
+        "measurement noise") != NULL);
+
+    /* Opposite signs from the two cautious probes leave polarity ambiguous
+     * and block the controller. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.027;
+    sim.measurement_override_count = 3U;
+    sim.measurement_std_samples[0] = 0.027;
+    sim.measurement_std_samples[1] = 0.027;
+    sim.measurement_std_samples[2] = 0.027;
+    sim.measurement_adjustment_samples[2] = -0.04;
+    io.context = &sim;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.actuator_polarity, 0);
+    SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason, "repeatable") != NULL);
+    SIM_ASSERT_TRUE(ctx, !result.correction_applied);
+
+    /* A marginal readback mismatch fails the minimum probe safely. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.186;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.027;
     sim.readback_mismatch = 1;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result) != 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
     SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_FAILED);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_TRUE(ctx, !result.correction_applied);
+
+    /* A stable baseline remains a valid measurement when its first probe
+     * fails readback; the failure belongs to actuator characterization. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 24;
+    sim.initial_skew_samples = -0.238981;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.016051;
+    sim.readback_mismatch = 1;
+    io.context = &sim;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
+    SIM_ASSERT_TRUE(ctx, result.baseline_measurement_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.baseline_stability,
+        ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_valid);
+    SIM_ASSERT_TRUE(ctx, !result.correction_applied);
+    SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason, "readback") != NULL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_loop_stage_result(&result),
+        ADC_CAL_SKEW_STAGE_RESULT_ACTUATOR_READBACK_FAILED);
+
+    /* The characterization ceiling is not a convergence threshold: a
+     * marginal independent verification cannot contribute a consecutive
+     * pass or produce convergence. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.005;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 4U;
+    sim.measurement_std_samples[0] = 0.001;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
+    sim.measurement_std_samples[3] = 0.030;
+    sim.std_samples = 0.030;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_NOT_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, !result.correction_applied);
+    SIM_ASSERT_TRUE(ctx, result.consecutive_passes <
+        config.skew_required_consecutive_passes);
+    SIM_ASSERT_EQ_INT(ctx, result.latest_measurement_stability,
+        ADC_CAL_SKEW_STABILITY_MARGINAL);
+
+    /* HIGH-NOISE independent verifications may continue, but cannot count
+     * toward the strict two-batch final convergence requirement. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.005;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 4U;
+    sim.measurement_std_samples[0] = 0.001;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
+    sim.measurement_std_samples[3] = 0.040;
+    sim.std_samples = 0.040;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_NOT_CONVERGED);
+    SIM_ASSERT_TRUE(ctx, !result.correction_applied);
+    SIM_ASSERT_TRUE(ctx, result.consecutive_passes <
+        config.skew_required_consecutive_passes);
+    SIM_ASSERT_EQ_INT(ctx, result.latest_measurement_stability,
+        ADC_CAL_SKEW_STABILITY_HIGH_NOISE);
 
     /* Measurement-only mode never reads or writes an actuator. */
     config.skew_closed_loop_enable = 0;
@@ -3342,7 +4189,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.std_samples = 0.001;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status,
         ADC_CAL_SKEW_LOOP_MEASUREMENT_ONLY);
     SIM_ASSERT_EQ_INT(ctx, sim.reads, 0U);
@@ -3361,7 +4208,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.std_samples = 0.001;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_SATURATED);
 
     /* One passing batch is insufficient when two consecutive passes are
@@ -3374,7 +4221,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.std_samples = 0.001;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status,
         ADC_CAL_SKEW_LOOP_NOT_CONVERGED);
     SIM_ASSERT_EQ_INT(ctx, result.consecutive_passes, 1U);
@@ -3390,7 +4237,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.std_samples = 0.001;
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
-        &config, &io, 1.45e9, &result), 0);
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.status,
         ADC_CAL_SKEW_LOOP_NOT_CONVERGED);
     SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason, "resolution") != NULL);
@@ -3404,13 +4251,19 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     adc_cal_skew_stage_policy_result_t result;
 
     memset(&input, 0, sizeof(input));
+    SIM_ASSERT_TRUE(ctx, strcmp(adc_cal_skew_stage_result_name(
+        ADC_CAL_SKEW_STAGE_RESULT_CHARACTERIZATION_FAILED),
+        "FAIL - ACTUATOR CHARACTERIZATION") == 0);
     input.measurement_required = 1;
     input.primary_estimate_valid = 1;
     input.measured_skew_samples = 0.005;
     input.accepted_frames = 10U;
     input.minimum_accepted_frames = 3U;
     input.batch_std_samples = 0.001;
-    input.maximum_batch_std_samples = 0.02;
+    input.maximum_batch_std_samples =
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    input.characterization_maximum_batch_std_samples =
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES;
     input.tolerance_samples = 0.01;
 
     /* Valid in-tolerance open-loop measurement. */
@@ -3426,6 +4279,38 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
         ADC_CAL_SKEW_STAGE_RESULT_PASS);
     SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
+
+    /* The stability limit is inclusive.  Board-observed spreads remain
+     * stable through the configured boundary. */
+    input.batch_std_samples = 0.019;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+    input.batch_std_samples = 0.0224;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+    input.batch_std_samples = 0.0249;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+    input.batch_std_samples = ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+
+    /* Above the preferred threshold but below the separate ceiling is
+     * explicitly marginal, not stable or unsafe. */
+    input.batch_std_samples = ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES + 0.0001;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_VALID);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_EQ_INT(ctx, result.stage_result,
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
+    input.batch_std_samples = 0.001;
 
     /* Valid out-of-tolerance open-loop measurement remains usable. */
     input.measured_skew_samples = 0.1858;
@@ -3448,13 +4333,14 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
         ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
     SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
 
-    /* Excess batch spread is a real open-loop failure. */
+    /* A marginal open-loop measurement remains valid and usable even when
+     * no correction actuator is present. */
     input.advisory_warning = 0;
     input.measured_skew_samples = 0.1858;
     input.batch_std_samples = 0.03;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
         &input, &result), 0);
-    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_UNSTABLE);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_MARGINAL);
     SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
         ADC_CAL_SKEW_MEASUREMENT_VALID);
     SIM_ASSERT_EQ_INT(ctx, result.actuator_status,
@@ -3462,8 +4348,42 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, result.correction_status,
         ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE);
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
-        ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE);
-    SIM_ASSERT_TRUE(ctx, !result.pipeline_may_continue);
+        ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING);
+    SIM_ASSERT_TRUE(ctx, result.pipeline_may_continue && result.output_usable);
+
+    /* Three-state characterization gate boundaries. */
+    input.actuator_available = 1;
+    input.batch_std_samples = 0.020;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_cautious);
+    input.batch_std_samples = ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_STABLE);
+    input.batch_std_samples = 0.027;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+    input.batch_std_samples = 0.0349;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    input.batch_std_samples =
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES + 0.0001;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.stability,
+        ADC_CAL_SKEW_STABILITY_HIGH_NOISE);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+    SIM_ASSERT_TRUE(ctx, strstr(result.reason, "high-noise") != NULL);
+    input.actuator_available = 0;
 
     /* No estimate and insufficient frames are invalid. */
     input.batch_std_samples = 0.001;
@@ -3480,13 +4400,28 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
         ADC_CAL_SKEW_STAGE_RESULT_INVALID);
 
-    /* A polarity-family change makes the batch unstable. */
+    /* Marginal spread cannot bypass invalid tone population or a polarity
+     * branch-family change. */
     input.accepted_frames = 10U;
+    input.batch_std_samples = 0.030;
+    input.actuator_available = 1;
+    input.primary_estimate_valid = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_INVALID);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_allowed);
+    input.primary_estimate_valid = 1;
     input.polarity_branch_changes = 1U;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
         &input, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
-        ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE);
+        ADC_CAL_SKEW_STAGE_RESULT_INVALID);
+    SIM_ASSERT_EQ_INT(ctx, result.stability,
+        ADC_CAL_SKEW_STABILITY_INVALID);
+    SIM_ASSERT_EQ_INT(ctx, result.measurement_validity,
+        ADC_CAL_SKEW_MEASUREMENT_INVALID);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_allowed);
 
     /* A measurement-only open-loop stage is explicitly optional: loss of all
      * skew estimates is visible but does not invalidate calibrated output. */
@@ -3494,6 +4429,7 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     input.primary_estimate_valid = 0;
     input.accepted_frames = 0U;
     input.polarity_branch_changes = 0U;
+    input.actuator_available = 0;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
         &input, &result), 0);
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
@@ -3507,6 +4443,7 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     input.accepted_frames = 10U;
     input.polarity_branch_changes = 0U;
     input.measured_skew_samples = 0.005;
+    input.batch_std_samples = 0.001;
     input.actuator_available = 1;
     input.correction_applied = 1;
     input.correction_converged = 1;
@@ -3529,6 +4466,38 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, result.stage_result,
         ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_SATURATED);
 
+    /* Post-sequencing board baselines are valid marginal measurements and
+     * are eligible only for cautious characterization. */
+    memset(&input, 0, sizeof(input));
+    input.measurement_required = 1;
+    input.primary_estimate_valid = 1;
+    input.accepted_frames = 10U;
+    input.minimum_accepted_frames = 3U;
+    input.maximum_batch_std_samples =
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    input.characterization_maximum_batch_std_samples =
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES;
+    input.tolerance_samples = 0.01;
+    input.actuator_available = 1;
+    input.measured_skew_samples = -0.207771;
+    input.batch_std_samples = 20.257258e-12 *
+        SIM_DEFAULT_ADC_SAMPLE_RATE_HZ;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_NEAR(ctx, input.batch_std_samples, 0.0263344354, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+    input.measured_skew_samples = -0.207762;
+    input.batch_std_samples = 22.044405e-12 *
+        SIM_DEFAULT_ADC_SAMPLE_RATE_HZ;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_evaluate_stage_policy(
+        &input, &result), 0);
+    SIM_ASSERT_NEAR(ctx, input.batch_std_samples, 0.0286577265, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.stability, ADC_CAL_SKEW_STABILITY_MARGINAL);
+    SIM_ASSERT_TRUE(ctx, result.characterization_allowed);
+    SIM_ASSERT_TRUE(ctx, result.characterization_cautious);
+
     /* Exact board regression: stable 0.1858 samples, 0.74 ps spread,
      * 10/10 inverted frames, no branch changes, and no actuator. */
     memset(&input, 0, sizeof(input));
@@ -3536,8 +4505,12 @@ static int unit_skew_stage_policy(sim_assert_context_t *ctx)
     input.measured_skew_samples = 0.185824;
     input.accepted_frames = 10U;
     input.minimum_accepted_frames = 3U;
-    input.batch_std_samples = 0.740224e-12 * 1.45e9;
-    input.maximum_batch_std_samples = 0.02;
+    input.batch_std_samples =
+        0.740224e-12 * SIM_HISTORICAL_ADC_SAMPLE_RATE_HZ;
+    input.maximum_batch_std_samples =
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    input.characterization_maximum_batch_std_samples =
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES;
     input.polarity_branch_changes = 0U;
     input.tolerance_samples = 0.01;
     input.actuator_available = 0;
@@ -3571,6 +4544,7 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     int16_t pair_b[1016];
     double mapped_a[800];
     double mapped_b[800];
+    const double sample_rate_hz = SIM_DEFAULT_ADC_SAMPLE_RATE_HZ;
 
     for (size_t i = 0U; i < 1016U; ++i) {
         pair_a[i] = (int16_t)(i % 700U);
@@ -3587,22 +4561,25 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     }
 
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_from_tone_phases(
-        0.25, 0.25 + 6.28318530717958647692 * 100.0e6 / 1.45e9 * 0.12,
-        100.0e6, 1.45e9, &tone_skew), 0);
+        0.25, 0.25 + 6.28318530717958647692 * 100.0e6 /
+            sample_rate_hz * 0.12,
+        100.0e6, sample_rate_hz, &tone_skew), 0);
     SIM_ASSERT_NEAR(ctx, tone_skew, 0.12, 1.0e-12);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_from_tone_phases(
         0.25,
         0.25 + 3.14159265358979323846 +
-            6.28318530717958647692 * 100.0e6 / 1.45e9 * 0.12,
-        100.0e6, 1.45e9, &tone_skew), 0);
+            6.28318530717958647692 * 100.0e6 / sample_rate_hz * 0.12,
+        100.0e6, sample_rate_hz, &tone_skew), 0);
     SIM_ASSERT_NEAR(ctx, tone_skew, 0.12, 1.0e-12);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_from_tone_phases(
-        3.10, -3.10, 100.0e6, 1.45e9, &tone_skew), 0);
+        3.10, -3.10, 100.0e6, sample_rate_hz, &tone_skew), 0);
     SIM_ASSERT_TRUE(ctx, tone_skew > 0.0 && tone_skew < 0.25);
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_from_tone_phases(
-        0.0, 0.0, 0.0, 1.45e9, &tone_skew) != 0);
+        0.0, 0.0, 0.0, sample_rate_hz, &tone_skew) != 0);
 
     adc_cal_skew_default_config(&config);
+    SIM_ASSERT_NEAR(ctx, config.sample_rate_hz,
+                    SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, 1.0);
     config.sample_rate_hz = SIM_DEFAULT_ADC_SAMPLE_RATE_HZ;
     config.minimum_events = 3U;
     config.max_linear_skew_samples = 0.25;
@@ -3705,12 +4682,12 @@ static int perf_capture_test(
         return -1;
     }
     ++ctx->frame;
-    make_perf_tone(reference, capacity, 1450000000.0, 145000000.0,
+    make_perf_tone(reference, capacity, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, 130000000.0,
                    1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, &ctx->seed);
-    make_perf_tone(raw_a, capacity, 1450000000.0, 145000000.0,
+    make_perf_tone(raw_a, capacity, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, 130000000.0,
                    1000.0, 4.0, ctx->noise, 0.0, 0.0, 0.0, 0.0, false,
                    &ctx->seed);
-    make_perf_tone(raw_b, capacity, 1450000000.0, 145000000.0,
+    make_perf_tone(raw_b, capacity, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, 130000000.0,
                    1000.0, 5.0, ctx->noise, 0.0, 0.0, 0.0, 0.0, false,
                    &ctx->seed);
     if (ctx->invert_b) {
@@ -3742,49 +4719,54 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     static double baseline_a[800];
     static double baseline_b[800];
 
+    /* FFT frequency axes use the authoritative ADC rate. */
+    SIM_ASSERT_NEAR(ctx,
+        156.0 * SIM_DEFAULT_ADC_SAMPLE_RATE_HZ / 1016.0,
+        199606299.2125984, 1.0e-6);
+
     adc_cal_perf_default_config(&config);
     config.sample_count = 800U;
-    config.sample_rate_hz = 1450000000.0;
-    config.expected_fundamental_hz = 145000000.0;
+    config.sample_rate_hz = SIM_DEFAULT_ADC_SAMPLE_RATE_HZ;
+    config.expected_fundamental_hz = 130000000.0;
 
-    make_perf_tone(clean, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(clean, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(clean, 800U, config.sample_rate_hz, &clean_metrics), 0);
     SIM_ASSERT_TRUE(ctx, clean_metrics.sndr_db > 60.0f);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(
-        clean, 800U, 1300000000.0, &distorted_metrics), 0);
+        clean, 800U, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &distorted_metrics), 0);
     SIM_ASSERT_NEAR(ctx, distorted_metrics.signal_hz, 130000000.0, 1.0);
 
-    make_perf_tone(noisy, 800U, config.sample_rate_hz, 147000000.0,
+    make_perf_tone(noisy, 800U, config.sample_rate_hz, 132000000.0,
                    1000.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(noisy, 800U, config.sample_rate_hz, &noisy_metrics), 0);
     SIM_ASSERT_TRUE(ctx, noisy_metrics.signal_hz == noisy_metrics.signal_hz);
 
-    make_perf_tone(noisy, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(noisy, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 50.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(noisy, 800U, config.sample_rate_hz, &noisy_metrics), 0);
     SIM_ASSERT_TRUE(ctx, clean_metrics.sndr_db > noisy_metrics.sndr_db);
 
-    make_perf_tone(harmonic2, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(harmonic2, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 0.0, 0.10, 0.0, 0.0, 0.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(harmonic2, 800U, config.sample_rate_hz, &distorted_metrics), 0);
     SIM_ASSERT_TRUE(ctx, distorted_metrics.thd_db > clean_metrics.thd_db);
 
-    make_perf_tone(harmonic3, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(harmonic3, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 0.0, 0.0, 0.10, 0.0, 0.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(harmonic3, 800U, config.sample_rate_hz, &distorted_metrics), 0);
     SIM_ASSERT_TRUE(ctx, distorted_metrics.thd_db > clean_metrics.thd_db);
 
-    make_perf_tone(spur, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(spur, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 0.0, 0.0, 0.0, 230000000.0, 100.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(spur, 800U, config.sample_rate_hz, &distorted_metrics), 0);
     SIM_ASSERT_TRUE(ctx, distorted_metrics.sfdr_db < clean_metrics.sfdr_db);
 
-    make_perf_tone(noisy, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(noisy, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(noisy, 800U, config.sample_rate_hz, &noisy_metrics), 0);
 
-    make_perf_tone(noisy, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(noisy, 800U, config.sample_rate_hz, 130000000.0,
                    9000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, true, &rng);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_record(noisy, 800U, config.sample_rate_hz, &noisy_metrics), 0);
     SIM_ASSERT_TRUE(ctx, noisy_metrics.sndr_db < clean_metrics.sndr_db);
@@ -3793,7 +4775,7 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, adc_cal_perf_analyze_record(noisy, 800U, config.sample_rate_hz, &noisy_metrics) != 0);
     SIM_ASSERT_TRUE(ctx, adc_cal_perf_analyze_record(clean, 0U, config.sample_rate_hz, &noisy_metrics) != 0);
 
-    make_perf_tone(ref, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(ref, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
     memcpy(raw_b, clean, sizeof(raw_b));
     for (size_t i = 0U; i < 800U; ++i) raw_b[i] += 80.0 * sin((double)i);
@@ -3875,10 +4857,10 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     /* A genuine separate baseline may match when no correction is active. */
     memset(&capture_ctx, 0, sizeof(capture_ctx));
     capture_ctx.seed = 99U;
-    make_perf_tone(baseline_a, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(baseline_a, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, false,
                    &capture_ctx.seed);
-    make_perf_tone(baseline_b, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(baseline_b, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, false,
                    &capture_ctx.seed);
     config.final_offset_correction = 0.0;
@@ -3899,7 +4881,8 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, !frame.interleaved_metrics_available);
     SIM_ASSERT_NEAR(ctx, frame.raw_parallel_average.signal_hz,
                     frame.raw_a.signal_hz, 1.0);
-    SIM_ASSERT_NEAR(ctx, frame.sample_rate_hz, 1450000000.0, 1.0);
+    SIM_ASSERT_NEAR(ctx, frame.sample_rate_hz,
+                    SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, 1.0);
 
     /* Applying a correction changes values, but never shifts post-DMA data. */
     memset(&capture_ctx, 0, sizeof(capture_ctx));
@@ -3917,10 +4900,10 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     config.minimum_valid_frames = 1U;
     SIM_ASSERT_TRUE(ctx, adc_cal_perf_run_batch(&config, perf_capture_test, &capture_ctx, &batch) != 0);
 
-    make_perf_tone(noisy, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(noisy, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, false, &rng_repeat);
     rng_repeat = 42U;
-    make_perf_tone(repeat, 800U, config.sample_rate_hz, 145000000.0,
+    make_perf_tone(repeat, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, false, &rng_repeat);
     SIM_ASSERT_EQ_INT(ctx, memcmp(noisy, repeat, sizeof(noisy)), 0);
     return 1;
@@ -4000,6 +4983,8 @@ static void run_unit_tests(sim_assert_context_t *ctx)
     (void)unit_recorded_fixture_full_pipeline(ctx);
     (void)unit_rate_mismatched_fixture_full_pipeline(ctx);
     (void)unit_skew_phase_branch_resolver(ctx);
+    (void)unit_skew_measurement_conditioning(ctx);
+    (void)unit_skew_preparation_diagnostic(ctx);
     (void)unit_skew_closed_loop_controller(ctx);
     (void)unit_skew_stage_policy(ctx);
     (void)unit_skew_estimator_direct(ctx);
@@ -4118,6 +5103,21 @@ typedef struct {
     adc_cal_perf_batch_result_t latest_perf_batch;
     double active_gain_correction;
     double active_offset_correction;
+    uint32_t actuator_generation;
+    uint32_t actuator_initializations;
+    uint32_t setup_jesd_recoveries;
+    uint32_t setup_warmup_captures;
+    uint32_t warmup_samples_entered_statistics;
+    uint32_t sequence_counter;
+    uint32_t initialization_sequence;
+    uint32_t timing_sequence;
+    uint32_t offset_sequence;
+    uint32_t gain_sequence;
+    uint32_t skew_sequence;
+    uint32_t timing_generation;
+    uint32_t offset_generation;
+    uint32_t gain_generation;
+    uint32_t skew_generation;
     int16_t channel_a[SIM_ADC_CHANNEL_SAMPLES];
     int16_t channel_b[SIM_ADC_CHANNEL_SAMPLES];
     int16_t aligned_a[SIM_ADC_CHANNEL_SAMPLES];
@@ -4238,6 +5238,12 @@ static int sim_pipeline_prepare(
     ctx->latest_correlation = NAN;
     ctx->latest_skew = NAN;
     memset(&ctx->latest_perf, 0, sizeof(ctx->latest_perf));
+    ++ctx->actuator_generation;
+    ++ctx->actuator_initializations;
+    ++ctx->setup_jesd_recoveries;
+    ctx->setup_warmup_captures +=
+        ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES;
+    ctx->initialization_sequence = ++ctx->sequence_counter;
     return 0;
 }
 
@@ -4250,6 +5256,8 @@ static int sim_pipeline_run_timing(
     sim_pipeline_context_t *ctx = (sim_pipeline_context_t *)context;
     (void)config;
     if (ctx == NULL || state == NULL) return -1;
+    ctx->timing_sequence = ++ctx->sequence_counter;
+    ctx->timing_generation = ctx->actuator_generation;
     if (strcmp(ctx->scenario, "timing_failure") == 0 ||
         strcmp(ctx->scenario, "bad_reference") == 0) {
         if (reason != NULL) *reason = "reference frequency mismatch";
@@ -4276,6 +5284,8 @@ static int sim_pipeline_run_offset(
 {
     sim_pipeline_context_t *ctx = (sim_pipeline_context_t *)context;
     if (ctx == NULL || state == NULL) return -1;
+    ctx->offset_sequence = ++ctx->sequence_counter;
+    ctx->offset_generation = ctx->actuator_generation;
     if (strcmp(ctx->scenario, "offset_nonconvergence") == 0) {
         if (reason != NULL) *reason = "offset did not converge";
         sim_pipeline_write_iteration(ctx, "offset", 0,
@@ -4314,6 +5324,8 @@ static int sim_pipeline_run_gain(
 {
     sim_pipeline_context_t *ctx = (sim_pipeline_context_t *)context;
     if (ctx == NULL || state == NULL) return -1;
+    ctx->gain_sequence = ++ctx->sequence_counter;
+    ctx->gain_generation = ctx->actuator_generation;
     if (ctx->config.gain_a < 0.125) {
         if (reason != NULL) *reason = "gain correction saturated or outside supported range";
         sim_pipeline_write_iteration(ctx, "gain", 0,
@@ -4370,6 +5382,8 @@ static int sim_pipeline_run_skew(
     adc_cal_skew_result_t skew_result;
     adc_cal_skew_stage_policy_input_t policy_input;
     if (ctx == NULL || state == NULL) return -1;
+    ctx->skew_sequence = ++ctx->sequence_counter;
+    ctx->skew_generation = ctx->actuator_generation;
     make_dither_template(dither_template, SIM_ADC_CHANNEL_SAMPLES,
                          ctx->config.dither_period_samples,
                          ctx->config.dither_width_samples,
@@ -4403,7 +5417,10 @@ static int sim_pipeline_run_skew(
     policy_input.accepted_frames = 1U;
     policy_input.minimum_accepted_frames = 1U;
     policy_input.batch_std_samples = 0.0;
-    policy_input.maximum_batch_std_samples = 0.02;
+    policy_input.maximum_batch_std_samples =
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    policy_input.characterization_maximum_batch_std_samples =
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES;
     policy_input.tolerance_samples = 0.01;
     policy_input.advisory_warning =
         skew_result.status == ADC_CAL_SKEW_STATUS_WARNING;
@@ -4827,6 +5844,25 @@ static int run_one_pipeline_scenario(
             expected_success = k_pipeline_scenarios[i].expect_success;
             break;
         }
+    }
+    if (expected_success && status == 0 &&
+        (ctx.actuator_initializations != 1U ||
+         ctx.setup_jesd_recoveries != 1U ||
+         ctx.setup_warmup_captures !=
+             ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES ||
+         ctx.warmup_samples_entered_statistics != 0U ||
+         ctx.initialization_sequence == 0U ||
+         ctx.initialization_sequence >= ctx.timing_sequence ||
+         ctx.timing_sequence >= ctx.offset_sequence ||
+         ctx.offset_sequence >= ctx.gain_sequence ||
+         ctx.gain_sequence >= ctx.skew_sequence ||
+         ctx.timing_generation != ctx.actuator_generation ||
+         ctx.offset_generation != ctx.timing_generation ||
+         ctx.gain_generation != ctx.timing_generation ||
+         ctx.skew_generation != ctx.timing_generation)) {
+        status = -21;
+        pipeline.failure_reason =
+            "actuator/timing pipeline sequence invariant failed";
     }
     *scenario_passed = expected_success ? status == 0 : status != 0;
     fprintf(summary_file,

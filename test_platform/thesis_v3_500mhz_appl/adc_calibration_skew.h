@@ -26,6 +26,34 @@ extern "C" {
 #define ADC_CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES 0.03
 #endif
 
+#ifndef ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES
+/*
+ * Real-board characterization at 1.3 GSPS shows approximately 0.014 to
+ * 0.0225 sample batch standard deviation for otherwise valid, branch-stable
+ * common-frequency tone-phase skew estimates.  A 0.025 sample limit
+ * (~19.2 ps at 1.3 GSPS) leaves a small margin above that estimator noise
+ * floor while remaining far below one ADC sample.
+ */
+#define ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES 0.025
+#endif
+
+#ifndef ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES
+/* Confidence-classification boundary only. A hard-valid batch above this
+ * value is HIGH-NOISE and may still probe; this is never a no-write cutoff
+ * or a convergence threshold. */
+#define ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES 0.035
+#endif
+
+#ifndef ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER
+#define ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER 1.5
+#endif
+
+#ifndef ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES
+/* Discard real DMA captures during pre-timing actuator initialization so no
+ * link or datapath transient enters the authoritative timing context. */
+#define ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES 8U
+#endif
+
 #ifndef ADC_CAL_SKEW_DERIVATIVE_ENERGY_FLOOR
 #define ADC_CAL_SKEW_DERIVATIVE_ENERGY_FLOOR 1.0e-6
 #endif
@@ -106,7 +134,10 @@ typedef enum {
 
 typedef enum {
     ADC_CAL_SKEW_STABILITY_UNKNOWN = 0,
+    ADC_CAL_SKEW_STABILITY_INVALID,
     ADC_CAL_SKEW_STABILITY_UNSTABLE,
+    ADC_CAL_SKEW_STABILITY_HIGH_NOISE,
+    ADC_CAL_SKEW_STABILITY_MARGINAL,
     ADC_CAL_SKEW_STABILITY_STABLE
 } adc_cal_skew_stability_t;
 
@@ -133,6 +164,8 @@ typedef enum {
     ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE,
     ADC_CAL_SKEW_STAGE_RESULT_PASS,
     ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING,
+    ADC_CAL_SKEW_STAGE_RESULT_CHARACTERIZATION_FAILED,
+    ADC_CAL_SKEW_STAGE_RESULT_ACTUATOR_READBACK_FAILED,
     ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED,
     ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_SATURATED
 } adc_cal_skew_stage_result_t;
@@ -145,6 +178,7 @@ typedef struct {
     uint32_t minimum_accepted_frames;
     double batch_std_samples;
     double maximum_batch_std_samples;
+    double characterization_maximum_batch_std_samples;
     uint32_t polarity_branch_changes;
     double tolerance_samples;
     int advisory_warning;
@@ -163,6 +197,8 @@ typedef struct {
     adc_cal_skew_stage_result_t stage_result;
     int pipeline_may_continue;
     int output_usable;
+    int characterization_allowed;
+    int characterization_cautious;
     const char *reason;
 } adc_cal_skew_stage_policy_result_t;
 
@@ -189,7 +225,9 @@ typedef struct {
     double skew_actuator_step_samples;
     int skew_actuator_polarity;
     uint32_t skew_minimum_accepted_frames;
+    uint32_t skew_initial_warmup_frames;
     double skew_maximum_batch_std_samples;
+    double skew_characterization_maximum_batch_std_samples;
     double skew_characterization_step_tolerance_fraction;
 } adc_cal_skew_loop_config_t;
 
@@ -204,7 +242,9 @@ typedef struct {
 
 typedef int (*adc_cal_skew_measure_batch_fn)(
     void *context, adc_cal_skew_batch_measurement_t *measurement);
-typedef int (*adc_cal_skew_actuator_prepare_fn)(void *context);
+typedef int (*adc_cal_skew_actuator_verify_fn)(void *context);
+typedef int (*adc_cal_skew_discard_capture_fn)(
+    void *context, uint32_t capture_index, uint32_t capture_count);
 typedef int (*adc_cal_skew_register_read_fn)(void *context, int *value);
 typedef int (*adc_cal_skew_register_write_fn)(void *context, int value);
 typedef void (*adc_cal_skew_iteration_report_fn)(
@@ -224,7 +264,7 @@ typedef void (*adc_cal_skew_iteration_report_fn)(
 typedef struct {
     void *context;
     adc_cal_skew_measure_batch_fn measure_batch;
-    adc_cal_skew_actuator_prepare_fn prepare_actuator;
+    adc_cal_skew_actuator_verify_fn verify_actuator_ready;
     adc_cal_skew_register_read_fn read_register;
     adc_cal_skew_register_write_fn write_register;
     adc_cal_skew_iteration_report_fn report_iteration;
@@ -233,10 +273,23 @@ typedef struct {
 typedef struct {
     adc_cal_skew_loop_status_t status;
     int characterization_valid;
+    int characterization_attempted;
+    int characterization_allowed;
+    int characterization_cautious;
+    int baseline_measurement_valid;
+    adc_cal_skew_stability_t baseline_stability;
+    adc_cal_skew_stability_t first_probe_stability;
+    adc_cal_skew_stability_t repeat_probe_stability;
+    adc_cal_skew_stability_t latest_measurement_stability;
+    double initial_batch_std_samples;
+    double latest_measurement_std_samples;
+    double characterization_combined_uncertainty_samples;
+    double characterization_minimum_response_samples;
     double observed_step_samples;
     double observed_step_ps;
     int actuator_polarity;
     double actuator_step_samples;
+    int actuator_ready_verified;
     double initial_skew_samples;
     double final_skew_samples;
     double best_skew_samples;
@@ -252,6 +305,90 @@ typedef struct {
     int saturated;
     const char *failure_reason;
 } adc_cal_skew_loop_result_t;
+
+typedef enum {
+    ADC_CAL_SKEW_PREP_DIAG_JESD_ONLY = 0,
+    ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY,
+    ADC_CAL_SKEW_PREP_DIAG_COMBINED,
+    ADC_CAL_SKEW_PREP_DIAG_CTRL_ONLY,
+    ADC_CAL_SKEW_PREP_DIAG_ANALOG_ONLY,
+    ADC_CAL_SKEW_PREP_DIAG_DIGITAL_ONLY,
+    ADC_CAL_SKEW_PREP_DIAG_ANALOG_DIGITAL,
+    ADC_CAL_SKEW_PREP_DIAG_ENABLE_AFTER_VALUES
+} adc_cal_skew_prep_diag_mode_t;
+
+typedef enum {
+    ADC_CAL_SKEW_PREP_SNAPSHOT_BEFORE_BASELINE = 0,
+    ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_BASELINE,
+    ADC_CAL_SKEW_PREP_SNAPSHOT_BEFORE_OPERATION,
+    ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_OPERATION,
+    ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_WARMUP,
+    ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_FINAL_MEASUREMENT,
+    ADC_CAL_SKEW_PREP_SNAPSHOT_COUNT
+} adc_cal_skew_prep_snapshot_point_t;
+
+typedef int (*adc_cal_skew_prep_snapshot_fn)(
+    void *context, adc_cal_skew_prep_snapshot_point_t point);
+typedef int (*adc_cal_skew_prep_operation_fn)(void *context);
+
+typedef struct {
+    void *context;
+    adc_cal_skew_measure_batch_fn measure_batch;
+    adc_cal_skew_discard_capture_fn discard_capture;
+    adc_cal_skew_prep_snapshot_fn capture_snapshot;
+    adc_cal_skew_prep_operation_fn jesd_reset_only;
+    adc_cal_skew_prep_operation_fn actuator_prepare;
+    adc_cal_skew_prep_operation_fn restore_initial_state;
+    int actuator_only_supported;
+    const char *actuator_only_unsupported_reason;
+} adc_cal_skew_prep_diag_io_t;
+
+typedef struct {
+    int completed;
+    int unsupported;
+    adc_cal_skew_batch_measurement_t pre_measurement;
+    adc_cal_skew_batch_measurement_t post_measurement;
+    uint32_t snapshots_captured;
+    uint32_t warmup_captures_completed;
+    uint32_t jesd_reset_calls;
+    uint32_t actuator_prepare_calls;
+    uint32_t correction_write_calls;
+    int restore_attempted;
+    int restore_succeeded;
+    const char *reason;
+} adc_cal_skew_prep_diag_result_t;
+
+typedef enum {
+    ADC_CAL_SKEW_CONDITIONING_PRODUCTION = 0,
+    ADC_CAL_SKEW_CONDITIONING_DIAGNOSTIC_RAW_WINDOW
+} adc_cal_skew_conditioning_mode_t;
+
+typedef struct {
+    adc_cal_skew_conditioning_mode_t mode;
+    int timing_context_valid;
+    int offset_result_usable;
+    int gain_result_usable;
+    double production_offset_correction;
+    double production_gain_correction;
+} adc_cal_skew_conditioning_input_t;
+
+typedef struct {
+    int permitted;
+    int offset_dependency_bypassed;
+    int gain_dependency_bypassed;
+    double offset_correction;
+    double gain_correction;
+    const char *reason;
+} adc_cal_skew_conditioning_result_t;
+
+/* xil_printf has no floating-point conversion.  Split a finite value into
+ * fixed-six fields without narrowing its whole part to signed 32 bits. */
+typedef struct {
+    int negative;
+    uint32_t billions;
+    uint32_t units_below_billion;
+    uint32_t millionths;
+} adc_cal_fixed6_parts_t;
 
 typedef struct {
     size_t minimum_events;
@@ -321,6 +458,9 @@ int adc_cal_skew_evaluate_stage_policy(
 
 void adc_cal_skew_loop_default_config(adc_cal_skew_loop_config_t *config);
 const char *adc_cal_skew_loop_status_name(adc_cal_skew_loop_status_t status);
+
+adc_cal_skew_stage_result_t adc_cal_skew_loop_stage_result(
+    const adc_cal_skew_loop_result_t *result);
 int adc_cal_skew_plan_update(
     double measured_skew_samples,
     int current_register,
@@ -334,6 +474,15 @@ int adc_cal_skew_run_closed_loop(
     const adc_cal_skew_loop_io_t *io,
     double sample_rate_hz,
     adc_cal_skew_loop_result_t *result);
+int adc_cal_skew_run_preparation_diagnostic(
+    adc_cal_skew_prep_diag_mode_t mode,
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_prep_diag_io_t *io,
+    adc_cal_skew_prep_diag_result_t *result);
+int adc_cal_skew_select_measurement_conditioning(
+    const adc_cal_skew_conditioning_input_t *input,
+    adc_cal_skew_conditioning_result_t *result);
+int adc_cal_fixed6_parts(double value, adc_cal_fixed6_parts_t *parts);
 
 int adc_cal_skew_from_tone_phases(
     double channel_a_phase_rad,

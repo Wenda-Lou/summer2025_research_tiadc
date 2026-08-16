@@ -21,6 +21,7 @@ WAIT_IDLE_MS = 200  # Stop if idle this long after buffer full
 PLOT_FILE = "adc_sample.png"
 HEX_FILE = "adc_sample16bit.txt"
 DMA_RXBASE = 0x1300000
+ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
 
 
 class AD9695_clk_delay_mode(Enum):
@@ -123,7 +124,7 @@ def main():
                     count += 4
                 #for some reason channel a samples are all reversed, need to correct it
                 sample_channel_a = -sample_channel_a
-                Ts = 1/500000000 #500Mhz sampling rate
+                Ts = 1 / ADC_SAMPLE_RATE_HZ
                 ch_a_fft = numpy.fft.fft(sample_channel_a)
                 ch_b_fft = numpy.fft.fft(sample_channel_b)
                 ch_a_freq = numpy.fft.fftfreq(len(sample_channel_a), d=Ts)

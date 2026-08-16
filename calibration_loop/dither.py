@@ -63,48 +63,48 @@ class DitherConfig:
     """
 
     # --- DAC side (fixed by the DPG / AD9164 setup) -------------------------
-    fs_dac: float = 2000.0e6
+    fs_dac: float = 2600.0e6
     """DAC sample rate [Hz].
 
-    Not the 2457.6 MS/s the bench currently runs at: that rate divided by the
-    500 MS/s ADC clock is 4.9152, and ``adc_ratio`` has to be an integer (see
-    below).  2000 MS/s is the cheapest way to satisfy that -- it is one setting
-    on the external clock source feeding J31, and it leaves the ADC side, the
-    JESD lane rate and the bitstream untouched.  Raising the ADC clock to
-    614.4 MS/s would work equally well and costs a great deal more."""
+    The AD9164 DPG path runs at 2.600 GSPS from its internal clocking with the
+    100 MHz reference on J61.  Together with the 1.300 GSPS ADC clock this
+    gives the required integer ratio of two."""
 
     n_dac_points: int = 65536
     """Samples in one DPG vector."""
 
-    adc_ratio: int = 4
+    adc_ratio: int = 2
     """fs_dac / fs_adc.  Must be an integer -- see the class docstring."""
 
     # --- main tone ----------------------------------------------------------
-    sig_cycles: int = 6079
+    sig_cycles: int = 5041
     """Integer cycles of the main tone per vector, so the loop is seamless.
 
     The value is not free. What matters is how far the tone advances between one
     dither impulse and the next: that phase step is what makes the tone average
     away across events. A step close to a whole cycle means every impulse sees
     the same phase and the tone survives the averaging, inflating the offset and
-    gain estimates. 6079 gives 0.746 cycles per slot at the default geometry;
-    6143 would give 0.996 and is a trap. :meth:`tone_phase_coherence` measures
+    gain estimates. 5041 gives 0.846 cycles per slot at the default geometry;
+    5120 would give exactly 10 cycles per slot and is a trap. :meth:`tone_phase_coherence` measures
     this and :meth:`validate` rejects bad choices."""
 
     amp_dbfs: float = -6.0
     """Main tone amplitude [dBFS]."""
 
     # --- dither (all lengths in DAC samples) --------------------------------
-    dither_period_dac: int = 256
-    """Impulse repetition period [DAC samples]."""
+    dither_period_dac: int = 128
+    """Impulse repetition period [DAC samples].
 
-    dither_position_dac: int = 96
+    At the authoritative 2:1 rate ratio this preserves the estimator's
+    established 64-sample ADC-domain event spacing."""
+
+    dither_position_dac: int = 48
     """Impulse start inside its period [DAC samples]."""
 
-    dither_edge_dac: int = 16
+    dither_edge_dac: int = 8
     """Rise/fall length [DAC samples]."""
 
-    dither_top_dac: int = 32
+    dither_top_dac: int = 16
     """Flat-top length [DAC samples]."""
 
     dither_scale_lsb: float = 2000.0
@@ -339,6 +339,7 @@ def write_dac_files(cfg: DitherConfig, out_dir: str | Path, stem: str = "impulse
             "main_tone_amplitude_lsb": cfg.a_sine * DAC_FULL_SCALE,
             "dither_amplitude_lsb": cfg.a_dither * DAC_FULL_SCALE,
             "dither_type": "balanced random-polarity raised-cosine impulse",
+            "dither_event_period_seconds": cfg.dither_period_dac / cfg.fs_dac,
             "slot_period_adc_samples": cfg.slot_period,
             "pulse_len_adc_samples": cfg.pulse_len,
             "dither_duty_cycle": cfg.pulse_len / cfg.slot_period,

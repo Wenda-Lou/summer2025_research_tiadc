@@ -1,4 +1,5 @@
 #include "adc_calibration_skew.h"
+#include "adc_test_config.h"
 
 #include <float.h>
 #include <math.h>
@@ -14,7 +15,7 @@ void adc_cal_skew_default_config(adc_cal_skew_config_t *config)
 {
     if (config == NULL) return;
     config->minimum_events = ADC_CAL_SKEW_MIN_EVENTS;
-    config->sample_rate_hz = 1450000000.0;
+    config->sample_rate_hz = ADC_CONFIGURED_SAMPLE_RATE_HZ;
     config->max_linear_skew_samples = ADC_CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
     config->max_edge_disagreement_samples =
         ADC_CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
@@ -398,6 +399,9 @@ const char *adc_cal_skew_stability_name(adc_cal_skew_stability_t status)
 {
     switch (status) {
     case ADC_CAL_SKEW_STABILITY_STABLE: return "STABLE";
+    case ADC_CAL_SKEW_STABILITY_MARGINAL: return "MARGINAL";
+    case ADC_CAL_SKEW_STABILITY_HIGH_NOISE: return "HIGH-NOISE";
+    case ADC_CAL_SKEW_STABILITY_INVALID: return "INVALID";
     case ADC_CAL_SKEW_STABILITY_UNSTABLE: return "UNSTABLE";
     case ADC_CAL_SKEW_STABILITY_UNKNOWN:
     default:
@@ -445,13 +449,17 @@ const char *adc_cal_skew_stage_result_name(
     case ADC_CAL_SKEW_STAGE_RESULT_PASS: return "PASS";
     case ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING:
         return "PASS WITH WARNING";
+    case ADC_CAL_SKEW_STAGE_RESULT_CHARACTERIZATION_FAILED:
+        return "FAIL - ACTUATOR CHARACTERIZATION";
+    case ADC_CAL_SKEW_STAGE_RESULT_ACTUATOR_READBACK_FAILED:
+        return "FAIL - ACTUATOR READBACK";
     case ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED:
         return "CORRECTION NOT CONVERGED";
     case ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_SATURATED:
         return "CORRECTION SATURATED";
     case ADC_CAL_SKEW_STAGE_RESULT_INVALID:
     default:
-        return "FAIL - INVALID";
+        return "FAIL - MEASUREMENT INVALID";
     }
 }
 
@@ -474,6 +482,10 @@ int adc_cal_skew_evaluate_stage_policy(
         ADC_CAL_SKEW_ACTUATOR_UNAVAILABLE;
     if (!adc_cal_double_isfinite(input->maximum_batch_std_samples) ||
         input->maximum_batch_std_samples < 0.0 ||
+        !adc_cal_double_isfinite(
+            input->characterization_maximum_batch_std_samples) ||
+        input->characterization_maximum_batch_std_samples <
+            input->maximum_batch_std_samples ||
         !adc_cal_double_isfinite(input->tolerance_samples) ||
         input->tolerance_samples < 0.0 ||
         input->minimum_accepted_frames == 0U) return -3;
@@ -505,32 +517,51 @@ int adc_cal_skew_evaluate_stage_policy(
         }
         return 0;
     }
-    result->measurement_validity = ADC_CAL_SKEW_MEASUREMENT_VALID;
     if (input->polarity_branch_changes > 0U) {
-        result->stability = ADC_CAL_SKEW_STABILITY_UNSTABLE;
+        result->stability = ADC_CAL_SKEW_STABILITY_INVALID;
         result->stage_result = input->measurement_required ?
-            ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE :
+            ADC_CAL_SKEW_STAGE_RESULT_INVALID :
             ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
         result->pipeline_may_continue = input->measurement_required ? 0 : 1;
         result->output_usable = input->measurement_required ? 0 : 1;
         result->reason = "polarity branch changed between accepted frames";
         return 0;
     }
-    if (!adc_cal_double_isfinite(input->batch_std_samples) ||
-        input->batch_std_samples > input->maximum_batch_std_samples) {
-        result->stability = ADC_CAL_SKEW_STABILITY_UNSTABLE;
-        result->stage_result = input->measurement_required ?
-            ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE :
-            ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
-        result->pipeline_may_continue = input->measurement_required ? 0 : 1;
-        result->output_usable = input->measurement_required ? 0 : 1;
-        result->reason = "open-loop skew estimate is unstable";
+    if (!adc_cal_double_isfinite(input->batch_std_samples)) {
+        result->stability = ADC_CAL_SKEW_STABILITY_INVALID;
+        result->reason = "batch skew standard deviation is nonfinite";
         return 0;
     }
-    result->stability = ADC_CAL_SKEW_STABILITY_STABLE;
+    result->measurement_validity = ADC_CAL_SKEW_MEASUREMENT_VALID;
+    result->stability = input->batch_std_samples <=
+        input->maximum_batch_std_samples ? ADC_CAL_SKEW_STABILITY_STABLE :
+        input->batch_std_samples <=
+            input->characterization_maximum_batch_std_samples ?
+                ADC_CAL_SKEW_STABILITY_MARGINAL :
+                ADC_CAL_SKEW_STABILITY_HIGH_NOISE;
     result->tolerance_status =
         fabs(input->measured_skew_samples) <= input->tolerance_samples ?
             ADC_CAL_SKEW_TOLERANCE_IN : ADC_CAL_SKEW_TOLERANCE_OUT;
+    result->characterization_allowed = input->actuator_available;
+    result->characterization_cautious = input->actuator_available &&
+        result->stability != ADC_CAL_SKEW_STABILITY_STABLE;
+    if (result->stability == ADC_CAL_SKEW_STABILITY_MARGINAL ||
+        result->stability == ADC_CAL_SKEW_STABILITY_HIGH_NOISE) {
+        result->stage_result = input->actuator_available ?
+            ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED :
+            ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+        result->pipeline_may_continue = input->actuator_available ? 0 : 1;
+        result->output_usable = input->actuator_available ? 0 : 1;
+        result->reason = result->stability ==
+            ADC_CAL_SKEW_STABILITY_HIGH_NOISE ?
+                (input->actuator_available ?
+                    "high-noise baseline is eligible for cautious characterization" :
+                    "valid high-noise skew measurement; characterization unavailable") :
+                (input->actuator_available ?
+                    "marginal baseline is eligible for cautious characterization" :
+                    "valid marginal skew measurement; characterization unavailable");
+        return 0;
+    }
     if (!input->actuator_available) {
         result->correction_status = ADC_CAL_SKEW_CORRECTION_NOT_APPLICABLE;
         result->stage_result =
@@ -584,7 +615,12 @@ void adc_cal_skew_loop_default_config(adc_cal_skew_loop_config_t *config)
     config->skew_actuator_step_samples = 0.0;
     config->skew_actuator_polarity = 0;
     config->skew_minimum_accepted_frames = 3U;
-    config->skew_maximum_batch_std_samples = 0.02;
+    config->skew_initial_warmup_frames =
+        ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES;
+    config->skew_maximum_batch_std_samples =
+        ADC_CAL_SKEW_MAX_BATCH_STD_SAMPLES;
+    config->skew_characterization_maximum_batch_std_samples =
+        ADC_CAL_SKEW_CHARACTERIZATION_MAX_STD_SAMPLES;
     config->skew_characterization_step_tolerance_fraction = 0.35;
 }
 
@@ -599,6 +635,35 @@ const char *adc_cal_skew_loop_status_name(adc_cal_skew_loop_status_t status)
         return "ACTUATOR UNAVAILABLE";
     case ADC_CAL_SKEW_LOOP_FAILED:
     default: return "FAILED";
+    }
+}
+
+adc_cal_skew_stage_result_t adc_cal_skew_loop_stage_result(
+    const adc_cal_skew_loop_result_t *result)
+{
+    if (result == NULL) return ADC_CAL_SKEW_STAGE_RESULT_INVALID;
+    switch (result->status) {
+    case ADC_CAL_SKEW_LOOP_CONVERGED:
+        return ADC_CAL_SKEW_STAGE_RESULT_PASS;
+    case ADC_CAL_SKEW_LOOP_MEASUREMENT_ONLY:
+        return ADC_CAL_SKEW_STAGE_RESULT_PASS_WITH_WARNING;
+    case ADC_CAL_SKEW_LOOP_NOT_CONVERGED:
+        return ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_NOT_CONVERGED;
+    case ADC_CAL_SKEW_LOOP_SATURATED:
+        return ADC_CAL_SKEW_STAGE_RESULT_CORRECTION_SATURATED;
+    case ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE:
+    case ADC_CAL_SKEW_LOOP_FAILED:
+    default:
+        if (!result->baseline_measurement_valid)
+            return ADC_CAL_SKEW_STAGE_RESULT_INVALID;
+        if (result->baseline_stability == ADC_CAL_SKEW_STABILITY_INVALID ||
+            result->baseline_stability == ADC_CAL_SKEW_STABILITY_UNSTABLE)
+            return ADC_CAL_SKEW_STAGE_RESULT_UNSTABLE;
+        if (result->failure_reason != NULL &&
+            (strstr(result->failure_reason, "readback") != NULL ||
+             strstr(result->failure_reason, "register read") != NULL))
+            return ADC_CAL_SKEW_STAGE_RESULT_ACTUATOR_READBACK_FAILED;
+        return ADC_CAL_SKEW_STAGE_RESULT_CHARACTERIZATION_FAILED;
     }
 }
 
@@ -619,11 +684,15 @@ static int adc_cal_skew_loop_config_valid(
         adc_cal_double_isfinite(config->skew_maximum_batch_std_samples) &&
         config->skew_maximum_batch_std_samples >= 0.0 &&
         adc_cal_double_isfinite(
+            config->skew_characterization_maximum_batch_std_samples) &&
+        config->skew_characterization_maximum_batch_std_samples >=
+            config->skew_maximum_batch_std_samples &&
+        adc_cal_double_isfinite(
             config->skew_characterization_step_tolerance_fraction) &&
         config->skew_characterization_step_tolerance_fraction >= 0.0;
 }
 
-static int adc_cal_skew_measurement_valid(
+static int adc_cal_skew_measurement_hard_valid(
     const adc_cal_skew_loop_config_t *config,
     const adc_cal_skew_batch_measurement_t *measurement)
 {
@@ -631,9 +700,38 @@ static int adc_cal_skew_measurement_valid(
         adc_cal_double_isfinite(measurement->skew_samples) &&
         adc_cal_double_isfinite(measurement->batch_std_samples) &&
         measurement->accepted_frames >=
-            config->skew_minimum_accepted_frames &&
+            config->skew_minimum_accepted_frames;
+}
+
+static int adc_cal_skew_measurement_valid(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_batch_measurement_t *measurement)
+{
+    return adc_cal_skew_measurement_hard_valid(config, measurement) &&
         measurement->batch_std_samples <=
             config->skew_maximum_batch_std_samples;
+}
+
+static int adc_cal_skew_measurement_characterization_eligible(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_batch_measurement_t *measurement)
+{
+    return adc_cal_skew_measurement_hard_valid(config, measurement);
+}
+
+static adc_cal_skew_stability_t adc_cal_skew_measurement_stability(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_batch_measurement_t *measurement)
+{
+    if (!adc_cal_skew_measurement_characterization_eligible(
+            config, measurement))
+        return ADC_CAL_SKEW_STABILITY_INVALID;
+    return measurement->batch_std_samples <=
+        config->skew_maximum_batch_std_samples ? ADC_CAL_SKEW_STABILITY_STABLE :
+        measurement->batch_std_samples <=
+            config->skew_characterization_maximum_batch_std_samples ?
+                ADC_CAL_SKEW_STABILITY_MARGINAL :
+                ADC_CAL_SKEW_STABILITY_HIGH_NOISE;
 }
 
 int adc_cal_skew_plan_update(
@@ -733,8 +831,11 @@ int adc_cal_skew_run_closed_loop(
     int current_register = 0;
     int characterization_register;
     int characterization_direction = 1;
+    int measurement_status;
     double observed;
     double observed_repeat;
+    double characterization_uncertainty;
+    double repeat_characterization_uncertainty;
     if (result == NULL) return -1;
     memset(result, 0, sizeof(*result));
     result->status = ADC_CAL_SKEW_LOOP_FAILED;
@@ -744,65 +845,71 @@ int adc_cal_skew_run_closed_loop(
     result->final_batch_std_samples = NAN;
     result->observed_step_samples = NAN;
     result->observed_step_ps = NAN;
+    result->baseline_stability = ADC_CAL_SKEW_STABILITY_UNKNOWN;
+    result->first_probe_stability = ADC_CAL_SKEW_STABILITY_UNKNOWN;
+    result->repeat_probe_stability = ADC_CAL_SKEW_STABILITY_UNKNOWN;
+    result->latest_measurement_stability = ADC_CAL_SKEW_STABILITY_UNKNOWN;
+    result->initial_batch_std_samples = NAN;
+    result->latest_measurement_std_samples = NAN;
+    result->characterization_combined_uncertainty_samples = NAN;
+    result->characterization_minimum_response_samples = NAN;
     result->initial_register = -1;
     result->final_register = -1;
     result->failure_reason = "closed-loop configuration is invalid";
     if (!adc_cal_skew_loop_config_valid(config) || io == NULL ||
         io->measure_batch == NULL || !adc_cal_double_isfinite(sample_rate_hz) ||
         sample_rate_hz <= 0.0) return -2;
-    memset(&measurement, 0, sizeof(measurement));
-    if (io->measure_batch(io->context, &measurement) != 0 ||
-        !adc_cal_skew_measurement_valid(config, &measurement)) {
-        result->failure_reason = measurement.reason != NULL ?
-            measurement.reason : "invalid primary skew estimate";
-        return -3;
+    if (config->skew_closed_loop_enable) {
+        if (io->read_register == NULL || io->write_register == NULL ||
+            io->verify_actuator_ready == NULL) {
+            result->status = ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE;
+            result->failure_reason = "ACTUATOR_UNAVAILABLE";
+            return 0;
+        }
+        /* This check is deliberately before the authoritative baseline and
+         * must be read-only.  Hardware initialization, JESD recovery, and
+         * warm-up belong to pipeline setup before timing alignment. */
+        if (io->verify_actuator_ready(io->context) != 0) {
+            result->status = ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE;
+            result->failure_reason = "ACTUATOR_NOT_READY";
+            return 0;
+        }
+        result->actuator_ready_verified = 1;
     }
+    memset(&measurement, 0, sizeof(measurement));
+    measurement_status = io->measure_batch(io->context, &measurement);
     result->initial_skew_samples = measurement.skew_samples;
     result->final_skew_samples = measurement.skew_samples;
     result->best_skew_samples = measurement.skew_samples;
     result->final_batch_std_samples = measurement.batch_std_samples;
+    result->initial_batch_std_samples = measurement.batch_std_samples;
+    result->latest_measurement_std_samples = measurement.batch_std_samples;
     result->accepted_frames += measurement.accepted_frames;
     result->rejected_frames += measurement.rejected_frames;
+    result->baseline_measurement_valid = measurement_status == 0 &&
+        adc_cal_skew_measurement_hard_valid(config, &measurement);
+    if (measurement_status == 0)
+        result->baseline_stability = result->baseline_measurement_valid ?
+            adc_cal_skew_measurement_stability(config, &measurement) :
+            ADC_CAL_SKEW_STABILITY_INVALID;
+    result->latest_measurement_stability = result->baseline_stability;
+    if (measurement_status != 0 ||
+        (config->skew_closed_loop_enable ?
+            !adc_cal_skew_measurement_characterization_eligible(
+                config, &measurement) :
+            !adc_cal_skew_measurement_valid(config, &measurement))) {
+        result->failure_reason = measurement.reason != NULL ?
+            measurement.reason : "invalid primary skew estimate";
+        return -3;
+    }
     if (!config->skew_closed_loop_enable) {
         result->status = ADC_CAL_SKEW_LOOP_MEASUREMENT_ONLY;
         result->failure_reason = "closed-loop skew correction is disabled";
         return 0;
     }
-    if (io->read_register == NULL || io->write_register == NULL) {
-        result->status = ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE;
-        result->failure_reason = "ACTUATOR_UNAVAILABLE";
-        return 0;
-    }
-    /* Measurement validity is deliberately established before actuator
-     * preparation.  Board backends may write a neutral/default code while
-     * preparing, so an invalid estimator must never reach this callback. */
-    if (io->prepare_actuator != NULL &&
-        io->prepare_actuator(io->context) != 0) {
-        result->status = ADC_CAL_SKEW_LOOP_ACTUATOR_UNAVAILABLE;
-        result->failure_reason = "ACTUATOR_UNAVAILABLE";
-        return 0;
-    }
-    if (io->prepare_actuator != NULL) {
-        adc_cal_skew_batch_measurement_t prepared_baseline;
-        memset(&prepared_baseline, 0, sizeof(prepared_baseline));
-        if (io->measure_batch(io->context, &prepared_baseline) != 0 ||
-            !adc_cal_skew_measurement_valid(config, &prepared_baseline)) {
-            result->failure_reason = prepared_baseline.reason != NULL ?
-                prepared_baseline.reason :
-                "post-preparation skew baseline is invalid";
-            return -4;
-        }
-        /* Never characterize an actuator step against a measurement taken
-         * before the backend was prepared. Preparation can change clock-mode
-         * state even when it selects the same nominal register code. */
-        measurement = prepared_baseline;
-        result->initial_skew_samples = measurement.skew_samples;
-        result->final_skew_samples = measurement.skew_samples;
-        result->best_skew_samples = measurement.skew_samples;
-        result->final_batch_std_samples = measurement.batch_std_samples;
-        result->accepted_frames += measurement.accepted_frames;
-        result->rejected_frames += measurement.rejected_frames;
-    }
+    result->characterization_allowed = 1;
+    result->characterization_cautious =
+        result->baseline_stability != ADC_CAL_SKEW_STABILITY_STABLE;
     if (io->read_register(io->context, &current_register) != 0 ||
         current_register < config->skew_register_min ||
         current_register > config->skew_register_max) {
@@ -814,14 +921,23 @@ int adc_cal_skew_run_closed_loop(
     if (current_register == config->skew_register_max)
         characterization_direction = -1;
     characterization_register = current_register + characterization_direction;
+    result->characterization_attempted = 1;
     if (adc_cal_skew_verified_write(
             config, io, current_register, characterization_register) != 0) {
         result->failure_reason = "actuator characterization write/readback failed";
         return -6;
     }
     memset(&stepped, 0, sizeof(stepped));
-    if (io->measure_batch(io->context, &stepped) != 0 ||
-        !adc_cal_skew_measurement_valid(config, &stepped)) {
+    measurement_status = io->measure_batch(io->context, &stepped);
+    if (measurement_status == 0) {
+        result->first_probe_stability =
+            adc_cal_skew_measurement_stability(config, &stepped);
+        result->latest_measurement_stability = result->first_probe_stability;
+        result->latest_measurement_std_samples = stepped.batch_std_samples;
+    }
+    if (measurement_status != 0 ||
+        !adc_cal_skew_measurement_characterization_eligible(
+            config, &stepped)) {
         (void)adc_cal_skew_verified_write(
             config, io, characterization_register, current_register);
         result->failure_reason = stepped.reason != NULL ? stepped.reason :
@@ -843,8 +959,18 @@ int adc_cal_skew_run_closed_loop(
         return -8;
     }
     memset(&stepped_repeat, 0, sizeof(stepped_repeat));
-    if (io->measure_batch(io->context, &stepped_repeat) != 0 ||
-        !adc_cal_skew_measurement_valid(config, &stepped_repeat)) {
+    measurement_status = io->measure_batch(io->context, &stepped_repeat);
+    if (measurement_status == 0) {
+        result->repeat_probe_stability =
+            adc_cal_skew_measurement_stability(config, &stepped_repeat);
+        result->latest_measurement_stability =
+            result->repeat_probe_stability;
+        result->latest_measurement_std_samples =
+            stepped_repeat.batch_std_samples;
+    }
+    if (measurement_status != 0 ||
+        !adc_cal_skew_measurement_characterization_eligible(
+            config, &stepped_repeat)) {
         (void)adc_cal_skew_verified_write(
             config, io, characterization_register, current_register);
         result->failure_reason = stepped_repeat.reason != NULL ?
@@ -860,6 +986,34 @@ int adc_cal_skew_run_closed_loop(
             config, io, characterization_register, current_register) != 0) {
         result->failure_reason = "repeat characterization restoration failed";
         return -8;
+    }
+    characterization_uncertainty = sqrt(
+        measurement.batch_std_samples * measurement.batch_std_samples /
+            (double)measurement.accepted_frames +
+        stepped.batch_std_samples * stepped.batch_std_samples /
+            (double)stepped.accepted_frames);
+    repeat_characterization_uncertainty = sqrt(
+        measurement.batch_std_samples * measurement.batch_std_samples /
+            (double)measurement.accepted_frames +
+        stepped_repeat.batch_std_samples *
+            stepped_repeat.batch_std_samples /
+            (double)stepped_repeat.accepted_frames);
+    result->characterization_combined_uncertainty_samples = fmax(
+        characterization_uncertainty,
+        repeat_characterization_uncertainty);
+    result->characterization_minimum_response_samples = fmax(
+        1.0e-9,
+        ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER *
+            result->characterization_combined_uncertainty_samples);
+    if (fabs(observed) <
+             ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER *
+                 characterization_uncertainty ||
+        fabs(observed_repeat) <
+             ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER *
+                 repeat_characterization_uncertainty) {
+        result->failure_reason =
+            "actuator response not distinguishable from measurement noise";
+        return -9;
     }
     if (!adc_cal_double_isfinite(observed) || fabs(observed) <= 1.0e-9) {
         result->failure_reason = "actuator characterization produced no measurable step";
@@ -913,7 +1067,10 @@ int adc_cal_skew_run_closed_loop(
             result->best_skew_samples = measurement.skew_samples;
         if (fabs(measurement.skew_samples) <=
             active.skew_tolerance_samples) {
-            ++result->consecutive_passes;
+            if (adc_cal_skew_measurement_valid(&active, &measurement))
+                ++result->consecutive_passes;
+            else
+                result->consecutive_passes = 0U;
             /* An iteration row records a controller decision, not a DMA
              * request.  When this decision establishes convergence, the
              * loop returns without collecting a post-decision batch.  It is
@@ -979,8 +1136,15 @@ int adc_cal_skew_run_closed_loop(
         }
         if (iteration == active.skew_max_iterations) break;
         memset(&measurement, 0, sizeof(measurement));
-        if (io->measure_batch(io->context, &measurement) != 0 ||
-            !adc_cal_skew_measurement_valid(&active, &measurement)) {
+        measurement_status = io->measure_batch(io->context, &measurement);
+        if (measurement_status == 0) {
+            result->latest_measurement_stability =
+                adc_cal_skew_measurement_stability(&active, &measurement);
+            result->latest_measurement_std_samples =
+                measurement.batch_std_samples;
+        }
+        if (measurement_status != 0 ||
+            !adc_cal_skew_measurement_hard_valid(&active, &measurement)) {
             result->failure_reason = measurement.reason != NULL ?
                 measurement.reason : "post-update skew estimate is invalid";
             return -14;
@@ -995,6 +1159,205 @@ int adc_cal_skew_run_closed_loop(
     result->failure_reason = result->saturated ?
         "actuator saturated before convergence" :
         "closed-loop iteration limit reached";
+    return 0;
+}
+
+static int adc_cal_skew_prep_diag_snapshot(
+    const adc_cal_skew_prep_diag_io_t *io,
+    adc_cal_skew_prep_snapshot_point_t point,
+    adc_cal_skew_prep_diag_result_t *result)
+{
+    if (io->capture_snapshot(io->context, point) != 0) return -1;
+    ++result->snapshots_captured;
+    return 0;
+}
+
+int adc_cal_skew_select_measurement_conditioning(
+    const adc_cal_skew_conditioning_input_t *input,
+    adc_cal_skew_conditioning_result_t *result)
+{
+    if (result == NULL) return -1;
+    memset(result, 0, sizeof(*result));
+    result->offset_correction = NAN;
+    result->gain_correction = NAN;
+    result->reason = "skew measurement conditioning is invalid";
+    if (input == NULL) return -2;
+    if (!input->timing_context_valid) {
+        result->reason = "timing context is invalid";
+        return 0;
+    }
+    if (input->mode == ADC_CAL_SKEW_CONDITIONING_DIAGNOSTIC_RAW_WINDOW) {
+        result->permitted = 1;
+        result->offset_dependency_bypassed = 1;
+        result->gain_dependency_bypassed = 1;
+        result->offset_correction = 0.0;
+        result->gain_correction = 1.0;
+        result->reason = "diagnostic raw-window neutral conditioning";
+        return 0;
+    }
+    if (input->mode != ADC_CAL_SKEW_CONDITIONING_PRODUCTION) return -3;
+    if (!input->offset_result_usable) {
+        result->reason = "offset stage result is not usable";
+        return 0;
+    }
+    if (!input->gain_result_usable ||
+        !adc_cal_double_isfinite(input->production_gain_correction) ||
+        input->production_gain_correction <= 0.0 ||
+        !adc_cal_double_isfinite(input->production_offset_correction)) {
+        result->reason = "gain stage result is not usable";
+        return 0;
+    }
+    result->permitted = 1;
+    result->offset_correction = input->production_offset_correction;
+    result->gain_correction = input->production_gain_correction;
+    result->reason = "production conditioning dependencies are valid";
+    return 0;
+}
+
+int adc_cal_fixed6_parts(double value, adc_cal_fixed6_parts_t *parts)
+{
+    uint64_t whole;
+    uint32_t millionths;
+    double absolute_value;
+    if (parts == NULL) return -1;
+    memset(parts, 0, sizeof(*parts));
+    if (!adc_cal_double_isfinite(value)) return -2;
+    absolute_value = fabs(value);
+    if (absolute_value > (double)UINT64_MAX) return -3;
+    whole = (uint64_t)absolute_value;
+    millionths = (uint32_t)(
+        (absolute_value - (double)whole) * 1000000.0 + 0.5);
+    if (millionths >= 1000000U) {
+        if (whole == UINT64_MAX) return -3;
+        ++whole;
+        millionths = 0U;
+    }
+    if (whole / 1000000000ULL > UINT32_MAX) return -4;
+    parts->negative = value < 0.0;
+    parts->billions = (uint32_t)(whole / 1000000000ULL);
+    parts->units_below_billion = (uint32_t)(whole % 1000000000ULL);
+    parts->millionths = millionths;
+    return 0;
+}
+
+int adc_cal_skew_run_preparation_diagnostic(
+    adc_cal_skew_prep_diag_mode_t mode,
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_prep_diag_io_t *io,
+    adc_cal_skew_prep_diag_result_t *result)
+{
+    adc_cal_skew_prep_operation_fn operation = NULL;
+    int status = 0;
+    int operation_completed = 0;
+    int restore_required = 0;
+
+    if (result == NULL) return -1;
+    memset(result, 0, sizeof(*result));
+    result->reason = "preparation diagnostic configuration is invalid";
+    if (!adc_cal_skew_loop_config_valid(config) || io == NULL ||
+        io->measure_batch == NULL || io->discard_capture == NULL ||
+        io->capture_snapshot == NULL) return -2;
+    if (mode == ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY &&
+        !io->actuator_only_supported) {
+        result->unsupported = 1;
+        result->reason = io->actuator_only_unsupported_reason != NULL ?
+            io->actuator_only_unsupported_reason :
+            "actuator preparation intrinsically requires JESD reset";
+        return 0;
+    }
+    switch (mode) {
+    case ADC_CAL_SKEW_PREP_DIAG_JESD_ONLY:
+        operation = io->jesd_reset_only;
+        break;
+    case ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY:
+    case ADC_CAL_SKEW_PREP_DIAG_COMBINED:
+    case ADC_CAL_SKEW_PREP_DIAG_CTRL_ONLY:
+    case ADC_CAL_SKEW_PREP_DIAG_ANALOG_ONLY:
+    case ADC_CAL_SKEW_PREP_DIAG_DIGITAL_ONLY:
+    case ADC_CAL_SKEW_PREP_DIAG_ANALOG_DIGITAL:
+    case ADC_CAL_SKEW_PREP_DIAG_ENABLE_AFTER_VALUES:
+        operation = io->actuator_prepare;
+        restore_required = 1;
+        break;
+    default:
+        return -3;
+    }
+    if (operation == NULL ||
+        (restore_required && io->restore_initial_state == NULL)) return -4;
+    if (adc_cal_skew_prep_diag_snapshot(
+            io, ADC_CAL_SKEW_PREP_SNAPSHOT_BEFORE_BASELINE, result) != 0)
+        return -5;
+    if (io->measure_batch(io->context, &result->pre_measurement) != 0 ||
+        !adc_cal_skew_measurement_valid(config, &result->pre_measurement)) {
+        result->reason = result->pre_measurement.reason != NULL ?
+            result->pre_measurement.reason :
+            "pre-operation skew qualification is not valid and stable";
+        return -6;
+    }
+    if (adc_cal_skew_prep_diag_snapshot(
+            io, ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_BASELINE, result) != 0 ||
+        adc_cal_skew_prep_diag_snapshot(
+            io, ADC_CAL_SKEW_PREP_SNAPSHOT_BEFORE_OPERATION, result) != 0)
+        return -7;
+    if (operation(io->context) != 0) {
+        result->reason = "operation under test failed";
+        status = -8;
+        operation_completed = 1;
+        goto restore_state;
+    }
+    operation_completed = 1;
+    if (mode == ADC_CAL_SKEW_PREP_DIAG_JESD_ONLY)
+        ++result->jesd_reset_calls;
+    else
+        ++result->actuator_prepare_calls;
+    if (adc_cal_skew_prep_diag_snapshot(
+            io, ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_OPERATION, result) != 0)
+        {
+            status = -9;
+            goto restore_state;
+        }
+    for (uint32_t capture = 1U;
+         capture <= config->skew_initial_warmup_frames; ++capture) {
+        if (io->discard_capture(
+                io->context, capture,
+                config->skew_initial_warmup_frames) != 0) {
+            result->reason = "diagnostic warm-up DMA capture failed";
+            status = -10;
+            goto restore_state;
+        }
+        result->warmup_captures_completed = capture;
+    }
+    if (adc_cal_skew_prep_diag_snapshot(
+            io, ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_WARMUP, result) != 0)
+        {
+            status = -11;
+            goto restore_state;
+        }
+    if (io->measure_batch(io->context, &result->post_measurement) != 0) {
+        result->reason = result->post_measurement.reason != NULL ?
+            result->post_measurement.reason :
+            "post-operation skew measurement failed";
+        status = -12;
+        goto restore_state;
+    }
+    if (adc_cal_skew_prep_diag_snapshot(
+            io, ADC_CAL_SKEW_PREP_SNAPSHOT_AFTER_FINAL_MEASUREMENT,
+            result) != 0) {
+        status = -13;
+        goto restore_state;
+    }
+restore_state:
+    if (restore_required && operation_completed) {
+        result->restore_attempted = 1;
+        if (io->restore_initial_state(io->context) != 0) {
+            result->reason = "diagnostic initial-state restoration failed";
+            return -14;
+        }
+        result->restore_succeeded = 1;
+    }
+    if (status != 0) return status;
+    result->completed = 1;
+    result->reason = "diagnostic completed; no correction writes";
     return 0;
 }
 

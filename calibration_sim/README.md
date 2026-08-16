@@ -33,10 +33,11 @@ recorded frame is replayed for each requested batch/frame; this validates the
 complete software path but does not pretend that one capture contains
 independent analog-noise realizations.
 
-The replay suite also includes the later bin-71 DMA capture
-`adc_capture_20260805_100121.csv`.  It verifies bounded reference-rate matching
-when the measured DAC/ADC sampling step differs from the configured nominal
-ratio, without weakening the timing or dither acceptance thresholds.
+The replay suite also retains the historical bin-71 DMA capture
+`adc_capture_20260805_100121.csv` as an explicit test of the general-purpose
+rate-matching estimator. Production calibration no longer applies that
+diagnostic correction: a waveform tagged for 1.45 GSPS is rejected when the
+configured ADC rate is 1.30 GSPS. Matching 1.30/2.60 GSPS metadata is accepted.
 
 `butils.c` and `butils_calibration.c` remain the production UART and FPGA
 adapter source. They are not compiled wholesale in this host target because they

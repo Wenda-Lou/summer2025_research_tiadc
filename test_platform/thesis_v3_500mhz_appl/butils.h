@@ -60,6 +60,9 @@
  *          -cal timing [frames]             Run timing/reference selection only
  *          -cal diagnose [frames]           Run timing tone/dither diagnostics
  *                                           without storing calibration state
+ *          -cal diagnose skewprep jesd|ctrl|analog|digital|analogdigital|enableafter|fullprep|combined|actuator
+ *                                           Isolate preparation/reset effects;
+ *                                           measurement only, no correction
  *          -cal offset                      Run software ADC offset calibration
  *          -cal gain                        Run software ADC gain calibration
  *          -cal skew                        Run open-loop Channel B-A skew
@@ -93,8 +96,9 @@
 double adc_get_configured_sample_rate_hz(void);
 double adc_get_effective_sample_rate_hz(void);
 double adc_get_sample_rate_correction_factor(void);
-bool adc_effective_sample_rate_is_valid(void);
-bool adc_set_effective_sample_rate_hz(double rate_hz);
+double adc_get_measured_sample_rate_hz(void);
+bool adc_measured_sample_rate_is_valid(void);
+bool adc_record_measured_sample_rate_hz(double rate_hz);
 
 #define ADC_TIMING_DEFAULT_FRAMES       20U
 #define ADC_TIMING_MAX_FRAMES           1000U

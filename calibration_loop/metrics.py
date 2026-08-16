@@ -107,7 +107,7 @@ def channel_difference_dbc(
     This is the right figure of merit while the two channels still sample at the
     *same* instant, which is the case on this bench until a half-period offset
     exists in the clock path (the AD9695 on-chip delay only reaches ~363 ps,
-    against the 1000 ps needed at 500 MS/s).  Any residual gain, offset or
+    against the 384.6 ps needed at 1.300 GSPS).  Any residual gain, offset or
     timing mismatch leaves the tone standing in the difference, so one number
     tracks all three and it needs no interleaving at all.  Once real 2x
     interleaving is available, ``mismatch_spurs`` takes over.

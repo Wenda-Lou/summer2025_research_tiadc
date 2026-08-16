@@ -1,7 +1,14 @@
 #include "reference_buffer.h"
 #include "calibration_pending.h"
 
+#include <float.h>
+#include <math.h>
 #include <string.h>
+
+static int reference_double_isfinite(double value)
+{
+    return value == value && value <= DBL_MAX && value >= -DBL_MAX;
+}
 
 static int16_t reference_samples[REFERENCE_MAX_SAMPLES];
 
@@ -11,6 +18,9 @@ static size_t written_sample_count = 0U;
 
 static uint8_t reference_ready = 0U;
 static reference_buffer_format_t reference_format = REFERENCE_FORMAT_ADC_RATE;
+static uint8_t rate_metadata_valid = 0U;
+static double waveform_adc_sample_rate_hz = 0.0;
+static double waveform_dac_sample_rate_hz = 0.0;
 static uint32_t reference_generation = 0U;
 
 /*
@@ -36,6 +46,9 @@ void reference_buffer_clear(void)
     written_sample_count = 0U;
     reference_ready = 0U;
     reference_format = REFERENCE_FORMAT_ADC_RATE;
+    rate_metadata_valid = 0U;
+    waveform_adc_sample_rate_hz = 0.0;
+    waveform_dac_sample_rate_hz = 0.0;
 }
 
 reference_buffer_status_t reference_buffer_load(
@@ -88,6 +101,18 @@ reference_buffer_status_t reference_buffer_begin_with_format(
     reference_buffer_format_t format
 )
 {
+    return reference_buffer_begin_with_metadata(
+        expected_sample_count, format, 0.0, 0.0
+    );
+}
+
+reference_buffer_status_t reference_buffer_begin_with_metadata(
+    size_t expected_sample_count,
+    reference_buffer_format_t format,
+    double adc_sample_rate_hz,
+    double dac_sample_rate_hz
+)
+{
     if (expected_sample_count == 0U) {
         return REFERENCE_BUFFER_ERR_EMPTY;
     }
@@ -103,6 +128,14 @@ reference_buffer_status_t reference_buffer_begin_with_format(
     reference_buffer_clear();
     expected_length = expected_sample_count;
     reference_format = format;
+    if (reference_double_isfinite(adc_sample_rate_hz) &&
+        adc_sample_rate_hz > 0.0 &&
+        reference_double_isfinite(dac_sample_rate_hz) &&
+        dac_sample_rate_hz > 0.0) {
+        rate_metadata_valid = 1U;
+        waveform_adc_sample_rate_hz = adc_sample_rate_hz;
+        waveform_dac_sample_rate_hz = dac_sample_rate_hz;
+    }
 
     return REFERENCE_BUFFER_OK;
 }
@@ -192,6 +225,46 @@ int reference_buffer_is_ready(void)
 reference_buffer_format_t reference_buffer_format(void)
 {
     return reference_format;
+}
+
+int reference_buffer_has_rate_metadata(void)
+{
+    return rate_metadata_valid != 0U;
+}
+
+double reference_buffer_adc_sample_rate_hz(void)
+{
+    return rate_metadata_valid != 0U ? waveform_adc_sample_rate_hz : 0.0;
+}
+
+double reference_buffer_dac_sample_rate_hz(void)
+{
+    return rate_metadata_valid != 0U ? waveform_dac_sample_rate_hz : 0.0;
+}
+
+reference_buffer_status_t reference_buffer_validate_sample_rates(
+    double expected_adc_sample_rate_hz,
+    double expected_dac_sample_rate_hz,
+    double tolerance_hz
+)
+{
+    if (rate_metadata_valid == 0U) {
+        return REFERENCE_BUFFER_ERR_RATE_METADATA;
+    }
+    if (!reference_double_isfinite(expected_adc_sample_rate_hz) ||
+        expected_adc_sample_rate_hz <= 0.0 ||
+        !reference_double_isfinite(expected_dac_sample_rate_hz) ||
+        expected_dac_sample_rate_hz <= 0.0 ||
+        !reference_double_isfinite(tolerance_hz) || tolerance_hz < 0.0) {
+        return REFERENCE_BUFFER_ERR_RATE_METADATA;
+    }
+    if (fabs(waveform_adc_sample_rate_hz - expected_adc_sample_rate_hz) >
+            tolerance_hz ||
+        fabs(waveform_dac_sample_rate_hz - expected_dac_sample_rate_hz) >
+            tolerance_hz) {
+        return REFERENCE_BUFFER_ERR_RATE_MISMATCH;
+    }
+    return REFERENCE_BUFFER_OK;
 }
 
 uint32_t reference_buffer_generation(void)

@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <xemacps.h>
 #include "bjesdlink.h"
+#include "adc_test_config.h"
 #include "reference_buffer.h"
 #include <string.h>
 
@@ -36,6 +37,7 @@ extern uint8_t* RxBufferPtr;
 extern volatile uint8_t adc_sweep_active;
 
 #define REFERENCE_PACKET_HEADER_BYTES 8U
+#define REFERENCE_BEGIN_METADATA_BYTES 15U
 #define REFERENCE_PACKET_MAX_SAMPLES \
     ((512U - REFERENCE_PACKET_HEADER_BYTES) / sizeof(int16_t))
 #define CALIBRATION_CSV_PACKET_BYTES         512U
@@ -44,6 +46,7 @@ extern volatile uint8_t adc_sweep_active;
     (CALIBRATION_CSV_PACKET_BYTES - CALIBRATION_CSV_HEADER_BYTES)
 
 static uint16_t read_u16_le(const uint8_t *data);
+static uint32_t read_u32_le(const uint8_t *data);
 
 static void handle_reference_packet(
     const uint8_t *data,
@@ -359,6 +362,14 @@ static uint16_t read_u16_le(const uint8_t *data)
            ((uint16_t)data[1] << 8);
 }
 
+static uint32_t read_u32_le(const uint8_t *data)
+{
+    return (uint32_t)data[0] |
+           ((uint32_t)data[1] << 8U) |
+           ((uint32_t)data[2] << 16U) |
+           ((uint32_t)data[3] << 24U);
+}
+
 static void handle_reference_packet(
     const uint8_t *data,
     uint16_t length
@@ -375,6 +386,8 @@ static void handle_reference_packet(
     {
         uint16_t total_samples;
         reference_buffer_format_t format = REFERENCE_FORMAT_ADC_RATE;
+        double waveform_adc_rate_hz = 0.0;
+        double waveform_dac_rate_hz = 0.0;
 
         if (length < 6U)
         {
@@ -386,8 +399,17 @@ static void handle_reference_packet(
         if (length >= 7U) {
             format = (reference_buffer_format_t)data[6];
         }
+        if (length >= REFERENCE_BEGIN_METADATA_BYTES) {
+            waveform_adc_rate_hz = (double)read_u32_le(&data[7]);
+            waveform_dac_rate_hz = (double)read_u32_le(&data[11]);
+        }
 
-        status = reference_buffer_begin_with_format(total_samples, format);
+        status = reference_buffer_begin_with_metadata(
+            total_samples,
+            format,
+            waveform_adc_rate_hz,
+            waveform_dac_rate_hz
+        );
 
         xil_printf(
             "Reference begin: %u samples, format %u, status %d\r\n",
@@ -395,6 +417,14 @@ static void handle_reference_packet(
             (unsigned int)format,
             (int)status
         );
+        if (reference_buffer_has_rate_metadata()) {
+            xil_printf("Waveform metadata ADC : %lu Hz\r\n",
+                (unsigned long)waveform_adc_rate_hz);
+            xil_printf("Waveform metadata DAC : %lu Hz\r\n",
+                (unsigned long)waveform_dac_rate_hz);
+        } else {
+            xil_printf("Waveform rate metadata: MISSING\r\n");
+        }
 
         return;
     }
@@ -472,6 +502,28 @@ static void handle_reference_packet(
     if (memcmp(data, "REFE", 4U) == 0)
     {
         status = reference_buffer_finalize();
+
+        if ((status == REFERENCE_BUFFER_OK) &&
+            (reference_buffer_format() == REFERENCE_FORMAT_DAC_RATE_2X)) {
+            status = reference_buffer_validate_sample_rates(
+                ADC_CONFIGURED_SAMPLE_RATE_HZ,
+                DAC_SAMPLE_RATE_HZ,
+                1.0
+            );
+            xil_printf("Waveform/hardware rate validation: %s\r\n",
+                status == REFERENCE_BUFFER_OK ? "PASS" : "FAIL");
+            if (status != REFERENCE_BUFFER_OK) {
+                xil_printf(
+                    "ERROR: waveform metadata must match ADC %lu Hz and "
+                    "DAC %lu Hz (status %d).\r\n",
+                    (unsigned long)ADC_CONFIGURED_SAMPLE_RATE_HZ,
+                    (unsigned long)DAC_SAMPLE_RATE_HZ,
+                    (int)status
+                );
+                reference_buffer_clear();
+                return;
+            }
+        }
 
         if ((status == REFERENCE_BUFFER_OK) &&
             reference_buffer_is_ready())

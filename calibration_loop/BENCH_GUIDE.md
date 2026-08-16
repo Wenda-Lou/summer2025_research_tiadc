@@ -15,27 +15,14 @@ The simulation should end with the gain ratio near 1.0000, offset mismatch under
 0.1 LSB and skew mismatch under 1 ps. If it does not, stop here — something is
 wrong with the environment, not the bench.
 
-## 1. Set the DAC clock so the rate ratio is an integer
+## 1. Confirm the configured converter clocks
 
-The calibration requires `fs_dac / fs_adc` to be a whole number. At the bench's
-present settings — 2457.6 MS/s DAC and 500 MS/s ADC — the ratio is 4.9152, so one
-DPG loop is 13333.33 ADC samples. The loop then stops closing on an ADC sample
-boundary, each impulse lands on a different sub-sample phase, and the averaged
-pulse replica smears out: gain comes out biased and skew is not recoverable.
+The calibration requires `fs_dac / fs_adc` to be a whole number. The corrected
+bench configuration is a 2.600 GSPS DAC update rate and a 1.300 GSPS ADC sample
+rate, so the ratio is exactly 2. DPGDownloader should report the 2.6 Gbps lane
+rate when the DAC uses internal clocking with the 100 MHz reference on J61.
 
-Two ways to fix it. Changing the DAC is far cheaper:
-
-| | Change the DAC clock (preferred) | Change the ADC clock |
-|---|---|---|
-| Action | J31 external source 2457.6 → **2000 MHz** | ADC sample clock 500 → 614.4 MHz |
-| Touches | DPG playback rate only | JESD lane rate, REFCLK, PHY IP, possibly a new XSA |
-
-Setting J31 to 2000.0 MHz makes the ratio exactly 4 and leaves the whole ADC side
-alone. Keep the output at 0 dBm as before, keep the 10 MHz reference on J61 (both
-2000 and 500 MHz are integer multiples of it), and set the DPG sample rate to
-2000 MS/s to match.
-
-Any integer ratio works — if 2000 MHz is inconvenient, pick another and pass the
+Any integer ratio works — if 2600 MHz is changed, pass the
 actual rate to every command below via `--fs-dac`.
 
 ## 2. Generate and load the waveform
@@ -45,15 +32,15 @@ python -m calibration_loop.run_calibration gen --out waveforms
 ```
 
 Record the printed parameter summary; it is needed if anything later disagrees.
-With the defaults it reports a 185.52 MHz tone, a 16384-sample loop and 256
+With the defaults it reports a 199.99 MHz tone, a 32768-sample ADC loop and 512
 impulses per loop.
 
 Load `waveforms/impulse_dither.txt` into DPG Downloader. The format is the same
 as the vectors already in use: one signed integer per line, no header, 65536
 lines. Keep the `unsigned data` option **disabled**.
 
-On the scope the output should be a 185.5 MHz sine with periodic narrow pulses on
-top, one every 128 ns, about 32 ns wide, roughly 12 % of the sine amplitude. No
+On the scope the output should be a 200 MHz sine with periodic narrow pulses on
+top, one every 49.23 ns, about 12.3 ns wide, roughly 12 % of the sine amplitude. No
 pulses means DPG is not looping the file; a flattened waveform means `unsigned
 data` was left on.
 
@@ -144,11 +131,11 @@ anything that did not match this document.
 ## 9. Not possible in this configuration
 
 True 2× interleaving needs channel B to sample half a period after channel A,
-which is 1000 ps at 500 MS/s, against an on-chip delay range of
+which is 384.6 ps at 1.300 GSPS, against an on-chip delay range of
 192 × 1.725 + 128 × 0.25 = 363 ps. So these runs are in parallel mode: both
 channels sample the same instant and the loop calibrates the mismatch between
 them, which is a valid measurement in its own right.
 
-Once an external clock delay of about 20 cm of coaxial length difference is
+Once an external clock delay of roughly 8 cm of coaxial length difference is
 added, the same code runs the interleaved case with
-`--interleaved --skew-target-ps 1000`. Nothing else changes.
+`--interleaved --skew-target-ps 384.615`. Nothing else changes.

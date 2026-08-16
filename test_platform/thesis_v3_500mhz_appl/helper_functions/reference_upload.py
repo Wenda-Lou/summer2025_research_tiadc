@@ -1,7 +1,8 @@
 """UDP uploader for the FPGA reference buffer.
 
-Packet format (kept compatible with the existing firmware):
-    REFB + uint16_le(total_samples)
+Packet format:
+    REFB + uint16_le(total_samples) + uint8(format)
+         + uint32_le(adc_rate_hz) + uint32_le(dac_rate_hz)
     REFD + uint16_le(offset) + uint16_le(count) + int16_le samples
     REFE
     REFC
@@ -12,6 +13,8 @@ must still be verified from the FPGA UART output after any code change.
 
 from __future__ import annotations
 
+import json
+import math
 import socket
 import struct
 import time
@@ -25,8 +28,9 @@ FPGA_PORT = 6666
 REFERENCE_SAMPLE_COUNT = 2032
 DAC_REFERENCE_SAMPLE_COUNT = 4064
 DAC_SAMPLE_RATE_HZ = 2_600_000_000.0
-ADC_SAMPLE_RATE_HZ = 1_450_000_000.0
+ADC_SAMPLE_RATE_HZ = 1_300_000_000.0
 DAC_TO_ADC_RATE_RATIO = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ
+SAMPLE_RATE_TOLERANCE_HZ = 1.0
 DAC_BITS = 16
 ADC_BITS = 14
 # Firmware accepts at most (512 - 8) / 2 = 252 samples per REFD packet.
@@ -34,6 +38,136 @@ ADC_BITS = 14
 REFERENCE_CHUNK_SAMPLES = 240
 REFERENCE_FORMAT_ADC_RATE = 0
 REFERENCE_FORMAT_DAC_RATE_2X = 1
+
+
+def validate_waveform_metadata(
+    metadata: dict,
+    *,
+    expected_adc_sample_rate_hz: float = ADC_SAMPLE_RATE_HZ,
+    expected_dac_sample_rate_hz: float = DAC_SAMPLE_RATE_HZ,
+) -> dict[str, float]:
+    """Validate a waveform sidecar against the authoritative bench rates.
+
+    Both waveform generators used in this repository are accepted: the
+    firmware generator writes rate fields at the top level, while
+    ``calibration_loop`` writes them under ``derived``.
+    """
+    if not isinstance(metadata, dict):
+        raise ValueError("Waveform metadata must be a JSON object.")
+
+    derived = metadata.get("derived", {})
+    if not isinstance(derived, dict):
+        derived = {}
+    config = metadata.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    adc_rate = metadata.get("adc_sample_rate_hz", derived.get("fs_adc_hz"))
+    dac_rate = metadata.get("dac_sample_rate_hz", derived.get("fs_dac_hz"))
+    ratio = metadata.get(
+        "dac_to_adc_rate_ratio",
+        derived.get("adc_ratio"),
+    )
+
+    try:
+        adc_rate = float(adc_rate)
+        dac_rate = float(dac_rate)
+        ratio = float(ratio)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Waveform metadata must define ADC rate, DAC rate, and their ratio."
+        ) from exc
+
+    values = (adc_rate, dac_rate, ratio)
+    if not all(math.isfinite(value) and value > 0.0 for value in values):
+        raise ValueError("Waveform sample-rate metadata must be finite and positive.")
+
+    expected_ratio = expected_dac_sample_rate_hz / expected_adc_sample_rate_hz
+    metadata_ratio = dac_rate / adc_rate
+    if abs(ratio - metadata_ratio) > 1.0e-12 * max(1.0, metadata_ratio):
+        raise ValueError(
+            "Waveform metadata ratio is inconsistent with its ADC/DAC rates: "
+            f"stored {ratio:.12g}, derived {metadata_ratio:.12g}."
+        )
+    if abs(adc_rate - expected_adc_sample_rate_hz) > SAMPLE_RATE_TOLERANCE_HZ:
+        raise ValueError(
+            "Waveform ADC rate does not match hardware: "
+            f"metadata {adc_rate / 1e9:.6f} GSPS, "
+            f"configured {expected_adc_sample_rate_hz / 1e9:.6f} GSPS."
+        )
+    if abs(dac_rate - expected_dac_sample_rate_hz) > SAMPLE_RATE_TOLERANCE_HZ:
+        raise ValueError(
+            "Waveform DAC rate does not match hardware: "
+            f"metadata {dac_rate / 1e9:.6f} GSPS, "
+            f"configured {expected_dac_sample_rate_hz / 1e9:.6f} GSPS."
+        )
+    if abs(ratio - expected_ratio) > 1.0e-12 * max(1.0, expected_ratio):
+        raise ValueError(
+            "Waveform DAC/ADC ratio does not match hardware: "
+            f"metadata {ratio:.12g}, configured {expected_ratio:.12g}."
+        )
+
+    period_dac = metadata.get(
+        "dither_period_dac",
+        config.get("dither_period_dac"),
+    )
+    period_adc = metadata.get(
+        "dither_period_adc",
+        derived.get("slot_period_adc_samples"),
+    )
+    if period_dac is not None and period_adc is not None:
+        expected_period_adc = float(period_dac) / expected_ratio
+        if abs(float(period_adc) - expected_period_adc) > 1.0e-9:
+            raise ValueError(
+                "Waveform dither spacing is inconsistent with its sample rates: "
+                f"metadata {float(period_adc):.9f} ADC samples, "
+                f"derived {expected_period_adc:.9f}."
+            )
+    event_period_s = metadata.get(
+        "dither_event_period_seconds",
+        derived.get("dither_event_period_seconds"),
+    )
+    if event_period_s is not None:
+        event_period_s = float(event_period_s)
+        if not math.isfinite(event_period_s) or event_period_s <= 0.0:
+            raise ValueError("Waveform dither event period must be finite and positive.")
+        if period_dac is not None and abs(
+            float(period_dac) - event_period_s * dac_rate
+        ) > 1.0e-9:
+            raise ValueError(
+                "Waveform DAC dither spacing disagrees with its physical period."
+            )
+        if period_adc is not None and abs(
+            float(period_adc) - event_period_s * adc_rate
+        ) > 1.0e-9:
+            raise ValueError(
+                "Waveform ADC dither spacing disagrees with its physical period."
+            )
+
+    return {
+        "adc_sample_rate_hz": adc_rate,
+        "dac_sample_rate_hz": dac_rate,
+        "dac_to_adc_rate_ratio": ratio,
+    }
+
+
+def load_and_validate_waveform_metadata(txt_file: str | Path) -> dict[str, float]:
+    """Load a generator sidecar and fail if it disagrees with hardware."""
+    path = Path(txt_file)
+    candidates = (
+        path.with_suffix(path.suffix + ".json"),
+        path.with_suffix(".json"),
+    )
+    metadata_path = next((item for item in candidates if item.is_file()), None)
+    if metadata_path is None:
+        raise ValueError(
+            "Waveform metadata sidecar is required for DAC-rate uploads; "
+            f"expected {candidates[0]} or {candidates[1]}."
+        )
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read waveform metadata:\n{metadata_path}") from exc
+    return validate_waveform_metadata(metadata)
 
 
 
@@ -197,6 +331,8 @@ def build_reference_packets(
     chunk_samples: int = REFERENCE_CHUNK_SAMPLES,
     require_full_buffer: bool = True,
     reference_format: int = REFERENCE_FORMAT_ADC_RATE,
+    adc_sample_rate_hz: float = ADC_SAMPLE_RATE_HZ,
+    dac_sample_rate_hz: float = DAC_SAMPLE_RATE_HZ,
 ) -> list[bytes]:
     """Build packets without sending them, for local inspection/testing."""
     if not 1 <= chunk_samples <= 252:
@@ -208,8 +344,18 @@ def build_reference_packets(
         reference_format=reference_format,
     )
 
+    if not (0.0 < adc_sample_rate_hz <= 0xFFFFFFFF):
+        raise ValueError("ADC sample rate must fit in unsigned 32-bit Hz metadata.")
+    if not (0.0 < dac_sample_rate_hz <= 0xFFFFFFFF):
+        raise ValueError("DAC sample rate must fit in unsigned 32-bit Hz metadata.")
     packets = [
-        b"REFB" + struct.pack("<HB", reference.size, reference_format)
+        b"REFB" + struct.pack(
+            "<HBII",
+            reference.size,
+            reference_format,
+            round(adc_sample_rate_hz),
+            round(dac_sample_rate_hz),
+        )
     ]
 
     for offset in range(0, reference.size, chunk_samples):
@@ -232,6 +378,8 @@ def send_reference(
     packet_delay_s: float = 0.01,
     require_full_buffer: bool = True,
     reference_format: int = REFERENCE_FORMAT_ADC_RATE,
+    adc_sample_rate_hz: float = ADC_SAMPLE_RATE_HZ,
+    dac_sample_rate_hz: float = DAC_SAMPLE_RATE_HZ,
 ) -> int:
     """Send one prepared reference using the existing FPGA UDP protocol."""
     packets = build_reference_packets(
@@ -239,6 +387,8 @@ def send_reference(
         chunk_samples=chunk_samples,
         require_full_buffer=require_full_buffer,
         reference_format=reference_format,
+        adc_sample_rate_hz=adc_sample_rate_hz,
+        dac_sample_rate_hz=dac_sample_rate_hz,
     )
 
     destination = (fpga_ip, fpga_port)

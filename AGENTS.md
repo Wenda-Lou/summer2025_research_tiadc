@@ -170,7 +170,8 @@ manual hardware procedures; do not attempt them without the bench.
   samples; samples are signed 14-bit values left-aligned in `int16_t`.
 - **Channels are parallel, not interleaved**: A and B sample the same instant.
   Combined metrics alias Channel A. True 2× interleaving is impossible in the
-  current clocking configuration (needs ~20 cm external coax delay).
+  current clocking configuration (needs roughly 8 cm external coax delay at
+  1.300 GSPS).
 - **Skew is measurement-only** on the firmware path: `adc -cal skew` performs
   no register writes. `adc -cal skew step +/-N` is reserved and must stay
   unimplemented until the actuator register semantics are verified. The RTL
@@ -236,7 +237,7 @@ manual hardware procedures; do not attempt them without the bench.
   incoming UDP packets are not serviced until the next console line;
   `calibration_loop/capture.py` works around this by sending a bare newline.
 - The dither scheme requires `fs_dac / fs_adc` to be an **integer** (bench
-  default: DAC 2000 MS/s, ADC 500 MS/s, ratio 4). Non-integer ratios smear the
+  default: DAC 2600 MS/s, ADC 1300 MS/s, ratio 2). Non-integer ratios smear the
   averaged pulse replica and bias the gain estimate.
 - First UDP transfer after boot often times out — retry before debugging.
 - `python -m calibration_loop ...` hardware modes (`probe`, `bench`) need the

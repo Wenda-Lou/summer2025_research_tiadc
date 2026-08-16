@@ -16,10 +16,9 @@ from .reference_upload import (
     FPGA_PORT,
     REFERENCE_SAMPLE_COUNT,
     DAC_REFERENCE_SAMPLE_COUNT,
-    DAC_SAMPLE_RATE_HZ,
-    ADC_SAMPLE_RATE_HZ,
     REFERENCE_FORMAT_DAC_RATE_2X,
     clear_reference,
+    load_and_validate_waveform_metadata,
     load_reference_txt,
     send_reference,
 )
@@ -571,6 +570,7 @@ def gui_upload_reference_txt():
         return
 
     try:
+        waveform_rates = load_and_validate_waveform_metadata(txt_file)
         all_samples = load_reference_txt(txt_file)
 
         if all_samples.size < DAC_REFERENCE_SAMPLE_COUNT:
@@ -616,8 +616,9 @@ def gui_upload_reference_txt():
             f"File: {selected_path.name}\n"
             f"Total numeric samples: {all_samples.size}\n"
             f"Uploaded DAC samples: {DAC_REFERENCE_SAMPLE_COUNT}\n"
-            f"DAC rate: {DAC_SAMPLE_RATE_HZ / 1e9:.3f} GSPS; "
-            f"ADC rate: {ADC_SAMPLE_RATE_HZ / 1e9:.3f} GSPS; "
+            f"DAC rate: {waveform_rates['dac_sample_rate_hz'] / 1e9:.3f} GSPS; "
+            f"ADC rate: {waveform_rates['adc_sample_rate_hz'] / 1e9:.3f} GSPS; "
+            f"ratio: {waveform_rates['dac_to_adc_rate_ratio']:.6f}; "
             "ADC: signed 14-bit"
         ),
         justify="left",
@@ -808,6 +809,8 @@ def gui_upload_reference_txt():
                 packet_delay_s=packet_delay,
                 require_full_buffer=True,
                 reference_format=REFERENCE_FORMAT_DAC_RATE_2X,
+                adc_sample_rate_hz=waveform_rates["adc_sample_rate_hz"],
+                dac_sample_rate_hz=waveform_rates["dac_sample_rate_hz"],
             )
 
             status_var.set(

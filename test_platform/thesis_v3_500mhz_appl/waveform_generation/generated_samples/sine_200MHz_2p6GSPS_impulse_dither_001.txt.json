@@ -1,6 +1,6 @@
 {
-  "output_file": "C:\\TIDIAC\\summer2025_research_tiadc\\test_platform\\thesis_v3_500mhz_appl\\waveform_generation\\generated_samples\\sine_200MHz_2p6GSPS_impulse_dither.txt",
-  "plot_file": "C:\\TIDIAC\\summer2025_research_tiadc\\test_platform\\thesis_v3_500mhz_appl\\waveform_generation\\generated_samples\\sine_200MHz_2p6GSPS_impulse_dither.png",
+  "output_file": "C:\\TIDIAC\\summer2025_research_tiadc\\test_platform\\thesis_v3_500mhz_appl\\waveform_generation\\generated_samples\\sine_200MHz_2p6GSPS_impulse_dither_001.txt",
+  "plot_file": "C:\\TIDIAC\\summer2025_research_tiadc\\test_platform\\thesis_v3_500mhz_appl\\waveform_generation\\generated_samples\\sine_200MHz_2p6GSPS_impulse_dither_001.png",
   "dac_sample_rate_hz": 2600000000.0,
   "adc_sample_rate_hz": 1300000000.0,
   "dac_to_adc_rate_ratio": 2.0,

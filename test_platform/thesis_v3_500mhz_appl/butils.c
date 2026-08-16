@@ -48,16 +48,14 @@ volatile uint8_t adc_sweep_active = 0;
 
 typedef struct {
     double configured_rate_hz;
-    double analysis_rate_hz;
-    double correction_factor;
+    double measured_rate_hz;
     bool measured_rate_valid;
     uint32_t generation;
 } adc_sample_rate_state_t;
 
 static adc_sample_rate_state_t g_adc_sample_rate = {
     ADC_CONFIGURED_SAMPLE_RATE_HZ,
-    ADC_CONFIGURED_SAMPLE_RATE_HZ,
-    1.0,
+    0.0,
     false,
     0U
 };
@@ -69,31 +67,33 @@ double adc_get_configured_sample_rate_hz(void)
 
 double adc_get_effective_sample_rate_hz(void)
 {
-    return g_adc_sample_rate.analysis_rate_hz;
+    return g_adc_sample_rate.configured_rate_hz;
 }
 
 double adc_get_sample_rate_correction_factor(void)
 {
-    return g_adc_sample_rate.correction_factor;
+    /* Retained for CSV schema compatibility. Analysis no longer substitutes
+     * an inferred clock for the authoritative hardware configuration. */
+    return 1.0;
 }
 
-bool adc_effective_sample_rate_is_valid(void)
+double adc_get_measured_sample_rate_hz(void)
+{
+    return g_adc_sample_rate.measured_rate_hz;
+}
+
+bool adc_measured_sample_rate_is_valid(void)
 {
     return g_adc_sample_rate.measured_rate_valid;
 }
 
-bool adc_set_effective_sample_rate_hz(double rate_hz)
+bool adc_record_measured_sample_rate_hz(double rate_hz)
 {
     const double configured_hz = g_adc_sample_rate.configured_rate_hz;
     if (!isfinite(rate_hz) || rate_hz < 0.8 * configured_hz ||
         rate_hz > 1.2 * configured_hz)
         return false;
-    if (rate_hz != g_adc_sample_rate.analysis_rate_hz) {
-        calibration_pending_frame_invalidate();
-        ++g_adc_sample_rate.generation;
-    }
-    g_adc_sample_rate.analysis_rate_hz = rate_hz;
-    g_adc_sample_rate.correction_factor = rate_hz / configured_hz;
+    g_adc_sample_rate.measured_rate_hz = rate_hz;
     g_adc_sample_rate.measured_rate_valid = true;
     return true;
 }
@@ -606,9 +606,6 @@ static adc_cal_skew_capture_context_t g_adc_cal_skew_capture_context = {
 #ifndef CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES
 #define CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES      0.015
 #endif
-#ifndef CAL_SKEW_MAX_BATCH_STD_SAMPLES
-#define CAL_SKEW_MAX_BATCH_STD_SAMPLES               0.02
-#endif
 #ifndef CAL_SKEW_CHANNEL_B_RELATIVE_POLARITY
 /* adc_frame.c performs no digital sign inversion.  Leave the effective
  * board/analog polarity unknown unless platform metadata overrides it. */
@@ -938,6 +935,7 @@ typedef struct {
     double mean_relative_skew_samples;
     double minimum_relative_skew_samples;
     double maximum_relative_skew_samples;
+    double primary_skew_sequence_samples[CAL_SKEW_BATCH_SIZE];
     double relative_skew_std_samples;
     double relative_skew_std_ps;
     double rising_skew_ps;
@@ -1620,8 +1618,16 @@ static void handle_adc_gain_calibration_loop_cmd(void);
 static void handle_adc_gain_calibration_status_cmd(void);
 static void handle_adc_skew_calibration_cmd(
     bool diagnose_mode, bool closed_loop_requested);
+static void handle_adc_skew_preparation_diagnostic(
+    adc_cal_skew_prep_diag_mode_t mode);
 static void handle_adc_skew_step_cmd(int requested_steps);
 static int adc_run_timing_calibration(uint32_t frame_count);
+static int adc_run_timing_calibration_conditioned(
+    uint32_t frame_count,
+    float gain_correction,
+    float offset_correction,
+    calibration_pending_frame_t *timing_output,
+    bool publish_production_state);
 static void calibration_automatic_state_reset(void);
 static void calibration_automatic_print_command_help(void);
 static void calibration_automatic_print_summary(void);
@@ -1712,6 +1718,7 @@ static int calibration_estimate_skew_frame(
     const double *channel_a,
     const double *channel_b,
     const double *reference,
+    const calibration_pending_frame_t *timing_context,
     adc_cal_skew_polarity_t known_polarity,
     int previous_valid,
     double previous_skew_samples,
@@ -1742,34 +1749,13 @@ static int calibration_capture_against_owned_reference(
     const char **reason);
 static const char *calibration_channel_name(int channel);
 void adc_timing_capture(uint32_t frame_count);
+static void print_double_value(const char *label, double value, const char *unit);
 
 static void print_float_value(const char *label, float value, const char *unit)
 {
-    int32_t whole;
-    int32_t fraction;
-    float absolute_value;
-
-    absolute_value = fabsf(value);
-    whole = (int32_t)absolute_value;
-    fraction = (int32_t)(
-        (absolute_value - (float)whole) * 1000000.0f
-    );
-
-    xil_printf("%-22s: ", label);
-
-    if (value < 0.0f) {
-        xil_printf("-");
-    }
-
-    xil_printf(
-        "%ld.%06ld%s\r\n",
-        (long)whole,
-        (long)fraction,
-        unit != NULL ? unit : ""
-    );
+    print_double_value(label, (double)value, unit);
 }
 
-static void print_double_value(const char *label, double value, const char *unit);
 static void print_double_inline(double value);
 static void print_signed_float_inline(float value);
 static void print_float_value_2(const char *label, float value,
@@ -1791,24 +1777,24 @@ static void print_adc_sample_rate_state(void)
         adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
     print_double_value("Analysis sample rate",
         adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
-    xil_printf("Rate source            : %s\r\n",
-        adc_effective_sample_rate_is_valid() ?
-        "known-tone measurement" : "configured value");
+    xil_printf("Rate source            : configured value\r\n");
     xil_printf("Measured rate valid    : %s\r\n",
-        adc_effective_sample_rate_is_valid() ? "YES" : "NO");
-    print_double_value("Correction factor",
-        adc_get_sample_rate_correction_factor(), "");
+        adc_measured_sample_rate_is_valid() ? "YES" : "NO");
+    if (adc_measured_sample_rate_is_valid()) {
+        print_double_value("Measured diagnostic rate",
+            adc_get_measured_sample_rate_hz() / 1.0e6, " MSPS");
+    }
 }
 
 static void print_adc_analysis_rate_header(void)
 {
     print_double_value("Configured sample rate",
         adc_get_configured_sample_rate_hz() / 1.0e6, " MSPS");
+    print_double_value("Configured DAC rate",
+        DAC_SAMPLE_RATE_HZ / 1.0e6, " MSPS");
     print_double_value("Analysis sample rate",
         adc_get_effective_sample_rate_hz() / 1.0e6, " MSPS");
-    xil_printf("Rate source            : %s\r\n",
-        adc_effective_sample_rate_is_valid() ?
-        "known-tone measurement" : "configured value");
+    xil_printf("Rate source            : configured value\r\n");
     print_double_value("DAC/ADC rate ratio",
         DAC_SAMPLE_RATE_HZ / adc_get_effective_sample_rate_hz(), "");
 }
@@ -1826,14 +1812,16 @@ static void print_adc_calibration_rate_summary(void)
         print_double_value("Analysis sample rate",
                            analysis_hz / 1.0e6, " MSPS");
     }
+    print_double_value("Configured DAC rate",
+                       DAC_SAMPLE_RATE_HZ / 1.0e6, " MSPS");
     print_double_value("DAC/ADC rate ratio",
                        DAC_SAMPLE_RATE_HZ / analysis_hz, "");
     if (ADC_CAL_VERBOSE_DEBUG) {
-        xil_printf("Rate source            : %s\r\n",
-            adc_effective_sample_rate_is_valid() ?
-            "known-tone measurement" : "configured value");
-        print_double_value("Correction factor",
-            adc_get_sample_rate_correction_factor(), "");
+        xil_printf("Rate source            : configured value\r\n");
+        if (adc_measured_sample_rate_is_valid()) {
+            print_double_value("Measured diagnostic rate",
+                adc_get_measured_sample_rate_hz() / 1.0e6, " MSPS");
+        }
     }
 }
 
@@ -1843,32 +1831,37 @@ static void print_double_value(
     const char *unit
 )
 {
-    int32_t whole;
-    int32_t fraction;
-    double absolute_value = fabs(value);
+    adc_cal_fixed6_parts_t parts;
 
-    if (!isfinite(value)) {
+    if (adc_cal_fixed6_parts(value, &parts) != 0) {
         xil_printf("%-22s: invalid\r\n", label);
         return;
     }
 
-    whole = (int32_t)absolute_value;
-    fraction = (int32_t)((absolute_value - (double)whole) * 1000000.0);
-    xil_printf("%-22s: %s%ld.%06ld%s\r\n",
-               label,
-               value < 0.0 ? "-" : "",
-               (long)whole,
-               (long)fraction,
+    xil_printf("%-22s: %s", label, parts.negative ? "-" : "");
+    if (parts.billions > 0U)
+        xil_printf("%lu%09lu", (unsigned long)parts.billions,
+                   (unsigned long)parts.units_below_billion);
+    else
+        xil_printf("%lu", (unsigned long)parts.units_below_billion);
+    xil_printf(".%06lu%s\r\n", (unsigned long)parts.millionths,
                unit != NULL ? unit : "");
 }
 
 static void print_double_inline(double value)
 {
-    const double absolute = fabs(value);
-    const int32_t whole = (int32_t)absolute;
-    const int32_t fraction = (int32_t)((absolute - (double)whole) * 1000000.0);
-    xil_printf("%s%ld.%06ld", value < 0.0 ? "-" : "",
-               (long)whole, (long)fraction);
+    adc_cal_fixed6_parts_t parts;
+    if (adc_cal_fixed6_parts(value, &parts) != 0) {
+        xil_printf("invalid");
+        return;
+    }
+    xil_printf("%s", parts.negative ? "-" : "");
+    if (parts.billions > 0U)
+        xil_printf("%lu%09lu", (unsigned long)parts.billions,
+                   (unsigned long)parts.units_below_billion);
+    else
+        xil_printf("%lu", (unsigned long)parts.units_below_billion);
+    xil_printf(".%06lu", (unsigned long)parts.millionths);
 }
 
 static void print_signed_float_inline(float value)
@@ -2492,6 +2485,9 @@ static void calibration_automatic_print_command_help(void)
     xil_printf("  adc -cal timing [frames]  Run timing/reference selection only.\r\n");
     xil_printf("  adc -cal diagnose [frames]\r\n");
     xil_printf("      Run timing tone/dither diagnostics without storing state.\r\n");
+    xil_printf("  adc -cal diagnose skewprep MODE\r\n");
+    xil_printf("      MODE: jesd|ctrl|analog|digital|analogdigital|enableafter|fullprep|combined|actuator\r\n");
+    xil_printf("      Isolate delay-register/JESD preparation; restore state; never apply correction.\r\n");
     xil_printf("  adc -cal offset           Run offset stage only.\r\n");
     xil_printf("  adc -cal gain             Run gain stage only.\r\n");
     xil_printf("  adc -cal skew             Run open-loop Channel B-A skew measurement.\r\n");
@@ -2628,6 +2624,39 @@ void handle_adc_cmd(char* line)
         if (strcmp(token, "diagnose") == 0) {
             uint32_t diagnostic_frames = 1U;
             token = strtok(NULL, " ");
+            if (token != NULL && strcmp(token, "skewprep") == 0) {
+                adc_cal_skew_prep_diag_mode_t mode;
+
+                token = strtok(NULL, " ");
+                if (token == NULL || strtok(NULL, " ") != NULL) {
+                    ERR("Use adc -cal diagnose skewprep jesd|ctrl|analog|digital|analogdigital|enableafter|fullprep|combined|actuator.");
+                    return;
+                }
+                if (strcmp(token, "jesd") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_JESD_ONLY;
+                } else if (strcmp(token, "actuator") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_ACTUATOR_ONLY;
+                } else if (strcmp(token, "combined") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_COMBINED;
+                } else if (strcmp(token, "fullprep") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_COMBINED;
+                } else if (strcmp(token, "ctrl") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_CTRL_ONLY;
+                } else if (strcmp(token, "analog") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_ANALOG_ONLY;
+                } else if (strcmp(token, "digital") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_DIGITAL_ONLY;
+                } else if (strcmp(token, "analogdigital") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_ANALOG_DIGITAL;
+                } else if (strcmp(token, "enableafter") == 0) {
+                    mode = ADC_CAL_SKEW_PREP_DIAG_ENABLE_AFTER_VALUES;
+                } else {
+                    ERR("Use adc -cal diagnose skewprep jesd|ctrl|analog|digital|analogdigital|enableafter|fullprep|combined|actuator.");
+                    return;
+                }
+                handle_adc_skew_preparation_diagnostic(mode);
+                return;
+            }
             if (token != NULL) {
                 char *endptr = NULL;
                 const unsigned long parsed = strtoul(token, &endptr, 0);

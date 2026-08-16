@@ -29,7 +29,9 @@ typedef enum {
     REFERENCE_BUFFER_ERR_NULL = -1,
     REFERENCE_BUFFER_ERR_EMPTY = -2,
     REFERENCE_BUFFER_ERR_TOO_LARGE = -3,
-    REFERENCE_BUFFER_ERR_INDEX = -4
+    REFERENCE_BUFFER_ERR_INDEX = -4,
+    REFERENCE_BUFFER_ERR_RATE_METADATA = -5,
+    REFERENCE_BUFFER_ERR_RATE_MISMATCH = -6
 } reference_buffer_status_t;
 
 /* Remove the currently stored reference waveform. */
@@ -56,6 +58,12 @@ reference_buffer_status_t reference_buffer_begin_with_format(
     size_t expected_sample_count,
     reference_buffer_format_t format
 );
+reference_buffer_status_t reference_buffer_begin_with_metadata(
+    size_t expected_sample_count,
+    reference_buffer_format_t format,
+    double adc_sample_rate_hz,
+    double dac_sample_rate_hz
+);
 
 /*
  * Copy one chunk into the internal buffer at sample_offset.
@@ -81,6 +89,14 @@ size_t reference_buffer_length(void);
 size_t reference_buffer_expected_length(void);
 int reference_buffer_is_ready(void);
 reference_buffer_format_t reference_buffer_format(void);
+int reference_buffer_has_rate_metadata(void);
+double reference_buffer_adc_sample_rate_hz(void);
+double reference_buffer_dac_sample_rate_hz(void);
+reference_buffer_status_t reference_buffer_validate_sample_rates(
+    double expected_adc_sample_rate_hz,
+    double expected_dac_sample_rate_hz,
+    double tolerance_hz
+);
 uint32_t reference_buffer_generation(void);
 
 #ifdef __cplusplus
