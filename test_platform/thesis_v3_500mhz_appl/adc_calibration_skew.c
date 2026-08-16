@@ -804,17 +804,66 @@ static int adc_cal_skew_verified_write(
     const adc_cal_skew_loop_config_t *config,
     const adc_cal_skew_loop_io_t *io,
     int expected_current,
-    int new_value)
+    int new_value,
+    int *readback_value,
+    int *write_performed)
 {
     int current = 0;
     int readback = 0;
+    if (readback_value != NULL) *readback_value = -1;
+    if (write_performed != NULL) *write_performed = 0;
     if (new_value < config->skew_register_min ||
-        new_value > config->skew_register_max ||
-        io->read_register(io->context, &current) != 0 ||
-        current != expected_current ||
-        io->write_register(io->context, new_value) != 0 ||
-        io->read_register(io->context, &readback) != 0 ||
-        readback != new_value) return -1;
+        new_value > config->skew_register_max)
+        return -1;
+    if (io->read_register(io->context, &current) != 0 ||
+        current != expected_current)
+        return -1;
+    if (write_performed != NULL) *write_performed = 1;
+    if (io->write_register(io->context, new_value) != 0) return -1;
+    if (io->read_register(io->context, &readback) != 0) return -1;
+    if (readback_value != NULL) *readback_value = readback;
+    if (readback != new_value) return -1;
+    return 0;
+}
+
+static int adc_cal_skew_settle_characterization_state(
+    const adc_cal_skew_loop_io_t *io,
+    uint32_t attempt,
+    uint32_t probe,
+    int baseline_code,
+    int active_code,
+    int restoring)
+{
+    if (io->settle_characterization_state == NULL) return 0;
+    return io->settle_characterization_state(
+        io->context, attempt, probe, baseline_code, active_code, restoring);
+}
+
+static int adc_cal_skew_restore_characterization_baseline(
+    const adc_cal_skew_loop_config_t *config,
+    const adc_cal_skew_loop_io_t *io,
+    int baseline_code,
+    uint32_t attempt,
+    uint32_t probe,
+    adc_cal_skew_loop_result_t *result)
+{
+    int readback = -1;
+    result->characterization_baseline_restored = 0;
+    result->final_register = -1;
+    if (baseline_code < config->skew_register_min ||
+        baseline_code > config->skew_register_max)
+        return -1;
+    ++result->characterization_restore_write_count;
+    if (io->write_register(io->context, baseline_code) != 0) return -1;
+    if (io->read_register(io->context, &readback) != 0 ||
+        readback != baseline_code)
+        return -1;
+    result->restore_readback_valid[attempt][probe] = 1;
+    if (adc_cal_skew_settle_characterization_state(
+            io, attempt, probe, baseline_code, baseline_code, 1) != 0)
+        return -1;
+    result->characterization_baseline_restored = 1;
+    result->final_register = baseline_code;
     return 0;
 }
 
@@ -824,18 +873,17 @@ int adc_cal_skew_run_closed_loop(
     double sample_rate_hz,
     adc_cal_skew_loop_result_t *result)
 {
+    static const int characterization_amplitudes[
+        ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS] = {1, 2, 4};
     adc_cal_skew_loop_config_t active;
     adc_cal_skew_batch_measurement_t measurement;
     adc_cal_skew_batch_measurement_t stepped;
     adc_cal_skew_batch_measurement_t stepped_repeat;
     int current_register = 0;
-    int characterization_register;
-    int characterization_direction = 1;
     int measurement_status;
-    double observed;
-    double observed_repeat;
-    double characterization_uncertainty;
-    double repeat_characterization_uncertainty;
+    const char *last_characterization_failure =
+        "actuator response not distinguishable from measurement noise";
+    int characterization_succeeded = 0;
     if (result == NULL) return -1;
     memset(result, 0, sizeof(*result));
     result->status = ADC_CAL_SKEW_LOOP_FAILED;
@@ -856,6 +904,19 @@ int adc_cal_skew_run_closed_loop(
     result->initial_register = -1;
     result->final_register = -1;
     result->failure_reason = "closed-loop configuration is invalid";
+    for (uint32_t attempt = 0U;
+         attempt < ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS; ++attempt) {
+        result->probe_readback_code[attempt][0] = -1;
+        result->probe_readback_code[attempt][1] = -1;
+        result->probe_response_samples[attempt][0] = NAN;
+        result->probe_response_samples[attempt][1] = NAN;
+        result->probe_std_samples[attempt][0] = NAN;
+        result->probe_std_samples[attempt][1] = NAN;
+        result->probe_uncertainty_samples[attempt][0] = NAN;
+        result->probe_uncertainty_samples[attempt][1] = NAN;
+        result->probe_minimum_response_samples[attempt][0] = NAN;
+        result->probe_minimum_response_samples[attempt][1] = NAN;
+    }
     if (!adc_cal_skew_loop_config_valid(config) || io == NULL ||
         io->measure_batch == NULL || !adc_cal_double_isfinite(sample_rate_hz) ||
         sample_rate_hz <= 0.0) return -2;
@@ -918,137 +979,249 @@ int adc_cal_skew_run_closed_loop(
     }
     result->initial_register = current_register;
     result->final_register = current_register;
-    if (current_register == config->skew_register_max)
-        characterization_direction = -1;
-    characterization_register = current_register + characterization_direction;
+    result->characterization_baseline_restored = 1;
     result->characterization_attempted = 1;
-    if (adc_cal_skew_verified_write(
-            config, io, current_register, characterization_register) != 0) {
-        result->failure_reason = "actuator characterization write/readback failed";
-        return -6;
-    }
-    memset(&stepped, 0, sizeof(stepped));
-    measurement_status = io->measure_batch(io->context, &stepped);
-    if (measurement_status == 0) {
-        result->first_probe_stability =
-            adc_cal_skew_measurement_stability(config, &stepped);
-        result->latest_measurement_stability = result->first_probe_stability;
-        result->latest_measurement_std_samples = stepped.batch_std_samples;
-    }
-    if (measurement_status != 0 ||
-        !adc_cal_skew_measurement_characterization_eligible(
-            config, &stepped)) {
-        (void)adc_cal_skew_verified_write(
-            config, io, characterization_register, current_register);
-        result->failure_reason = stepped.reason != NULL ? stepped.reason :
-            "actuator characterization measurement is invalid";
-        return -7;
-    }
-    result->accepted_frames += stepped.accepted_frames;
-    result->rejected_frames += stepped.rejected_frames;
-    observed = (stepped.skew_samples - measurement.skew_samples) /
-        (double)characterization_direction;
-    if (adc_cal_skew_verified_write(
-            config, io, characterization_register, current_register) != 0) {
-        result->failure_reason = "actuator restoration write/readback failed";
-        return -8;
-    }
-    if (adc_cal_skew_verified_write(
-            config, io, current_register, characterization_register) != 0) {
-        result->failure_reason = "repeat characterization write/readback failed";
-        return -8;
-    }
-    memset(&stepped_repeat, 0, sizeof(stepped_repeat));
-    measurement_status = io->measure_batch(io->context, &stepped_repeat);
-    if (measurement_status == 0) {
-        result->repeat_probe_stability =
-            adc_cal_skew_measurement_stability(config, &stepped_repeat);
-        result->latest_measurement_stability =
-            result->repeat_probe_stability;
-        result->latest_measurement_std_samples =
-            stepped_repeat.batch_std_samples;
-    }
-    if (measurement_status != 0 ||
-        !adc_cal_skew_measurement_characterization_eligible(
-            config, &stepped_repeat)) {
-        (void)adc_cal_skew_verified_write(
-            config, io, characterization_register, current_register);
-        result->failure_reason = stepped_repeat.reason != NULL ?
-            stepped_repeat.reason :
-            "repeat actuator characterization measurement is invalid";
-        return -8;
-    }
-    result->accepted_frames += stepped_repeat.accepted_frames;
-    result->rejected_frames += stepped_repeat.rejected_frames;
-    observed_repeat = (stepped_repeat.skew_samples - measurement.skew_samples) /
-        (double)characterization_direction;
-    if (adc_cal_skew_verified_write(
-            config, io, characterization_register, current_register) != 0) {
-        result->failure_reason = "repeat characterization restoration failed";
-        return -8;
-    }
-    characterization_uncertainty = sqrt(
-        measurement.batch_std_samples * measurement.batch_std_samples /
-            (double)measurement.accepted_frames +
-        stepped.batch_std_samples * stepped.batch_std_samples /
-            (double)stepped.accepted_frames);
-    repeat_characterization_uncertainty = sqrt(
-        measurement.batch_std_samples * measurement.batch_std_samples /
-            (double)measurement.accepted_frames +
-        stepped_repeat.batch_std_samples *
-            stepped_repeat.batch_std_samples /
-            (double)stepped_repeat.accepted_frames);
-    result->characterization_combined_uncertainty_samples = fmax(
-        characterization_uncertainty,
-        repeat_characterization_uncertainty);
-    result->characterization_minimum_response_samples = fmax(
-        1.0e-9,
-        ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER *
-            result->characterization_combined_uncertainty_samples);
-    if (fabs(observed) <
-             ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER *
-                 characterization_uncertainty ||
-        fabs(observed_repeat) <
-             ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER *
-                 repeat_characterization_uncertainty) {
-        result->failure_reason =
-            "actuator response not distinguishable from measurement noise";
-        return -9;
-    }
-    if (!adc_cal_double_isfinite(observed) || fabs(observed) <= 1.0e-9) {
-        result->failure_reason = "actuator characterization produced no measurable step";
-        return -9;
-    }
-    if (!adc_cal_double_isfinite(observed_repeat) ||
-        fabs(observed_repeat) <= 1.0e-9 ||
-        observed * observed_repeat <= 0.0 ||
-        fabs(observed_repeat - observed) / fabs(observed) >
-            config->skew_characterization_step_tolerance_fraction) {
-        result->failure_reason = "actuator step response is not repeatable";
-        return -9;
-    }
-    observed = 0.5 * (observed + observed_repeat);
-    result->observed_step_samples = observed;
-    result->observed_step_ps = observed * 1.0e12 / sample_rate_hz;
-    result->actuator_polarity = observed > 0.0 ? 1 : -1;
-    result->actuator_step_samples = fabs(observed);
-    if (config->skew_actuator_polarity != 0 &&
-        config->skew_actuator_polarity != result->actuator_polarity) {
-        result->failure_reason = "measured actuator polarity disagrees with configuration";
-        return -10;
-    }
-    if (config->skew_actuator_step_samples > 0.0) {
-        const double relative_error = fabs(
-            fabs(observed) - config->skew_actuator_step_samples) /
-            config->skew_actuator_step_samples;
-        if (relative_error >
-            config->skew_characterization_step_tolerance_fraction) {
-            result->failure_reason =
-                "measured actuator step disagrees with configuration";
-            return -11;
+    for (uint32_t attempt = 0U;
+         attempt < ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS; ++attempt) {
+        const int amplitude = characterization_amplitudes[attempt];
+        int signed_steps = amplitude;
+        int characterization_register;
+        int write_performed = 0;
+        double response[2] = {NAN, NAN};
+        double resolution[2] = {NAN, NAN};
+        double uncertainty[2] = {NAN, NAN};
+        int probe_valid[2] = {0, 0};
+        int repeatable = 0;
+
+        result->characterization_attempt_count = attempt + 1U;
+        result->probe_amplitude[attempt] = amplitude;
+        if (current_register + signed_steps > config->skew_register_max) {
+            signed_steps = -amplitude;
         }
+        if (current_register + signed_steps < config->skew_register_min ||
+            current_register + signed_steps > config->skew_register_max) {
+            last_characterization_failure =
+                "no safe characterization direction within actuator range";
+            continue;
+        }
+        characterization_register = current_register + signed_steps;
+        result->probe_signed_steps[attempt] = signed_steps;
+        result->probe_requested_code[attempt] = characterization_register;
+
+        if (adc_cal_skew_verified_write(
+                config, io, current_register, characterization_register,
+                &result->probe_readback_code[attempt][0],
+                &write_performed) != 0) {
+            result->characterization_write_count +=
+                write_performed != 0 ? 1U : 0U;
+            if (adc_cal_skew_restore_characterization_baseline(
+                    config, io, current_register, attempt, 0U, result) != 0) {
+                result->failure_reason =
+                    "actuator characterization write/readback failed; baseline restoration failed";
+                return -6;
+            }
+            result->failure_reason =
+                "actuator characterization write/readback failed";
+            return -6;
+        }
+        ++result->characterization_write_count;
+        result->probe_readback_valid[attempt][0] = 1;
+        if (adc_cal_skew_settle_characterization_state(
+                io, attempt, 0U, current_register,
+                characterization_register, 0) != 0) {
+            if (adc_cal_skew_restore_characterization_baseline(
+                    config, io, current_register, attempt, 0U, result) != 0) {
+                result->failure_reason =
+                    "characterization settling failed; baseline restoration failed";
+                return -7;
+            }
+            result->failure_reason = "characterization settling failed";
+            return -7;
+        }
+        memset(&stepped, 0, sizeof(stepped));
+        measurement_status = io->measure_batch(io->context, &stepped);
+        if (measurement_status == 0) {
+            result->first_probe_stability =
+                adc_cal_skew_measurement_stability(config, &stepped);
+            result->latest_measurement_stability =
+                result->first_probe_stability;
+            result->latest_measurement_std_samples = stepped.batch_std_samples;
+        }
+        result->accepted_frames += stepped.accepted_frames;
+        result->rejected_frames += stepped.rejected_frames;
+        result->probe_std_samples[attempt][0] = stepped.batch_std_samples;
+        if (measurement_status == 0 &&
+            adc_cal_skew_measurement_characterization_eligible(
+                config, &stepped)) {
+            probe_valid[0] = 1;
+            response[0] = stepped.skew_samples - measurement.skew_samples;
+        } else {
+            last_characterization_failure = stepped.reason != NULL ?
+                stepped.reason :
+                "actuator characterization measurement is invalid";
+        }
+        if (adc_cal_skew_restore_characterization_baseline(
+                config, io, current_register, attempt, 0U, result) != 0) {
+            result->failure_reason =
+                "actuator restoration write/readback failed";
+            return -8;
+        }
+        if (!probe_valid[0]) continue;
+
+        write_performed = 0;
+        if (adc_cal_skew_verified_write(
+                config, io, current_register, characterization_register,
+                &result->probe_readback_code[attempt][1],
+                &write_performed) != 0) {
+            result->characterization_write_count +=
+                write_performed != 0 ? 1U : 0U;
+            if (adc_cal_skew_restore_characterization_baseline(
+                    config, io, current_register, attempt, 1U, result) != 0) {
+                result->failure_reason =
+                    "repeat characterization write/readback failed; baseline restoration failed";
+                return -8;
+            }
+            result->failure_reason =
+                "repeat characterization write/readback failed";
+            return -8;
+        }
+        ++result->characterization_write_count;
+        result->probe_readback_valid[attempt][1] = 1;
+        if (adc_cal_skew_settle_characterization_state(
+                io, attempt, 1U, current_register,
+                characterization_register, 0) != 0) {
+            if (adc_cal_skew_restore_characterization_baseline(
+                    config, io, current_register, attempt, 1U, result) != 0) {
+                result->failure_reason =
+                    "repeat characterization settling failed; baseline restoration failed";
+                return -8;
+            }
+            result->failure_reason =
+                "repeat characterization settling failed";
+            return -8;
+        }
+        memset(&stepped_repeat, 0, sizeof(stepped_repeat));
+        measurement_status = io->measure_batch(io->context, &stepped_repeat);
+        if (measurement_status == 0) {
+            result->repeat_probe_stability =
+                adc_cal_skew_measurement_stability(config, &stepped_repeat);
+            result->latest_measurement_stability =
+                result->repeat_probe_stability;
+            result->latest_measurement_std_samples =
+                stepped_repeat.batch_std_samples;
+        }
+        result->accepted_frames += stepped_repeat.accepted_frames;
+        result->rejected_frames += stepped_repeat.rejected_frames;
+        result->probe_std_samples[attempt][1] =
+            stepped_repeat.batch_std_samples;
+        if (measurement_status == 0 &&
+            adc_cal_skew_measurement_characterization_eligible(
+                config, &stepped_repeat)) {
+            probe_valid[1] = 1;
+            response[1] =
+                stepped_repeat.skew_samples - measurement.skew_samples;
+        } else {
+            last_characterization_failure =
+                stepped_repeat.reason != NULL ? stepped_repeat.reason :
+                "repeat actuator characterization measurement is invalid";
+        }
+        if (adc_cal_skew_restore_characterization_baseline(
+                config, io, current_register, attempt, 1U, result) != 0) {
+            result->failure_reason =
+                "repeat characterization restoration failed";
+            return -8;
+        }
+        if (!probe_valid[1]) continue;
+
+        for (uint32_t probe = 0U; probe < 2U; ++probe) {
+            const adc_cal_skew_batch_measurement_t *probe_measurement =
+                probe == 0U ? &stepped : &stepped_repeat;
+            uncertainty[probe] = sqrt(
+                measurement.batch_std_samples *
+                    measurement.batch_std_samples /
+                    (double)measurement.accepted_frames +
+                probe_measurement->batch_std_samples *
+                    probe_measurement->batch_std_samples /
+                    (double)probe_measurement->accepted_frames);
+            result->probe_response_samples[attempt][probe] = response[probe];
+            result->probe_uncertainty_samples[attempt][probe] =
+                uncertainty[probe];
+            result->probe_minimum_response_samples[attempt][probe] =
+                ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER *
+                    uncertainty[probe];
+            result->probe_significance_passed[attempt][probe] =
+                adc_cal_double_isfinite(response[probe]) &&
+                fabs(response[probe]) >=
+                    result->probe_minimum_response_samples[attempt][probe];
+            resolution[probe] = response[probe] / (double)signed_steps;
+        }
+        result->characterization_combined_uncertainty_samples = fmax(
+            uncertainty[0], uncertainty[1]);
+        result->characterization_minimum_response_samples = fmax(
+            result->probe_minimum_response_samples[attempt][0],
+            result->probe_minimum_response_samples[attempt][1]);
+        if (!result->probe_significance_passed[attempt][0] ||
+            !result->probe_significance_passed[attempt][1]) {
+            last_characterization_failure =
+                "actuator response not distinguishable from measurement noise";
+            continue;
+        }
+        repeatable = adc_cal_double_isfinite(resolution[0]) &&
+            adc_cal_double_isfinite(resolution[1]) &&
+            fabs(resolution[0]) > 1.0e-9 &&
+            fabs(resolution[1]) > 1.0e-9 &&
+            response[0] * response[1] > 0.0 &&
+            fabs(resolution[1] - resolution[0]) / fabs(resolution[0]) <=
+                config->skew_characterization_step_tolerance_fraction;
+        result->probe_repeatability_passed[attempt] = repeatable;
+        if (!repeatable) {
+            last_characterization_failure =
+                "actuator step response is not repeatable";
+            continue;
+        }
+
+        result->observed_step_samples =
+            0.5 * (resolution[0] + resolution[1]);
+        result->observed_step_ps =
+            result->observed_step_samples * 1.0e12 / sample_rate_hz;
+        result->actuator_polarity =
+            result->observed_step_samples > 0.0 ? 1 : -1;
+        result->actuator_step_samples = fabs(result->observed_step_samples);
+        if (config->skew_actuator_polarity != 0 &&
+            config->skew_actuator_polarity != result->actuator_polarity) {
+            last_characterization_failure =
+                "measured actuator polarity disagrees with configuration";
+            result->actuator_polarity = 0;
+            result->observed_step_samples = NAN;
+            result->observed_step_ps = NAN;
+            result->actuator_step_samples = 0.0;
+            continue;
+        }
+        if (config->skew_actuator_step_samples > 0.0) {
+            const double relative_error = fabs(
+                result->actuator_step_samples -
+                    config->skew_actuator_step_samples) /
+                config->skew_actuator_step_samples;
+            if (relative_error >
+                config->skew_characterization_step_tolerance_fraction) {
+                last_characterization_failure =
+                    "measured actuator step disagrees with configuration";
+                result->actuator_polarity = 0;
+                result->observed_step_samples = NAN;
+                result->observed_step_ps = NAN;
+                result->actuator_step_samples = 0.0;
+                continue;
+            }
+        }
+        result->successful_probe_amplitude = amplitude;
+        result->characterization_valid = 1;
+        characterization_succeeded = 1;
+        break;
     }
-    result->characterization_valid = 1;
+    if (!characterization_succeeded) {
+        result->failure_reason = last_characterization_failure;
+        return -9;
+    }
     active = *config;
     active.skew_actuator_polarity = result->actuator_polarity;
     active.skew_actuator_step_samples = result->actuator_step_samples;
@@ -1119,7 +1292,8 @@ int adc_cal_skew_run_closed_loop(
                 return 0;
             }
             if (adc_cal_skew_verified_write(
-                    &active, io, current_register, new_register) != 0) {
+                    &active, io, current_register, new_register,
+                    NULL, NULL) != 0) {
                 result->failure_reason = "actuator update write/readback failed";
                 return -13;
             }

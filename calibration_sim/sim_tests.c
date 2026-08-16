@@ -3120,6 +3120,10 @@ static int unit_skew_phase_branch_resolver(sim_assert_context_t *ctx)
     dither_result.relative_skew_samples = -0.768105;
     dither_usable = adc_cal_skew_dither_crosscheck_is_usable(
         &dither_result, 0.186103, 0.03, &dither_disagreement);
+    /* CASE I reporting semantics: structural/event detection remains valid
+     * even though the edge-derived fine-skew cross-check is unusable. */
+    SIM_ASSERT_TRUE(ctx, dither_result.valid);
+    SIM_ASSERT_EQ_INT(ctx, dither_result.status, ADC_CAL_SKEW_STATUS_WARNING);
     SIM_ASSERT_EQ_INT(ctx, dither_usable, 0);
     SIM_ASSERT_NEAR(ctx, dither_disagreement, 0.954208, 1.0e-9);
     adc_cal_skew_phase_default_config(&config);
@@ -3152,7 +3156,11 @@ typedef struct {
     uint32_t measurement_override_count;
     uint32_t reads;
     uint32_t writes;
+    int write_values[64];
     uint32_t measurements;
+    uint32_t characterization_settles;
+    uint32_t characterization_probe_settles;
+    uint32_t characterization_restore_settles;
     uint32_t readiness_verifications;
     uint32_t sequence_counter;
     uint32_t readiness_sequence;
@@ -3162,6 +3170,7 @@ typedef struct {
     int invalid_measurement;
     int readiness_failure;
     int readback_mismatch;
+    uint32_t readback_mismatch_write;
 } simulated_skew_actuator_t;
 
 static int simulated_skew_measure(
@@ -3216,9 +3225,35 @@ static int simulated_skew_write(void *context, int value)
     simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
     if (sim == NULL) return -1;
     ++sim->writes;
+    if (sim->writes <= sizeof(sim->write_values) /
+            sizeof(sim->write_values[0]))
+        sim->write_values[sim->writes - 1U] = value;
     ++sim->sequence_counter;
     if (sim->writes == 1U) sim->first_write_sequence = sim->sequence_counter;
-    sim->register_value = sim->readback_mismatch ? value + 1 : value;
+    sim->register_value = sim->readback_mismatch ||
+        sim->readback_mismatch_write == sim->writes ? value + 1 : value;
+    return 0;
+}
+
+static int simulated_skew_settle_characterization(
+    void *context,
+    uint32_t attempt,
+    uint32_t probe,
+    int baseline_code,
+    int active_code,
+    int restoring)
+{
+    simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
+    (void)attempt;
+    (void)probe;
+    (void)baseline_code;
+    (void)active_code;
+    if (sim == NULL) return -1;
+    ++sim->characterization_settles;
+    if (restoring)
+        ++sim->characterization_restore_settles;
+    else
+        ++sim->characterization_probe_settles;
     return 0;
 }
 
@@ -3698,6 +3733,8 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     io.verify_actuator_ready = simulated_skew_verify_ready;
     io.read_register = simulated_skew_read;
     io.write_register = simulated_skew_write;
+    io.settle_characterization_state =
+        simulated_skew_settle_characterization;
 
     /* Correct sign and bounded update: positive B-A skew with a positive
      * actuator polarity must reduce the Channel-B register. */
@@ -3721,6 +3758,8 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, applied > 0);
     config.skew_actuator_polarity = 1;
 
+    /* CASE A: a significant one-code response characterizes immediately and
+     * enters the unchanged controller without trying larger amplitudes. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.186;
@@ -3737,6 +3776,13 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, !result.characterization_cautious);
     SIM_ASSERT_EQ_INT(ctx, result.actuator_polarity, 1);
     SIM_ASSERT_NEAR(ctx, result.observed_step_samples, 0.02, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_attempt_count, 1U);
+    SIM_ASSERT_EQ_INT(ctx, result.successful_probe_amplitude, 1);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_write_count, 2U);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_restore_write_count, 2U);
+    SIM_ASSERT_TRUE(ctx, result.characterization_baseline_restored);
+    SIM_ASSERT_EQ_INT(ctx, sim.characterization_probe_settles, 2U);
+    SIM_ASSERT_EQ_INT(ctx, sim.characterization_restore_settles, 2U);
     SIM_ASSERT_TRUE(ctx, fabs(result.final_skew_samples) <=
         config.skew_tolerance_samples);
     SIM_ASSERT_TRUE(ctx, result.consecutive_passes >= 2U);
@@ -4062,34 +4108,81 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, result.characterization_minimum_response_samples <
         result.actuator_step_samples);
 
-    /* A marginal probe response below 1.5 times the combined batch standard
-     * error is restored and blocked before controller correction. */
+    /* CASE B: one code is below 1.5 times the combined standard error, while
+     * two codes are significant. Each amplitude is restored independently,
+     * the response is normalized per code, and the controller starts. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
-    sim.initial_skew_samples = 0.186;
+    sim.initial_skew_samples = 0.050;
     sim.signed_step_samples = 0.01;
+    sim.std_samples = 0.027;
+    io.context = &sim;
+    config.skew_actuator_step_samples = 0.0;
+    config.skew_actuator_polarity = 0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_attempt_count, 2U);
+    SIM_ASSERT_EQ_INT(ctx, result.successful_probe_amplitude, 2);
+    SIM_ASSERT_NEAR(ctx, result.observed_step_samples, 0.01, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_write_count, 4U);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_restore_write_count, 4U);
+    SIM_ASSERT_EQ_INT(ctx, sim.write_values[0], 21);
+    SIM_ASSERT_EQ_INT(ctx, sim.write_values[1], 20);
+    SIM_ASSERT_EQ_INT(ctx, sim.write_values[2], 21);
+    SIM_ASSERT_EQ_INT(ctx, sim.write_values[3], 20);
+    SIM_ASSERT_EQ_INT(ctx, sim.write_values[4], 22);
+    SIM_ASSERT_TRUE(ctx, result.iterations_completed > 0U);
+
+    /* CASE C: amplitudes one and two fail significance, four succeeds. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.030;
+    sim.signed_step_samples = 0.006;
+    sim.std_samples = 0.027;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_attempt_count, 3U);
+    SIM_ASSERT_EQ_INT(ctx, result.successful_probe_amplitude, 4);
+    SIM_ASSERT_NEAR(ctx, result.observed_step_samples, 0.006, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_write_count, 6U);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_restore_write_count, 6U);
+    SIM_ASSERT_TRUE(ctx, result.iterations_completed > 0U);
+
+    /* CASE D: all bounded amplitudes fail significance and leave the exact
+     * characterization-entry code restored without controller correction. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.050;
+    sim.signed_step_samples = 0.003;
     sim.std_samples = 0.027;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
-    SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
     SIM_ASSERT_TRUE(ctx, !result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_attempt_count, 3U);
+    SIM_ASSERT_EQ_INT(ctx, result.successful_probe_amplitude, 0);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_write_count, 6U);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_restore_write_count, 6U);
+    SIM_ASSERT_EQ_INT(ctx, sim.register_value, sim.initial_register);
+    SIM_ASSERT_TRUE(ctx, result.characterization_baseline_restored);
     SIM_ASSERT_TRUE(ctx, !result.correction_applied);
     SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason,
         "measurement noise") != NULL);
 
-    /* Opposite signs from the two cautious probes leave polarity ambiguous
-     * and block the controller. */
+    /* CASE F: opposite physical signs in each repeated pair reject every
+     * amplitude and leave polarity unknown. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
-    sim.initial_skew_samples = 0.186;
+    sim.initial_skew_samples = 0.050;
     sim.signed_step_samples = 0.02;
-    sim.std_samples = 0.027;
-    sim.measurement_override_count = 3U;
-    sim.measurement_std_samples[0] = 0.027;
-    sim.measurement_std_samples[1] = 0.027;
-    sim.measurement_std_samples[2] = 0.027;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 7U;
     sim.measurement_adjustment_samples[2] = -0.04;
+    sim.measurement_adjustment_samples[4] = -0.08;
+    sim.measurement_adjustment_samples[6] = -0.16;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
@@ -4098,19 +4191,62 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason, "repeatable") != NULL);
     SIM_ASSERT_TRUE(ctx, !result.correction_applied);
 
-    /* A marginal readback mismatch fails the minimum probe safely. */
+    /* CASE G: significant same-sign pairs outside the unchanged 35 percent
+     * repeatability tolerance escalate and ultimately fail. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = 0.050;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 7U;
+    sim.measurement_adjustment_samples[2] = 0.02;
+    sim.measurement_adjustment_samples[4] = 0.04;
+    sim.measurement_adjustment_samples[6] = 0.08;
+    io.context = &sim;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
+    SIM_ASSERT_TRUE(ctx, !result.characterization_valid);
+    SIM_ASSERT_TRUE(ctx, strstr(result.failure_reason, "repeatable") != NULL);
+    SIM_ASSERT_EQ_INT(ctx, sim.register_value, sim.initial_register);
+
+    /* CASE H: the preferred positive direction is unsafe at the upper limit,
+     * so probing reverses safely and normalizes the response sign per code. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = config.skew_register_max;
+    sim.initial_skew_samples = 0.050;
+    sim.signed_step_samples = 0.02;
+    sim.std_samples = 0.001;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.characterization_valid);
+    SIM_ASSERT_EQ_INT(ctx, result.probe_signed_steps[0], -1);
+    SIM_ASSERT_EQ_INT(ctx, result.probe_requested_code[0],
+        config.skew_register_max - 1);
+    SIM_ASSERT_TRUE(ctx, result.probe_response_samples[0][0] < 0.0);
+    SIM_ASSERT_NEAR(ctx, result.observed_step_samples, 0.02, 1.0e-12);
+    SIM_ASSERT_EQ_INT(ctx, result.actuator_polarity, 1);
+
+    config.skew_actuator_step_samples = 0.02;
+    config.skew_actuator_polarity = 1;
+
+    /* CASE E: a probe readback mismatch attempts and verifies restoration,
+     * then fails safely without controller entry. */
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.186;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.027;
-    sim.readback_mismatch = 1;
+    sim.readback_mismatch_write = 1U;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
     SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_FAILED);
     SIM_ASSERT_TRUE(ctx, result.characterization_attempted);
     SIM_ASSERT_TRUE(ctx, !result.correction_applied);
+    SIM_ASSERT_EQ_INT(ctx, sim.register_value, sim.initial_register);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_restore_write_count, 1U);
+    SIM_ASSERT_TRUE(ctx, result.characterization_baseline_restored);
 
     /* A stable baseline remains a valid measurement when its first probe
      * fails readback; the failure belongs to actuator characterization. */
@@ -4119,7 +4255,7 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.initial_skew_samples = -0.238981;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.016051;
-    sim.readback_mismatch = 1;
+    sim.readback_mismatch_write = 1U;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);

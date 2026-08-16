@@ -8312,10 +8312,10 @@ restore_selection:
                                                                         calibration_skew_batch_result_t *batch;
                                                                         bool diagnose_mode;
                                                                         uint32_t measurement_call_count;
-                                                                        uint32_t actuator_write_call_count;
+                                                                        uint32_t controller_measurement_count;
                                                                         int active_register;
-                                                                        int first_probe_requested_register;
-                                                                        bool first_probe_readback_pending;
+                                                                        uint32_t characterization_probe;
+                                                                        bool characterization_measurement_pending;
                                                                         adc_cal_skew_stability_t
                                                                             initial_baseline_stability;
                                                                         calibration_skew_batch_result_t
@@ -8337,19 +8337,21 @@ restore_selection:
                                                                             g_adc_cal_skew_capture_context.capture_phase =
                                                                                 "closed_loop_initial_baseline";
                                                                         }
-                                                                        else if (loop->measurement_call_count == 1U) {
+                                                                        else if (loop->characterization_measurement_pending &&
+                                                                            loop->characterization_probe == 0U) {
                                                                             g_adc_cal_skew_capture_context.iteration = 0U;
                                                                             g_adc_cal_skew_capture_context.capture_phase =
                                                                                 "actuator_characterization_after";
                                                                         }
-                                                                        else if (loop->measurement_call_count == 2U) {
+                                                                        else if (loop->characterization_measurement_pending) {
                                                                             g_adc_cal_skew_capture_context.iteration = 0U;
                                                                             g_adc_cal_skew_capture_context.capture_phase =
                                                                                 "actuator_characterization_repeat";
                                                                         }
                                                                         else {
+                                                                            ++loop->controller_measurement_count;
                                                                             g_adc_cal_skew_capture_context.iteration =
-                                                                                loop->measurement_call_count - 2U;
+                                                                                loop->controller_measurement_count;
                                                                             g_adc_cal_skew_capture_context.capture_phase =
                                                                                 "calibration";
                                                                         }
@@ -8358,6 +8360,7 @@ restore_selection:
                                                                         ++loop->measurement_call_count;
                                                                         status = calibration_run_skew_open_loop(
                                                                             loop->batch, loop->diagnose_mode);
+                                                                        loop->characterization_measurement_pending = false;
                                                                         if (g_adc_cal_skew_capture_context.iteration > 0U &&
                                                                             g_adc_cal_skew_capture_context.iteration <=
                                                                                 ADC_CAL_SKEW_HISTORY_CAPACITY) {
@@ -8426,16 +8429,6 @@ restore_selection:
                                                                             g_adc_cal_skew_capture_context.active_delay_register =
                                                                                 *value;
                                                                         }
-                                                                        if (loop != NULL &&
-                                                                            loop->first_probe_readback_pending) {
-                                                                            xil_printf("Characterization probe 1 readback: %ld | %s\r\n",
-                                                                                status == 0 && value != NULL ?
-                                                                                    (long)*value : -1L,
-                                                                                status == 0 && value != NULL &&
-                                                                                *value == loop->first_probe_requested_register ?
-                                                                                    "PASS" : "FAILED");
-                                                                            loop->first_probe_readback_pending = false;
-                                                                        }
                                                                         return status;
                                                                     }
                                                                     static int calibration_skew_loop_verify_ready(
@@ -8455,7 +8448,9 @@ restore_selection:
                                                                             g_adc_cal_skew_capture_context.active_delay_register =
                                                                                 loop->active_register;
                                                                         }
-                                                                        xil_printf("Actuator ready check    : PASS (read-only)\r\n");
+                                                                        xil_printf("Actuator readiness check: PASS\r\n");
+                                                                        xil_printf("Readiness access        : READ ONLY\r\n");
+                                                                        xil_printf("Correction writes       : ENABLED WITH READBACK\r\n");
 #if defined(ADC_SKEW_ACTUATOR_REGISTER_ADDRESS) && \
     defined(ADC_SKEW_ACTUATOR_REGISTER_MASK) && \
     defined(ADC_SKEW_ACTUATOR_REGISTER_SHIFT)
@@ -8492,27 +8487,42 @@ restore_selection:
                                                                         void *context, int value) {
                                                                         calibration_skew_loop_context_t *loop =
                                                                             (calibration_skew_loop_context_t *)context;
-                                                                        const bool first_probe = loop != NULL &&
-                                                                            loop->actuator_write_call_count == 0U;
-                                                                        const int baseline_register = loop != NULL ?
-                                                                            loop->active_register : -1;
                                                                         const int status =
                                                                             adc_skew_actuator_write_value(value);
-                                                                        if (loop != NULL)
-                                                                            ++loop->actuator_write_call_count;
-                                                                        if (first_probe) {
-                                                                            loop->first_probe_requested_register = value;
-                                                                            loop->first_probe_readback_pending = status == 0;
-                                                                            xil_printf("Characterization probe 1: baseline code %ld | requested code %ld | write status %s\r\n",
-                                                                                (long)baseline_register, (long)value,
-                                                                                status == 0 ? "PASS" : "FAILED");
-                                                                        }
                                                                         if (status == 0 && loop != NULL) {
                                                                             loop->active_register = value;
                                                                             g_adc_cal_skew_capture_context.active_delay_register =
                                                                                 value;
                                                                         }
                                                                         return status;
+                                                                    }
+                                                                    static int calibration_skew_loop_settle_characterization(
+                                                                        void *context,
+                                                                        uint32_t attempt,
+                                                                        uint32_t probe,
+                                                                        int baseline_code,
+                                                                        int active_code,
+                                                                        int restoring) {
+                                                                        calibration_skew_loop_context_t *loop =
+                                                                            (calibration_skew_loop_context_t *)context;
+                                                                        if (loop == NULL) return -1;
+                                                                        loop->characterization_probe = probe;
+                                                                        loop->characterization_measurement_pending =
+                                                                            !restoring;
+                                                                        xil_printf("Characterization %s settle: attempt %lu probe %lu | baseline %ld | active %ld | 1 DMA capture discarded\r\n",
+                                                                            restoring ? "restore" : "probe",
+                                                                            (unsigned long)(attempt + 1U),
+                                                                            (unsigned long)(probe + 1U),
+                                                                            (long)baseline_code,
+                                                                            (long)active_code);
+                                                                        /* AD9695 writes intrinsically reset and settle the JESD
+                                                                         * receiver. Discard one additional capture so no
+                                                                         * post-write DMA state can enter either probe batch. */
+                                                                        if (adc_capture_frame() != XST_SUCCESS) {
+                                                                            loop->characterization_measurement_pending = false;
+                                                                            return -1;
+                                                                        }
+                                                                        return 0;
                                                                     }
                                                                     static void calibration_skew_loop_report_iteration(
                                                                         void *context,
@@ -8616,10 +8626,10 @@ restore_selection:
                                                                         context.batch = batch;
                                                                         context.diagnose_mode = diagnose_mode;
                                                                         context.measurement_call_count = 0U;
-                                                                        context.actuator_write_call_count = 0U;
+                                                                        context.controller_measurement_count = 0U;
                                                                         context.active_register = -1;
-                                                                        context.first_probe_requested_register = -1;
-                                                                        context.first_probe_readback_pending = false;
+                                                                        context.characterization_probe = 0U;
+                                                                        context.characterization_measurement_pending = false;
                                                                         context.initial_baseline_stability =
                                                                             ADC_CAL_SKEW_STABILITY_UNKNOWN;
                                                                         g_adc_cal_skew_capture_context.iteration = 1U;
@@ -8630,6 +8640,8 @@ restore_selection:
                                                                             calibration_skew_loop_verify_ready;
                                                                         io.read_register = calibration_skew_loop_read;
                                                                         io.write_register = calibration_skew_loop_write;
+                                                                        io.settle_characterization_state =
+                                                                            calibration_skew_loop_settle_characterization;
                                                                         io.report_iteration =
                                                                             calibration_skew_loop_report_iteration;
                                                                         xil_printf("Actuator preparation    : COMPLETED BEFORE TIMING\r\n");
@@ -8745,6 +8757,7 @@ restore_selection:
                                                                     }
                                                                     static void calibration_print_skew_summary(     const calibration_skew_batch_result_t *batch, bool diagnose_mode) {
                                                                         const char *dither_crosscheck_status;
+                                                                        const char *dither_event_status;
                                                                         bool baseline_characterization_eligible;
                                                                         if (batch == NULL) return;
                                                                         baseline_characterization_eligible =
@@ -8768,6 +8781,16 @@ restore_selection:
                                                                         else {
                                                                             dither_crosscheck_status = "PARTIAL";
                                                                         }
+                                                                        if (batch->dither_estimate_available_frames == 0U) {
+                                                                            dither_event_status = "INVALID";
+                                                                        }
+                                                                        else if (batch->dither_estimate_available_frames ==
+                                                                            batch->frames_captured) {
+                                                                            dither_event_status = "VALID";
+                                                                        }
+                                                                        else {
+                                                                            dither_event_status = "PARTIAL";
+                                                                        }
                                                                         xil_printf("\r\n-----------------------------------------\r\n");
                                                                         xil_printf("%s Skew Measurement Summary\r\n",
                                                                             batch->closed_loop_enabled ? "Closed-Loop" : "Open-Loop");
@@ -8776,8 +8799,13 @@ restore_selection:
                                                                         xil_printf("Measured channel         : Channel B\r\n");
                                                                         xil_printf("Primary estimator        : common-frequency tone phase\r\n");
                                                                         xil_printf("Dither estimator         : independent cross-check\r\n");
+                                                                        xil_printf("Dither event detection   : %s\r\n", dither_event_status);
+                                                                        xil_printf("Dither events available  : %lu/%lu\r\n",
+                                                                            (unsigned long)batch->dither_estimate_available_frames,
+                                                                            (unsigned long)batch->frames_captured);
+                                                                        xil_printf("Dither fine-skew estimate: %s\r\n", dither_crosscheck_status);
                                                                         xil_printf("Dither cross-check       : %s\r\n", dither_crosscheck_status);
-                                                                        if (batch->dither_crosscheck_invalid_frames > 0U)         xil_printf("Latest dither rejection  : %s\r\n",             !batch->latest_frame.dither_crosscheck_valid && batch->latest_frame.dither_crosscheck_reason != NULL ?                 batch->latest_frame.dither_crosscheck_reason : "one or more earlier frames rejected");
+                                                                        if (batch->dither_crosscheck_invalid_frames > 0U)         xil_printf("Dither rejection reason : %s\r\n",             !batch->latest_frame.dither_crosscheck_valid && batch->latest_frame.dither_crosscheck_reason != NULL ?                 batch->latest_frame.dither_crosscheck_reason : "one or more earlier frames rejected");
                                                                         xil_printf("Register writes          : %s\r\n",
                                                                             batch->closed_loop_enabled &&
                                                                             batch->loop_result.initial_register >= 0 &&
@@ -8798,9 +8826,13 @@ restore_selection:
                                                                                     (1.0e12 / adc_get_effective_sample_rate_hz()), " ps");
                                                                         }
                                                                         else {
-                                                                            xil_printf("Actuator ready verified : %s\r\n",
+                                                                            xil_printf("Actuator readiness check: %s\r\n",
                                                                                 batch->loop_result.actuator_ready_verified ?
-                                                                                    "YES - READ ONLY" : "NO");
+                                                                                    "PASS" : "FAIL");
+                                                                            xil_printf("Readiness access        : READ ONLY\r\n");
+                                                                            xil_printf("Correction writes       : %s\r\n",
+                                                                                batch->loop_result.actuator_ready_verified ?
+                                                                                    "ENABLED WITH READBACK" : "DISABLED");
                                                                             print_double_value("Closed-loop initial baseline",
                                                                                 batch->loop_result.initial_skew_samples, " samples");
                                                                             print_double_value("Closed-loop initial baseline",
@@ -8944,21 +8976,145 @@ restore_selection:
                                                                         xil_printf("Initial delay register   : %ld\r\n",         (long)batch->initial_delay_register);
                                                                         xil_printf("Final delay register     : %ld\r\n",         (long)batch->final_delay_register);
                                                                         if (batch->closed_loop_enabled) {
+                                                                            const adc_cal_skew_loop_result_t *loop =
+                                                                                &batch->loop_result;
                                                                             xil_printf("Total register change    : %ld\r\n",
-                                                                                (long)batch->loop_result.total_register_change);
+                                                                                (long)loop->total_register_change);
+                                                                            xil_printf("Characterization writes : %lu\r\n",
+                                                                                (unsigned long)loop->characterization_write_count);
+                                                                            xil_printf("Characterization restore writes: %lu\r\n",
+                                                                                (unsigned long)loop->characterization_restore_write_count);
+                                                                            xil_printf("Probe amplitudes attempted: %s\r\n",
+                                                                                loop->characterization_attempt_count >= 3U ?
+                                                                                    "1, 2, 4" :
+                                                                                loop->characterization_attempt_count == 2U ?
+                                                                                    "1, 2" :
+                                                                                loop->characterization_attempt_count == 1U ?
+                                                                                    "1" : "NONE");
+                                                                            if (loop->successful_probe_amplitude > 0)
+                                                                                xil_printf("Successful probe amplitude: %ld\r\n",
+                                                                                    (long)loop->successful_probe_amplitude);
+                                                                            else
+                                                                                xil_printf("Successful probe amplitude: NONE\r\n");
+                                                                            for (uint32_t attempt = 0U;
+                                                                                 attempt < loop->characterization_attempt_count &&
+                                                                                 attempt < ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS;
+                                                                                 ++attempt) {
+                                                                                const int signed_steps =
+                                                                                    loop->probe_signed_steps[attempt];
+                                                                                xil_printf("\r\nProbe amplitude        : %ld code%s\r\n",
+                                                                                    (long)loop->probe_amplitude[attempt],
+                                                                                    loop->probe_amplitude[attempt] == 1 ? "" : "s");
+                                                                                xil_printf("Signed probe steps      : %ld\r\n",
+                                                                                    (long)signed_steps);
+                                                                                xil_printf("Baseline code           : %ld\r\n",
+                                                                                    (long)loop->initial_register);
+                                                                                xil_printf("Requested code          : %ld\r\n",
+                                                                                    (long)loop->probe_requested_code[attempt]);
+                                                                                xil_printf("Readback code #1        : %ld (%s)\r\n",
+                                                                                    (long)loop->probe_readback_code[attempt][0],
+                                                                                    loop->probe_readback_valid[attempt][0] ?
+                                                                                        "PASS" : "FAIL");
+                                                                                xil_printf("Readback code #2        : %ld (%s)\r\n",
+                                                                                    (long)loop->probe_readback_code[attempt][1],
+                                                                                    loop->probe_readback_valid[attempt][1] ?
+                                                                                        "PASS" : "NOT RUN/FAIL");
+                                                                                print_double_value("Response #1",
+                                                                                    loop->probe_response_samples[attempt][0] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                print_double_value("Probe #1 std",
+                                                                                    loop->probe_std_samples[attempt][0] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                print_double_value("Probe #1 uncertainty",
+                                                                                    loop->probe_uncertainty_samples[attempt][0] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                print_double_value("Required response #1",
+                                                                                    loop->probe_minimum_response_samples[attempt][0] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                xil_printf("Significance #1         : %s\r\n",
+                                                                                    loop->probe_significance_passed[attempt][0] ?
+                                                                                        "PASS" : "FAIL");
+                                                                                print_double_value("Resolution #1",
+                                                                                    signed_steps != 0 ?
+                                                                                        loop->probe_response_samples[attempt][0] /
+                                                                                            (double)signed_steps *
+                                                                                            (1.0e12 / adc_get_effective_sample_rate_hz()) :
+                                                                                        NAN,
+                                                                                    " ps/code");
+                                                                                print_double_value("Response #2",
+                                                                                    loop->probe_response_samples[attempt][1] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                print_double_value("Probe #2 std",
+                                                                                    loop->probe_std_samples[attempt][1] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                print_double_value("Probe #2 uncertainty",
+                                                                                    loop->probe_uncertainty_samples[attempt][1] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                print_double_value("Required response #2",
+                                                                                    loop->probe_minimum_response_samples[attempt][1] *
+                                                                                        (1.0e12 / adc_get_effective_sample_rate_hz()),
+                                                                                    " ps");
+                                                                                xil_printf("Significance #2         : %s\r\n",
+                                                                                    loop->probe_significance_passed[attempt][1] ?
+                                                                                        "PASS" : "FAIL");
+                                                                                print_double_value("Resolution #2",
+                                                                                    signed_steps != 0 ?
+                                                                                        loop->probe_response_samples[attempt][1] /
+                                                                                            (double)signed_steps *
+                                                                                            (1.0e12 / adc_get_effective_sample_rate_hz()) :
+                                                                                        NAN,
+                                                                                    " ps/code");
+                                                                                xil_printf("Repeatability           : %s\r\n",
+                                                                                    loop->probe_repeatability_passed[attempt] ?
+                                                                                        "PASS" : "FAIL");
+                                                                                xil_printf("Restored code           : %ld\r\n",
+                                                                                    loop->restore_readback_valid[attempt][0] &&
+                                                                                    (loop->probe_readback_valid[attempt][1] == 0 ||
+                                                                                     loop->restore_readback_valid[attempt][1]) ?
+                                                                                        (long)loop->initial_register : -1L);
+                                                                                xil_printf("Restore readback        : %s\r\n",
+                                                                                    loop->restore_readback_valid[attempt][0] &&
+                                                                                    (loop->probe_readback_valid[attempt][1] == 0 ||
+                                                                                     loop->restore_readback_valid[attempt][1]) ?
+                                                                                        "PASS" : "FAIL");
+                                                                                if (!loop->probe_repeatability_passed[attempt] &&
+                                                                                    attempt + 1U <
+                                                                                        loop->characterization_attempt_count)
+                                                                                    xil_printf("Escalating probe        : %ld -> %ld\r\n",
+                                                                                        (long)loop->probe_amplitude[attempt],
+                                                                                        (long)loop->probe_amplitude[attempt + 1U]);
+                                                                            }
+                                                                            xil_printf("Characterization final code restored: %s (code %ld)\r\n",
+                                                                                loop->characterization_baseline_restored &&
+                                                                                (!loop->characterization_valid ||
+                                                                                 loop->iterations_completed == 0U) ?
+                                                                                    "YES" :
+                                                                                loop->characterization_valid ?
+                                                                                    "YES BEFORE CONTROLLER" : "NO",
+                                                                                (long)loop->initial_register);
+                                                                            xil_printf("Controller entered      : %s\r\n",
+                                                                                loop->characterization_valid &&
+                                                                                loop->iterations_completed > 0U ? "YES" : "NO");
                                                                             print_double_value("Actuator resolution",
-                                                                                batch->loop_result.actuator_step_samples, " samples/step");
+                                                                                loop->actuator_step_samples, " samples/code");
                                                                             print_double_value("Measured actuator step",
-                                                                                batch->loop_result.observed_step_ps, " ps/step");
+                                                                                loop->observed_step_ps, " ps/code");
                                                                             xil_printf("Actuator polarity        : %s\r\n",
-                                                                                batch->loop_result.actuator_polarity > 0 ?
+                                                                                loop->actuator_polarity > 0 ?
                                                                                     "INCREASING REG INCREASES B-A" :
-                                                                                batch->loop_result.actuator_polarity < 0 ?
+                                                                                loop->actuator_polarity < 0 ?
                                                                                     "INCREASING REG DECREASES B-A" : "UNKNOWN");
                                                                             xil_printf("Iterations completed     : %lu\r\n",
-                                                                                (unsigned long)batch->loop_result.iterations_completed);
+                                                                                (unsigned long)loop->iterations_completed);
                                                                             xil_printf("Converged                : %s\r\n",
-                                                                                batch->loop_result.status ==
+                                                                                loop->status ==
                                                                                     ADC_CAL_SKEW_LOOP_CONVERGED ? "YES" : "NO");
                                                                         }
                                                                         xil_printf("Saturated                : %s\r\n",         batch->saturated ? "YES" : "NO");

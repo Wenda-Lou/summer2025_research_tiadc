@@ -48,6 +48,11 @@ extern "C" {
 #define ADC_CAL_SKEW_CHARACTERIZATION_UNCERTAINTY_MULTIPLIER 1.5
 #endif
 
+#ifndef ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS
+/* Bounded characterization stimulus amplitudes are 1, 2, and 4 codes. */
+#define ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS 3U
+#endif
+
 #ifndef ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES
 /* Discard real DMA captures during pre-timing actuator initialization so no
  * link or datapath transient enters the authoritative timing context. */
@@ -247,6 +252,13 @@ typedef int (*adc_cal_skew_discard_capture_fn)(
     void *context, uint32_t capture_index, uint32_t capture_count);
 typedef int (*adc_cal_skew_register_read_fn)(void *context, int *value);
 typedef int (*adc_cal_skew_register_write_fn)(void *context, int value);
+typedef int (*adc_cal_skew_characterization_settle_fn)(
+    void *context,
+    uint32_t attempt,
+    uint32_t probe,
+    int baseline_code,
+    int active_code,
+    int restoring);
 typedef void (*adc_cal_skew_iteration_report_fn)(
     void *context,
     uint32_t iteration,
@@ -267,6 +279,7 @@ typedef struct {
     adc_cal_skew_actuator_verify_fn verify_actuator_ready;
     adc_cal_skew_register_read_fn read_register;
     adc_cal_skew_register_write_fn write_register;
+    adc_cal_skew_characterization_settle_fn settle_characterization_state;
     adc_cal_skew_iteration_report_fn report_iteration;
 } adc_cal_skew_loop_io_t;
 
@@ -285,6 +298,24 @@ typedef struct {
     double latest_measurement_std_samples;
     double characterization_combined_uncertainty_samples;
     double characterization_minimum_response_samples;
+    uint32_t characterization_attempt_count;
+    uint32_t characterization_write_count;
+    uint32_t characterization_restore_write_count;
+    int successful_probe_amplitude;
+    int characterization_baseline_restored;
+    int probe_amplitude[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS];
+    int probe_signed_steps[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS];
+    int probe_requested_code[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS];
+    int probe_readback_code[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    int probe_readback_valid[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    int restore_readback_valid[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    double probe_response_samples[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    double probe_std_samples[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    double probe_uncertainty_samples[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    double probe_minimum_response_samples[
+        ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    int probe_significance_passed[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
+    int probe_repeatability_passed[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS];
     double observed_step_samples;
     double observed_step_ps;
     int actuator_polarity;
