@@ -135,6 +135,42 @@ def cmd_sim(args) -> None:
           f"{avg('cal_offset_spur_dbc'):.1f} dBc")
 
 
+def cmd_check(args) -> None:
+    """Cross-check a waveform against the rate the converter actually ran at."""
+    from .check import check_waveform, suggest_tone
+    import json
+    from pathlib import Path
+
+    results = check_waveform(args.waveform_json, args.adc_rate)
+    print(f"Checking {args.waveform_json}")
+    print(f"against a measured ADC rate of {args.adc_rate / 1e6:.3f} MS/s")
+    print()
+    for r in results:
+        print(f"  [{'PASS' if r['ok'] else 'FAIL'}] {r['name']}")
+        print(f"         {r['detail']}")
+    failed = [r for r in results if not r["ok"]]
+    print()
+    print(f"{len(results) - len(failed)}/{len(results)} checks passed")
+
+    if failed:
+        meta = json.loads(Path(args.waveform_json).read_text(encoding="utf-8"))
+        fs_dac = float(meta.get("dac_sample_rate_hz") or meta["config"]["fs_dac"])
+        n_dac = int(meta.get("num_samples")
+                    or meta["config"]["n_dac_points"])
+        period = int(meta.get("dither_period_dac")
+                     or meta["config"]["dither_period_dac"])
+        tone = float(meta.get("actual_tone_hz")
+                     or meta["derived"]["main_tone_hz"])
+        picks = suggest_tone(fs_dac, args.adc_rate, n_dac, period, tone)
+        if picks:
+            print()
+            print("Tone bins near the current one that satisfy every check at this rate:")
+            for b, f, step, coh in picks:
+                print(f"  bin {b:5d}  {f / 1e6:9.4f} MHz   "
+                      f"{step:.4f} cycles/event   coherence {coh:.3f}")
+        raise SystemExit(1)
+
+
 def cmd_probe(args) -> None:
     """Measure without actuating.
 
@@ -331,6 +367,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--skew-ps", dest="skew_ps", type=float, default=3.6)
     s.add_argument("--noise", type=float, default=3.0)
     s.set_defaults(func=cmd_sim)
+
+    ck = sub.add_parser(
+        "check",
+        help="cross-check a waveform's metadata against the real ADC rate")
+    ck.add_argument("--waveform-json", required=True,
+                    help="the .json written next to the DAC vector")
+    ck.add_argument("--adc-rate", type=float, required=True,
+                    help="ADC sample rate actually used, in Hz")
+    ck.set_defaults(func=cmd_check)
 
     pr = sub.add_parser("probe", help="measure once without driving anything (bring-up)")
     add_common(pr)
