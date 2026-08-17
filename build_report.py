@@ -46,7 +46,7 @@ def fig_to_b64(fig) -> str:
 fig, ax1 = plt.subplots(figsize=(7.2, 2.6))
 iterations = [0, 1, 2, 3, 4]
 skew_ps = [-60.04, -58.27, -49.87, -49.73, -62.40]
-register = [24, 33, 34, 34, 34]
+register = [24, 32, 33, 34, 34]
 ax1.plot(iterations, skew_ps, "o-", color="#1f6fb2", label="measured skew (mean)")
 ax1.axhline(7.69, color="g", ls="--", lw=1, label="tolerance +7.69 ps")
 ax1.axhline(-7.69, color="g", ls="--", lw=1)
@@ -183,7 +183,7 @@ html = """<!DOCTYPE html>
 <h1>时间交织 ADC 校准项目完整报告</h1>
 <p class="meta">University of Toronto · Summer 2025 Research &nbsp;|&nbsp;
 仓库：<code>summer2025_research_tiadc</code> &nbsp;|&nbsp;
-报告日期：2026-08-16 &nbsp;|&nbsp; 状态：全流水线板级 PASS</p>
+报告日期：2026-08-17（板级验证 2026-08-16） &nbsp;|&nbsp; 状态：全流水线板级 PASS</p>
 
 <h2>1. 项目概述</h2>
 <p>本项目在 ZCU102 平台上实现了一套<b>基于参考抖动信号（dither）的 TI-ADC 硬件校准算法</b>：
@@ -293,7 +293,7 @@ UART `adc -cal` 启动
 </ul>
 <h4>4.4.3 控制器</h4>
 <ul>
-<li>比例步进：<code>steps = round(gain · skew / step)</code>，每轮上限 4 codes，
+<li>比例步进：<code>steps = round(gain · skew / step)</code>，每轮上限 16 codes（板级配置）；最终轮首轮实际 24→32 一次迈 8 codes，
   寄存器越界则饱和钳位。</li>
 <li>"最后一搏"：round=0 但 |skew|&gt;容差时，若预测落点在容差内则迈 1 步，
   避免分辨率死区；否则报 <code>NO EFFECTIVE STEP</code> 退出。</li>
@@ -419,6 +419,31 @@ UART `adc -cal` 启动
   <code>ADC_CAL_TEST_*</code> 的硬依赖，删除前必须先改 fixture 定义。</li>
 </ul>
 
+<h3>5.8 Skew CSV 导出记录错位（已修复，无需重跑板级）</h3>
+<p class="bad">现象</p>
+<ul>
+<li>每个 probe 前重测的 fresh baseline 被旧导出器按调用顺序误标为
+  <code>calibration</code> controller batch。</li>
+<li>导致 <code>calibration_skew_iterations.csv</code> 的 mean/median/std
+  来自 baseline 批次，而 delay register before/after 来自控制器决策，
+  两列语义错位。</li>
+<li>历史容量 160 帧截断了最终轮的 8-code repeat probe 和 4 个
+  controller post-update 批次（group 17–21）。</li>
+</ul>
+<p class="ok">修复（提交 603ae52）</p>
+<ul>
+<li>共享 <code>measure_batch</code> 回调增加显式 measurement kind：
+  initial / characterization-baseline / characterization-probe /
+  controller / prep-pre / prep-post。</li>
+<li>fresh baseline 单独记录为
+  <code>actuator_characterization_baseline</code>，不再占用
+  <code>controller_batches</code> 槽位；controller 批次进入正确 iteration。</li>
+<li>skew capture history 容量 160 → 320 帧。</li>
+<li>新增 <code>calibration_loop/fix_skew_export.py</code> 对已记录 CSV
+  离线重标注，并生成 corrected captures / corrected iterations / 缺失组说明；
+  不虚构被截断的帧。</li>
+</ul>
+
 <h2>6. 板级验证汇总（最终轮，21:04:53）</h2>
 <table>
 <tr><th>阶段</th><th>结果</th><th>关键数字</th></tr>
@@ -446,14 +471,16 @@ UART `adc -cal` 启动
 
 <h2>8. 测试与工具</h2>
 <ul>
-<li><b>主机仿真器</b>：<code>adc_cal_sim --run-all</code> —
-  5666–5672 unit tests / 18 scenarios / 14 pipeline cases 全绿；
+<li><b>主机仿真器</b>：本报告修订时 controller tests 6/6、
+  pipeline scenarios 14/14；完整 <code>--run-all</code> 的 replay 用例
+  需在 checkout 中恢复两个历史 <code>adc_data</code> fixture 后运行。
   共享模块 aarch64 交叉编译语法检查零警告。</li>
 <li><b>离线诊断工具（Python，calibration_loop/）</b>：
   <code>dither_replay.py</code>（板捕获回放，--window-half/--gate 可扫描）、
   <code>dither_param_scan.py</code>（25 组合网格）、
   <code>dither_geometry_scan.py</code>（脉冲几何扫描）、
   <code>dither_dispersion_check.py</code>（色散/截断实验）、
+  <code>fix_skew_export.py</code>（修复 2026-08-16 skew CSV 标签）、
   <code>run_calibration check</code>（波形 vs 硬件时钟 6 项闸门）。</li>
 <li><b>回归测试覆盖</b>：极性解析、修正不变性、表征阶梯（含 8-code）、
   探针前基线/死锁场景、加宽窗口与边界跳过、幅度门控。</li>
