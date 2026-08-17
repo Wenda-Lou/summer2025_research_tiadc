@@ -1,6 +1,0 @@
-INFO: [VRFC 10-2263] Analyzing Verilog file "D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/axi_lite_wrapper_1_0/hdl/axi_lite_wrapper.v" into library xil_defaultlib
-INFO: [VRFC 10-311] analyzing module axi_lite_wrapper
-INFO: [VRFC 10-2263] Analyzing Verilog file "D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/axi_lite_wrapper_1_0/hdl/axi_lite_wrapper_master_lite_v1_0_M00_AXI.v" into library xil_defaultlib
-INFO: [VRFC 10-311] analyzing module axi_lite_wrapper_master_lite_v1_0_M00_AXI
-INFO: [VRFC 10-2263] Analyzing SystemVerilog file "D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/edit_axi_lite_wrapper_v1_0.sim/tb.sv" into library xil_defaultlib
-INFO: [VRFC 10-311] analyzing module tb_axi_lite_wrapper

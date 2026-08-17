@@ -19,3 +19,39 @@
 
 _ide/logs
 _ide/.wsdata
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+
+# IDE / editor / AI tool caches
+.cache/
+_ide/
+*.idx
+workspace_journal*.py
+
+# Build outputs and generated tool files
+build/
+build-*/
+build_configs/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.ninja
+.ninja_deps
+.ninja_log
+install_manifest.txt
+
+# FPGA / Vivado / Vitis generated outputs
+xsim.dir/
+sim_work/
+xelab.pb
+xvlog.pb
+*.bit
+*.elf
+*.obj
+*.exe
+*.a
+*.o
+*.d

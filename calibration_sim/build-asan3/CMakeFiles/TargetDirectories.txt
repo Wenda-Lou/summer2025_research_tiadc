@@ -1,3 +1,0 @@
-C:/TIDIAC/summer2025_research_tiadc/calibration_sim/build-asan3/CMakeFiles/adc_cal_sim.dir
-C:/TIDIAC/summer2025_research_tiadc/calibration_sim/build-asan3/CMakeFiles/edit_cache.dir
-C:/TIDIAC/summer2025_research_tiadc/calibration_sim/build-asan3/CMakeFiles/rebuild_cache.dir

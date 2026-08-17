@@ -1,7 +1,0 @@
-Running: xsim.dir/axi_lite_wrapper_behav/xsimk.exe -simmode gui -wdb axi_lite_wrapper_behav.wdb -simrunnum 0 -socket 10997
-Design successfully loaded
-Design Loading Memory Usage: 29676 KB (Peak: 29676 KB)
-Design Loading CPU Usage: 562 ms
-Simulation completed
-Simulation Memory Usage: 31548 KB (Peak: 31548 KB)
-Simulation CPU Usage: 656 ms

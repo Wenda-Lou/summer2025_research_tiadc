@@ -1,8 +1,0 @@
-0.7
-2020.2
-Nov  8 2024
-22:36:57
-D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/axi_lite_wrapper_1_0/hdl/axi_lite_wrapper.v,1754327404,verilog,,D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/axi_lite_wrapper_1_0/hdl/axi_lite_wrapper_master_lite_v1_0_M00_AXI.v,,axi_lite_wrapper,,uvm,,,,,,
-D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/axi_lite_wrapper_1_0/hdl/axi_lite_wrapper_master_lite_v1_0_M00_AXI.v,1754418423,verilog,,,,axi_lite_wrapper_master_lite_v1_0_M00_AXI,,uvm,,,,,,
-D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/edit_axi_lite_wrapper_v1_0.sim/sim_1/behav/xsim/glbl.v,1724786425,verilog,,,,glbl,,uvm,,,,,,
-D:/Vivado_Projects/accelector_wrapper/vivado/ip_repo/edit_axi_lite_wrapper_v1_0.sim/tb.sv,1754418082,systemVerilog,,,,tb_axi_lite_wrapper,,uvm,,,,,,

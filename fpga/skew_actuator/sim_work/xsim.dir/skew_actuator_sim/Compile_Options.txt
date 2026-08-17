@@ -1,1 +1,0 @@
---nolog -L "work" -s "skew_actuator_sim" "adc_channel_skew_actuator_tb" 
