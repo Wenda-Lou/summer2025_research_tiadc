@@ -56,6 +56,26 @@ void adc_cal_perf_default_config(adc_cal_perf_config_t *config)
     config->frame_result_capacity = 0U;
 }
 
+int adc_cal_perf_resolve_channel_polarity(
+    int canonical_channel,
+    double canonical_reference_polarity,
+    double relative_b_over_a_polarity,
+    double channel_polarity[2])
+{
+    if (channel_polarity == NULL ||
+        (canonical_channel != 0 && canonical_channel != 1) ||
+        !adc_cal_double_isfinite(canonical_reference_polarity) ||
+        !adc_cal_double_isfinite(relative_b_over_a_polarity) ||
+        fabs(canonical_reference_polarity) != 1.0 ||
+        fabs(relative_b_over_a_polarity) != 1.0) {
+        return -1;
+    }
+    channel_polarity[canonical_channel] = canonical_reference_polarity;
+    channel_polarity[1 - canonical_channel] =
+        canonical_reference_polarity * relative_b_over_a_polarity;
+    return 0;
+}
+
 void adc_cal_perf_spectral_reset(adc_cal_perf_spectral_metrics_t *metrics)
 {
     if (metrics == NULL) return;
@@ -306,6 +326,8 @@ static int analyze_matching(
     double polarity_b,
     double relative_skew_samples,
     double relative_skew_ps,
+    double applied_gain_correction,
+    double applied_offset_correction,
     adc_cal_perf_matching_metrics_t *metrics)
 {
     double mean_a = 0.0;
@@ -321,7 +343,10 @@ static int analyze_matching(
     if (a == NULL || b == NULL || count == 0U ||
         !adc_cal_double_isfinite(polarity_a) ||
         !adc_cal_double_isfinite(polarity_b) ||
-        fabs(polarity_a) != 1.0 || fabs(polarity_b) != 1.0) return -2;
+        fabs(polarity_a) != 1.0 || fabs(polarity_b) != 1.0 ||
+        !adc_cal_double_isfinite(applied_gain_correction) ||
+        applied_gain_correction <= 0.0 ||
+        !adc_cal_double_isfinite(applied_offset_correction)) return -2;
 
     for (size_t i = 0U; i < count; ++i) {
         const double normalized_a = polarity_a * a[i];
@@ -344,7 +369,18 @@ static int analyze_matching(
         ac_power_b += centered_b * centered_b;
         covariance += centered_a * centered_b;
     }
-    metrics->offset_mismatch_codes = (float)(mean_a - mean_b);
+    /* The inputs may already carry the shared production gain/offset
+     * correction.  That correction cannot change physical A/B matching, so
+     * the reported offset mismatch must remove the polarity-weighted
+     * artifact (polarity_a - polarity_b) * gain * offset it introduces;
+     * with opposite channel polarities a shared offset would otherwise
+     * appear twice.  RMSE, correlation and the gain ratio are centered or
+     * ratio metrics, so the shared correction cancels in them by
+     * construction. */
+    metrics->offset_mismatch_codes = (float)(
+        (mean_a - mean_b) -
+        applied_gain_correction * (polarity_a - polarity_b) *
+        applied_offset_correction);
     metrics->waveform_rmse_codes =
         (float)sqrt(residual_power / (double)count);
     if (ac_power_a > DBL_EPSILON && ac_power_b > DBL_EPSILON) {
@@ -381,6 +417,8 @@ int adc_cal_perf_analyze_frame(
 {
     static double raw_parallel_average[ADC_CAL_PERFORMANCE_MAX_SAMPLES];
     static double cal_parallel_average[ADC_CAL_PERFORMANCE_MAX_SAMPLES];
+    static double normalized_cal_a[ADC_CAL_PERFORMANCE_MAX_SAMPLES];
+    static double normalized_cal_b[ADC_CAL_PERFORMANCE_MAX_SAMPLES];
     double residual_sum = 0.0;
     double residual_square_sum = 0.0;
     double residual_a_square_sum = 0.0;
@@ -391,7 +429,7 @@ int adc_cal_perf_analyze_frame(
     double raw_cal_b_max = 0.0;
     double raw_cal_a_max = 0.0;
     const double *raw_canonical;
-    const double *cal_canonical;
+    const double *normalized_cal_canonical;
 
     if (result == NULL) return -1;
     memset(result, 0, sizeof(*result));
@@ -423,15 +461,18 @@ int adc_cal_perf_analyze_frame(
     result->sample_rate_hz = config->sample_rate_hz;
     result->expected_fundamental_hz = config->expected_fundamental_hz;
     raw_canonical = config->canonical_channel == 0 ? raw_a : raw_b;
-    cal_canonical = config->canonical_channel == 0 ? cal_a : cal_b;
+    normalized_cal_canonical = config->canonical_channel == 0 ?
+        normalized_cal_a : normalized_cal_b;
     for (size_t i = 0U; i < config->sample_count; ++i) {
+        normalized_cal_a[i] = config->channel_polarity[0] * cal_a[i];
+        normalized_cal_b[i] = config->channel_polarity[1] * cal_b[i];
         const double before_polarity = config->final_gain_correction *
             (raw_canonical[i] + config->final_offset_correction);
         const double residual_before = before_polarity - reference[i];
         const double a_difference = raw_a[i] - cal_a[i];
-        const double residual = cal_canonical[i] - reference[i];
-        const double residual_a = cal_a[i] - reference[i];
-        const double residual_b = cal_b[i] - reference[i];
+        const double residual = normalized_cal_canonical[i] - reference[i];
+        const double residual_a = normalized_cal_a[i] - reference[i];
+        const double residual_b = normalized_cal_b[i] - reference[i];
         const double b_difference = raw_b[i] - cal_b[i];
         if (!adc_cal_double_isfinite(raw_a[i]) || !adc_cal_double_isfinite(raw_b[i]) ||
             !adc_cal_double_isfinite(cal_a[i]) || !adc_cal_double_isfinite(cal_b[i]) ||
@@ -447,7 +488,8 @@ int adc_cal_perf_analyze_frame(
         raw_parallel_average[i] = 0.5 *
             (config->channel_polarity[0] * raw_a[i] +
              config->channel_polarity[1] * raw_b[i]);
-        cal_parallel_average[i] = 0.5 * (cal_a[i] + cal_b[i]);
+        cal_parallel_average[i] = 0.5 *
+            (normalized_cal_a[i] + normalized_cal_b[i]);
         raw_cal_b_square_sum += b_difference * b_difference;
         raw_cal_a_square_sum += a_difference * a_difference;
         if (fabs(b_difference) > raw_cal_b_max)
@@ -463,11 +505,12 @@ int adc_cal_perf_analyze_frame(
         (float)sqrt(residual_before_square_sum /
                     (double)config->sample_count);
     result->correlation =
-        correlation(cal_canonical, reference, config->sample_count);
+        correlation(normalized_cal_canonical, reference,
+                    config->sample_count);
     result->cal_a_reference_correlation =
-        correlation(cal_a, reference, config->sample_count);
+        correlation(normalized_cal_a, reference, config->sample_count);
     result->cal_b_reference_correlation =
-        correlation(cal_b, reference, config->sample_count);
+        correlation(normalized_cal_b, reference, config->sample_count);
     result->cal_a_reference_rmse_codes = (float)sqrt(
         residual_a_square_sum / (double)config->sample_count);
     result->cal_b_reference_rmse_codes = (float)sqrt(
@@ -511,11 +554,15 @@ int adc_cal_perf_analyze_frame(
                          config->channel_polarity[1],
                          config->initial_relative_skew_samples,
                          config->initial_relative_skew_ps,
+                         1.0, 0.0,
                          &result->raw_matching) != 0 ||
         analyze_matching(cal_a, cal_b, config->sample_count,
-                         1.0, 1.0,
+                         config->channel_polarity[0],
+                         config->channel_polarity[1],
                          config->final_relative_skew_samples,
                          config->final_relative_skew_ps,
+                         config->final_gain_correction,
+                         config->final_offset_correction,
                          &result->cal_matching) != 0) {
         result->failure_reason = "spectral performance analysis failed";
         return -4;
@@ -602,11 +649,9 @@ int adc_cal_perf_run_batch(
             for (size_t i = 0U; i < config->sample_count; ++i) {
                 const double expected =
                     config->nominal_system_gain * reference[i];
-                cal_a[i] = config->channel_polarity[0] *
-                    config->final_gain_correction *
+                cal_a[i] = config->final_gain_correction *
                     (raw_a[i] + config->final_offset_correction);
-                cal_b[i] = config->channel_polarity[1] *
-                    config->final_gain_correction *
+                cal_b[i] = config->final_gain_correction *
                     (raw_b[i] + config->final_offset_correction);
                 reference[i] = expected;
                 if (!adc_cal_double_isfinite(cal_a[i]) ||

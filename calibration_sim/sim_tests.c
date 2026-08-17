@@ -3843,10 +3843,12 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.initial_skew_samples = 0.005;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.001;
-    sim.measurement_override_count = 3U;
-    sim.measurement_std_samples[0] = 0.016051;
-    sim.measurement_std_samples[1] = 0.025659;
-    sim.measurement_std_samples[2] = 0.001;
+    sim.measurement_override_count = 5U;
+    sim.measurement_std_samples[0] = 0.016051; /* entry baseline: STABLE */
+    sim.measurement_std_samples[1] = 0.001;    /* probe-1 fresh baseline */
+    sim.measurement_std_samples[2] = 0.025659; /* probe-1 stepped: MARGINAL */
+    sim.measurement_std_samples[3] = 0.001;    /* probe-2 fresh baseline */
+    sim.measurement_std_samples[4] = 0.001;    /* probe-2 stepped: STABLE */
     io.context = &sim;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
@@ -4156,16 +4158,16 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     memset(&sim, 0, sizeof(sim));
     sim.register_value = sim.initial_register = 20;
     sim.initial_skew_samples = 0.050;
-    sim.signed_step_samples = 0.003;
+    sim.signed_step_samples = 0.002;
     sim.std_samples = 0.027;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
     SIM_ASSERT_TRUE(ctx, !result.characterization_valid);
-    SIM_ASSERT_EQ_INT(ctx, result.characterization_attempt_count, 3U);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_attempt_count, 4U);
     SIM_ASSERT_EQ_INT(ctx, result.successful_probe_amplitude, 0);
-    SIM_ASSERT_EQ_INT(ctx, result.characterization_write_count, 6U);
-    SIM_ASSERT_EQ_INT(ctx, result.characterization_restore_write_count, 6U);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_write_count, 8U);
+    SIM_ASSERT_EQ_INT(ctx, result.characterization_restore_write_count, 8U);
     SIM_ASSERT_EQ_INT(ctx, sim.register_value, sim.initial_register);
     SIM_ASSERT_TRUE(ctx, result.characterization_baseline_restored);
     SIM_ASSERT_TRUE(ctx, !result.correction_applied);
@@ -4179,10 +4181,14 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.initial_skew_samples = 0.050;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.001;
-    sim.measurement_override_count = 7U;
+    /* The first probe of each amplitude lands at measurement indices 2/6/10
+     * (M1 entry baseline; each probe is preceded by a fresh baseline) and
+     * 14 for the 8-code rung. */
+    sim.measurement_override_count = 15U;
     sim.measurement_adjustment_samples[2] = -0.04;
-    sim.measurement_adjustment_samples[4] = -0.08;
-    sim.measurement_adjustment_samples[6] = -0.16;
+    sim.measurement_adjustment_samples[6] = -0.08;
+    sim.measurement_adjustment_samples[10] = -0.16;
+    sim.measurement_adjustment_samples[14] = -0.32;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
@@ -4198,10 +4204,11 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
     sim.initial_skew_samples = 0.050;
     sim.signed_step_samples = 0.02;
     sim.std_samples = 0.001;
-    sim.measurement_override_count = 7U;
+    sim.measurement_override_count = 15U;
     sim.measurement_adjustment_samples[2] = 0.02;
-    sim.measurement_adjustment_samples[4] = 0.04;
-    sim.measurement_adjustment_samples[6] = 0.08;
+    sim.measurement_adjustment_samples[6] = 0.04;
+    sim.measurement_adjustment_samples[10] = 0.08;
+    sim.measurement_adjustment_samples[14] = 0.32;
     io.context = &sim;
     SIM_ASSERT_TRUE(ctx, adc_cal_skew_run_closed_loop(
         &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result) != 0);
@@ -4229,6 +4236,40 @@ static int unit_skew_closed_loop_controller(sim_assert_context_t *ctx)
 
     config.skew_actuator_step_samples = 0.02;
     config.skew_actuator_polarity = 1;
+
+    /* Per-probe baseline regression (2026-08-16 bench deadlock): a linear
+     * drift of 0.003 samples/batch during characterization would have
+     * inflated the old entry-baseline-referenced 1-code resolution to
+     * ~0.0222 samples/code, leaving residual -0.01105 inside the dead zone
+     * (tolerance 0.011, half-step 0.0111) where round(residual/step) = 0 and
+     * the controller exits with "no effective step".  Fresh per-probe
+     * baselines cancel the drift: both responses are step + one batch of
+     * drift = 0.0162, the controller takes the +1 step and converges. */
+    memset(&sim, 0, sizeof(sim));
+    sim.register_value = sim.initial_register = 20;
+    sim.initial_skew_samples = -0.01105;
+    sim.signed_step_samples = 0.0132;
+    sim.std_samples = 0.001;
+    sim.measurement_override_count = 5U;
+    sim.measurement_std_samples[0] = 0.001;
+    sim.measurement_std_samples[1] = 0.001;
+    sim.measurement_std_samples[2] = 0.001;
+    sim.measurement_std_samples[3] = 0.001;
+    sim.measurement_std_samples[4] = 0.001;
+    sim.measurement_adjustment_samples[1] = 0.003;
+    sim.measurement_adjustment_samples[2] = 0.006;
+    sim.measurement_adjustment_samples[3] = 0.009;
+    sim.measurement_adjustment_samples[4] = 0.012;
+    io.context = &sim;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_run_closed_loop(
+        &config, &io, SIM_DEFAULT_ADC_SAMPLE_RATE_HZ, &result), 0);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_LOOP_CONVERGED);
+    SIM_ASSERT_EQ_INT(ctx, result.successful_probe_amplitude, 1);
+    SIM_ASSERT_NEAR(ctx, result.observed_step_samples, 0.0162, 1.0e-9);
+    SIM_ASSERT_EQ_INT(ctx, result.probe_baseline_remeasured[0][0], 1);
+    SIM_ASSERT_EQ_INT(ctx, result.probe_baseline_remeasured[0][1], 1);
+    SIM_ASSERT_EQ_INT(ctx, result.final_register,
+        sim.initial_register + 1);
 
     /* CASE E: a probe readback mismatch attempts and verifies restoration,
      * then fails safely without controller entry. */
@@ -4729,10 +4770,91 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     make_dither_residual(template_samples, b, 256U, 1.0, 0.10, 0.0, NULL);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(a, b, template_samples, 256U, &config, &result), 0);
     SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, 0.10, 0.02);
+    SIM_ASSERT_NEAR(ctx, result.rising_skew_samples, 0.10, 0.03);
+    SIM_ASSERT_NEAR(ctx, result.falling_skew_samples, 0.10, 0.03);
+    SIM_ASSERT_NEAR(ctx, result.rising_skew_samples,
+                    result.falling_skew_samples, 0.03);
+
+    /* Inverted Channel B uses a negative fitted gain; both physical edges
+     * retain the same B-A skew sign after that polarity normalization. */
+    make_dither_residual(template_samples, b, 256U, -1.0, 0.10, 0.0, NULL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+        a, b, template_samples, 256U, &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, 0.10, 0.02);
+    SIM_ASSERT_NEAR(ctx, result.rising_skew_samples, 0.10, 0.03);
+    SIM_ASSERT_NEAR(ctx, result.falling_skew_samples, 0.10, 0.03);
+    SIM_ASSERT_NEAR(ctx, result.rising_skew_samples,
+                    result.falling_skew_samples, 0.03);
 
     make_dither_residual(template_samples, b, 256U, 1.0, -0.10, 0.0, NULL);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(a, b, template_samples, 256U, &config, &result), 0);
     SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, -0.10, 0.02);
+    SIM_ASSERT_NEAR(ctx, result.rising_skew_samples, -0.10, 0.03);
+    SIM_ASSERT_NEAR(ctx, result.falling_skew_samples, -0.10, 0.03);
+
+    /* Widened profile window (H6): the aggregation extends symmetrically
+     * beyond the template extent without disturbing rigid-shift estimates;
+     * the extra samples have zero derivative and are excluded by the masks. */
+    config.profile_window_half_samples = 12U;
+    make_dither_residual(template_samples, b, 256U, 1.0, 0.10, 0.0, NULL);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+        a, b, template_samples, 256U, &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, 0.10, 0.02);
+    SIM_ASSERT_NEAR(ctx, result.rising_skew_samples,
+                    result.falling_skew_samples, 0.03);
+    config.profile_window_half_samples = 0U;
+
+    /* Boundary-clipped events are skipped instead of failing the whole
+     * aggregation when the widened window reaches past the analysis edge
+     * (2026-08-16 board: +-64 windows around edge events returned "event
+     * profile aggregation failed"). */
+    make_dither_template(template_samples, 256U, 64U, 4U, 10.0, 0);
+    make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
+    make_dither_residual(template_samples, b, 256U, 1.0, 0.10, 0.0, NULL);
+    config.profile_window_half_samples = 40U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+        a, b, template_samples, 256U, &config, &result), 0);
+    SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, 0.10, 0.02);
+    config.profile_window_half_samples = 0U;
+    make_dither_template(template_samples, 256U, 32U, 4U, 10.0, 0);
+    make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
+
+    /* Amplitude-gated projection: with the widened window, a tone-like
+     * residual in the tails outside the pulse body biases the ungated
+     * derivative projection; gating to |template| >= 15 % of the peak
+     * confines the fit to the pulse body and recovers the injected shift
+     * (2026-08-16 board: +-64 window blew the edge estimates out to
+     * -402/+216 ps). */
+    make_dither_template(template_samples, 256U, 64U, 4U, 10.0, 0);
+    make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
+    for (size_t i = 0U; i < 256U; ++i) {
+        const double previous = i > 0U ? template_samples[i - 1U] :
+            template_samples[i];
+        const double next = i + 1U < 256U ? template_samples[i + 1U] :
+            template_samples[i];
+        const double derivative = 0.5 * (next - previous);
+        b[i] = template_samples[i] + 0.10 * derivative +
+            3.0 * sin(2.0 * M_PI * 3.5 * (double)i / 256.0);
+    }
+    {
+        double ungated_bias;
+        double gated_bias;
+        config.profile_window_half_samples = 24U;
+        config.profile_mask_amplitude_fraction = 0.0;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            a, b, template_samples, 256U, &config, &result), 0);
+        ungated_bias = fabs(result.relative_skew_samples - 0.10);
+        SIM_ASSERT_TRUE(ctx, ungated_bias > 0.02);
+        config.profile_mask_amplitude_fraction = 0.15;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            a, b, template_samples, 256U, &config, &result), 0);
+        gated_bias = fabs(result.relative_skew_samples - 0.10);
+        SIM_ASSERT_TRUE(ctx, gated_bias < ungated_bias);
+    }
+    config.profile_mask_amplitude_fraction = 0.0;
+    config.profile_window_half_samples = 0U;
+    make_dither_template(template_samples, 256U, 32U, 4U, 10.0, 0);
+    make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
 
     make_dither_residual(template_samples, b, 256U, 1.0, 0.18, 0.0, NULL);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(a, b, template_samples, 256U, &config, &result), 0);
@@ -4792,6 +4914,94 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_STATUS_WARNING);
     SIM_ASSERT_EQ_INT(ctx, result.reason,
         ADC_CAL_SKEW_REASON_EDGE_DISAGREEMENT);
+    /* The injected shifts are sign-correct and exactly antisymmetric, but the
+     * single full-profile gain couples the two edges, so the recovered
+     * magnitudes are attenuated (measured ~0.31x on this pulse).  Lock the
+     * qualitative contract: opposite signs, gate fires, full-profile fit
+     * stays at the midpoint. */
+    SIM_ASSERT_TRUE(ctx, result.rising_skew_samples > 0.05);
+    SIM_ASSERT_TRUE(ctx, result.falling_skew_samples < -0.05);
+    SIM_ASSERT_NEAR(ctx, result.rising_skew_samples,
+                    -result.falling_skew_samples, 1.0e-9);
+    SIM_ASSERT_TRUE(ctx, result.edge_disagreement_samples > 0.03);
+    SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, 0.0, 0.05);
+
+    /* Board-like asymmetry: the 2026-08-16 bench run measured
+     * rising -91.7 ps (-0.119 samples) and falling +75.7 ps (+0.098 samples)
+     * at 1.3 GSPS.  A B channel whose pulse is ~0.22 samples narrower than A
+     * must reproduce that signature: rising < 0 < falling, disagreement well
+     * above the 0.03-sample gate, and the rigid full-profile fit between the
+     * two edge estimates. */
+    make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
+    for (size_t i = 0U; i < 256U; ++i) {
+        const double previous = i > 0U ? template_samples[i - 1U] :
+            template_samples[i];
+        const double next = i + 1U < 256U ? template_samples[i + 1U] :
+            template_samples[i];
+        const double derivative = 0.5 * (next - previous);
+        const double polarity = template_samples[i] < 0.0 ? -1.0 : 1.0;
+        const double canonical_derivative = polarity * derivative;
+        const double edge_skew = canonical_derivative >= 0.0 ? -0.12 : 0.10;
+        b[i] = template_samples[i] + edge_skew * derivative;
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+        a, b, template_samples, 256U, &config, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.valid);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_STATUS_WARNING);
+    SIM_ASSERT_EQ_INT(ctx, result.reason,
+        ADC_CAL_SKEW_REASON_EDGE_DISAGREEMENT);
+    SIM_ASSERT_TRUE(ctx, result.rising_skew_samples < 0.0);
+    SIM_ASSERT_TRUE(ctx, result.falling_skew_samples > 0.0);
+    SIM_ASSERT_TRUE(ctx, result.edge_disagreement_samples > 0.03);
+    SIM_ASSERT_TRUE(ctx, result.relative_skew_samples >=
+                    result.rising_skew_samples - 0.01);
+    SIM_ASSERT_TRUE(ctx, result.relative_skew_samples <=
+                    result.falling_skew_samples + 0.01);
+    /* Larger injected asymmetry must produce larger measured disagreement. */
+    SIM_ASSERT_TRUE(ctx, 0.250307957625 > result.edge_disagreement_samples);
+
+    /* Tone/event synchronization regression: with alternating pulse polarity
+     * a tone at half-integer cycles/event keeps the same phase on every
+     * polarized profile and biases the estimates, while a tone at integer
+     * cycles/event cancels.  Guarded monotonic, per the testing guidelines. */
+    {
+        double sync_a[256];
+        double sync_b[256];
+        double spread_a[256];
+        double spread_b[256];
+        double tone[256];
+        const double tone_amplitude = 0.5;
+        double sync_bias = 0.0;
+        double spread_bias = 0.0;
+        for (size_t i = 0U; i < 256U; ++i) {
+            tone[i] = tone_amplitude *
+                sin(2.0 * M_PI * 4.0 * (double)i / 256.0); /* 0.5 cyc/event */
+        }
+        make_dither_residual(template_samples, sync_a, 256U, 1.0, 0.0,
+                             0.0, NULL);
+        for (size_t i = 0U; i < 256U; ++i) sync_b[i] = sync_a[i] + tone[i];
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            sync_a, sync_b, template_samples, 256U, &config, &result), 0);
+        sync_bias = fabs(result.relative_skew_samples) +
+            result.edge_disagreement_samples;
+
+        for (size_t i = 0U; i < 256U; ++i) {
+            tone[i] = tone_amplitude *
+                sin(2.0 * M_PI * 8.0 * (double)i / 256.0); /* 1.0 cyc/event */
+        }
+        make_dither_residual(template_samples, spread_a, 256U, 1.0, 0.0,
+                             0.0, NULL);
+        for (size_t i = 0U; i < 256U; ++i) spread_b[i] = spread_a[i] + tone[i];
+        make_dither_residual(template_samples, spread_a, 256U, 1.0, 0.0,
+                             0.0, NULL);
+        for (size_t i = 0U; i < 256U; ++i) spread_a[i] += tone[i];
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            spread_a, spread_b, template_samples, 256U, &config, &result), 0);
+        spread_bias = fabs(result.relative_skew_samples) +
+            result.edge_disagreement_samples;
+
+        SIM_ASSERT_TRUE(ctx, sync_bias > spread_bias);
+    }
     return 1;
 }
 
@@ -4842,6 +5052,8 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     double spur[800];
     double ref[800];
     double raw_b[800];
+    double corrected_a[800];
+    double corrected_b[800];
     adc_cal_perf_config_t config;
     adc_cal_perf_spectral_metrics_t clean_metrics;
     adc_cal_perf_spectral_metrics_t noisy_metrics;
@@ -4864,6 +5076,21 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     config.sample_count = 800U;
     config.sample_rate_hz = SIM_DEFAULT_ADC_SAMPLE_RATE_HZ;
     config.expected_fundamental_hz = 130000000.0;
+
+    /* Stage-5 polarity is anchored by the canonical channel's reference
+     * sign and completed by Stage 4's relative B/A polarity. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_resolve_channel_polarity(
+        0, 1.0, 1.0, config.channel_polarity), 0);
+    SIM_ASSERT_NEAR(ctx, config.channel_polarity[0], 1.0, 0.0);
+    SIM_ASSERT_NEAR(ctx, config.channel_polarity[1], 1.0, 0.0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_resolve_channel_polarity(
+        1, 1.0, -1.0, config.channel_polarity), 0);
+    SIM_ASSERT_NEAR(ctx, config.channel_polarity[0], -1.0, 0.0);
+    SIM_ASSERT_NEAR(ctx, config.channel_polarity[1], 1.0, 0.0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_perf_resolve_channel_polarity(
+        1, 1.0, 0.0, config.channel_polarity) != 0);
+    config.channel_polarity[0] = 1.0;
+    config.channel_polarity[1] = 1.0;
 
     make_perf_tone(clean, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, &rng);
@@ -4918,7 +5145,16 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(clean, raw_b, clean, raw_b, ref, &config, 1U, &frame), 0);
     SIM_ASSERT_TRUE(ctx, frame.raw_a.sndr_db > frame.raw_b.sndr_db);
 
-    /* Parallel A/B matching uses the frozen polarity and never interleaves. */
+    /* A: same-polarity identical channels combine constructively. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
+        clean, clean, clean, clean, ref, &config, 2U, &frame), 0);
+    SIM_ASSERT_TRUE(ctx, frame.cal_matching.correlation > 0.9999f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_matching.waveform_rmse_codes < 1.0e-4f);
+    SIM_ASSERT_NEAR(ctx, frame.cal_parallel_average.signal_power,
+                    frame.cal_a.signal_power, 1.0e-9);
+
+    /* B/G/H: inverted physical channels are normalized exactly once and the
+     * average retains the fundamental instead of cancelling it. */
     for (size_t i = 0U; i < 800U; ++i) raw_b[i] = -clean[i];
     config.channel_polarity[0] = 1.0;
     config.channel_polarity[1] = -1.0;
@@ -4927,7 +5163,7 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     config.final_relative_skew_samples = -0.0041;
     config.final_relative_skew_ps = -2.83;
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
-        clean, raw_b, clean, clean, ref, &config, 2U, &frame), 0);
+        clean, raw_b, clean, raw_b, ref, &config, 2U, &frame), 0);
     SIM_ASSERT_TRUE(ctx, frame.parallel_average_available);
     SIM_ASSERT_TRUE(ctx, !frame.interleaved_metrics_available);
     SIM_ASSERT_TRUE(ctx, frame.raw_matching.correlation > 0.9999f);
@@ -4937,19 +5173,67 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, frame.cal_b_reference_correlation > 0.9999f);
     SIM_ASSERT_TRUE(ctx, frame.cal_a_reference_rmse_codes < 1.0e-4f);
     SIM_ASSERT_TRUE(ctx, frame.cal_b_reference_rmse_codes < 1.0e-4f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_parallel_average.sndr_db > 60.0f);
+    SIM_ASSERT_NEAR(ctx, frame.cal_parallel_average.signal_power,
+                    frame.cal_a.signal_power, 1.0e-9);
     SIM_ASSERT_NEAR(ctx, frame.raw_matching.relative_skew_ps, 120.0, 1.0e-9);
     SIM_ASSERT_NEAR(ctx, frame.cal_matching.relative_skew_ps, -2.83, 1.0e-9);
     SIM_ASSERT_NEAR(ctx, frame.raw_parallel_average.signal_hz,
                     frame.raw_a.signal_hz, 1.0);
     SIM_ASSERT_NEAR(ctx, frame.sample_rate_hz, config.sample_rate_hz, 1.0);
 
-    /* Offset and gain mismatch are measured after polarity normalization. */
+    /* C/D: offset and gain mismatch are measured after normalization. */
     for (size_t i = 0U; i < 800U; ++i) raw_b[i] = -(1.10 * clean[i] + 7.0);
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
-        clean, raw_b, clean, clean, ref, &config, 3U, &frame), 0);
+        clean, raw_b, clean, raw_b, ref, &config, 3U, &frame), 0);
     SIM_ASSERT_NEAR(ctx, frame.raw_matching.offset_mismatch_codes, -7.0, 0.05);
     SIM_ASSERT_NEAR(ctx, frame.raw_matching.gain_ratio_b_over_a, 1.10, 1.0e-4);
     SIM_ASSERT_NEAR(ctx, frame.raw_matching.gain_mismatch, 0.10, 1.0e-4);
+
+    /* Correction invariance: the shared production gain/offset correction
+     * cannot change physical A/B matching, so the reported cal offset
+     * mismatch must exclude the polarity-weighted correction artifact and
+     * the cal gain ratio must be exactly correction-invariant.  Pre-fix,
+     * a shared offset leaked through the polarity factors (the 2026-08-16
+     * board run reported +15.8 codes instead of ~2.4 physical codes). */
+    for (size_t i = 0U; i < 800U; ++i) raw_b[i] = -(clean[i] - 5.0);
+    for (int trial = 0; trial < 3; ++trial) {
+        const double shared_gain = trial == 2 ? 1.10 : 0.95;
+        const double shared_offset = trial == 0 ? 0.0 :
+            trial == 1 ? 7.0 : -11.0;
+        for (size_t i = 0U; i < 800U; ++i) {
+            corrected_a[i] = shared_gain * (clean[i] + shared_offset);
+            corrected_b[i] = shared_gain * (raw_b[i] + shared_offset);
+        }
+        config.final_gain_correction = shared_gain;
+        config.final_offset_correction = shared_offset;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
+            clean, raw_b, corrected_a, corrected_b, ref, &config, 3U, &frame),
+            0);
+        SIM_ASSERT_NEAR(ctx, frame.cal_matching.offset_mismatch_codes,
+                        shared_gain * 5.0, 1.0e-6);
+        SIM_ASSERT_NEAR(ctx, frame.cal_matching.gain_ratio_b_over_a,
+                        1.0, 1.0e-9);
+        SIM_ASSERT_NEAR(ctx, frame.cal_matching.gain_ratio_b_over_a,
+                        frame.raw_matching.gain_ratio_b_over_a, 1.0e-9);
+    }
+    config.final_gain_correction = 1.0;
+    config.final_offset_correction = 0.0;
+
+    /* E/F/I: a known physical skew plus gain/offset mismatch has larger
+     * normalized RMSE than the corrected, near-zero-skew physical pair. */
+    for (size_t i = 0U; i < 800U; ++i) {
+        const double phase = 2.0 * M_PI * 130000000.0 *
+            ((double)i - 0.15) / config.sample_rate_hz;
+        noisy[i] = -(1.10 * 1000.0 * sin(phase) + 7.0);
+        raw_b[i] = -clean[i];
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
+        clean, noisy, clean, raw_b, ref, &config, 4U, &frame), 0);
+    SIM_ASSERT_TRUE(ctx, frame.raw_matching.waveform_rmse_codes > 50.0f);
+    SIM_ASSERT_TRUE(ctx, frame.cal_matching.waveform_rmse_codes < 1.0e-4f);
+    SIM_ASSERT_TRUE(ctx, frame.raw_matching.waveform_rmse_codes >
+                         frame.cal_matching.waveform_rmse_codes);
 
     config.channel_polarity[1] = 1.0;
     for (size_t i = 0U; i < 800U; ++i) noisy[i] = clean[i] + 10.0;
@@ -4967,7 +5251,8 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_run_batch(&config, perf_capture_test, &capture_ctx, &batch), 0);
     SIM_ASSERT_TRUE(ctx, batch.valid);
 
-    /* Stage 5 must reuse the frozen timing polarity and selected channel. */
+    /* Stage 5 must apply the resolved polarity exactly once: the inverted
+     * physical B is normalized back into the canonical reference polarity. */
     memset(&capture_ctx, 0, sizeof(capture_ctx));
     capture_ctx.seed = 99U;
     capture_ctx.invert_b = true;
@@ -5029,6 +5314,10 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     SIM_ASSERT_TRUE(ctx, !frame.raw_cal_a_identical);
     SIM_ASSERT_TRUE(ctx, !frame.raw_cal_b_identical);
     SIM_ASSERT_TRUE(ctx, frame.correlation > 0.99f);
+    /* J: the only change is the same-index -4-code correction.  There is no
+     * software skew interpolation on the post-Stage-4 DMA capture. */
+    SIM_ASSERT_NEAR(ctx, frame.raw_cal_a_rms_difference, 4.0, 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, frame.raw_cal_b_rms_difference, 4.0, 1.0e-9);
     SIM_ASSERT_NEAR(ctx, frame.cal_parallel_average.signal_hz,
                     frame.raw_parallel_average.signal_hz, 1.0);
 

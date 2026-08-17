@@ -1,0 +1,5 @@
+stage,iteration,accepted_frames,rejected_frames,batch_gain,batch_gain_error,gain_correction_before,gain_correction_after,gain_correction_delta,tolerance,pass_count,required_passes,verification_correlation,dither_gain,dither_gain_status,dither_event_count,dither_warning_reason,status
+gain,1,30,0,0.994199,-0.005801,1.000000,1.000000,0.000000,0.010000,1,2,0.999078,0.395840,WARNING,6,NONE,PASS
+gain,2,30,0,0.988789,-0.011211,1.000000,1.001701,0.001701,0.010000,0,2,0.998965,0.407726,WARNING,5,NONE,RUNNING
+gain,3,30,0,0.994058,-0.005942,1.001701,1.001701,0.000000,0.010000,1,2,0.998998,0.410379,WARNING,6,NONE,PASS
+gain,4,30,0,0.992299,-0.007701,1.001701,1.001701,0.000000,0.010000,2,2,0.999016,0.396403,WARNING,5,NONE,PASS

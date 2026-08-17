@@ -686,12 +686,14 @@ static int adc_evaluate_performance_batch(
     double initial_relative_skew_ps,
     double final_relative_skew_samples,
     double final_relative_skew_ps,
+    adc_cal_skew_polarity_t final_channel_polarity,
     adc_performance_result_t *result)
 {
     static calibration_frame_workspace_t workspace;
     static adc_cal_perf_frame_result_t shared_frames[ADC_PERFORMANCE_FRAMES];
     adc_shared_performance_capture_context_t capture;
     adc_cal_perf_config_t config;
+    double resolved_channel_polarity[2];
     adc_cal_perf_batch_result_t shared;
     adc_performance_statistics_t residual_statistics;
     adc_performance_statistics_t rmse_statistics;
@@ -843,6 +845,8 @@ static int adc_evaluate_performance_batch(
         !isfinite(final_gain_correction) || final_gain_correction <= 0.0f ||
         !isfinite(final_offset_correction) ||
         !isfinite(nominal_system_gain) || nominal_system_gain <= 0.0f ||
+        (final_channel_polarity != ADC_CAL_SKEW_POLARITY_SAME &&
+         final_channel_polarity != ADC_CAL_SKEW_POLARITY_INVERTED) ||
         saved_output->selected_channel < 0 ||
         saved_output->selected_channel > 1 ||
         !saved_output->timing_diagnostics.channel[0].valid ||
@@ -881,10 +885,19 @@ static int adc_evaluate_performance_batch(
     result->fixed_window_length = saved_output->calibration_window_length;
     result->final_offset_correction = final_offset_correction;
     result->final_gain_correction = final_gain_correction;
-    result->channel_a_polarity =
-        saved_output->timing_diagnostics.channel[0].sign;
-    result->channel_b_polarity =
-        saved_output->timing_diagnostics.channel[1].sign;
+    if (adc_cal_perf_resolve_channel_polarity(
+            saved_output->selected_channel,
+            saved_output->timing_diagnostics.channel[
+                saved_output->selected_channel].sign,
+            final_channel_polarity == ADC_CAL_SKEW_POLARITY_SAME ?
+                1.0 : -1.0,
+            resolved_channel_polarity) != 0) {
+        result->failure_reason =
+            "Stage-4 channel polarity could not be normalized";
+        return -2;
+    }
+    result->channel_a_polarity = resolved_channel_polarity[0];
+    result->channel_b_polarity = resolved_channel_polarity[1];
 
     memset(shared_frames, 0, sizeof(shared_frames));
     memset(&capture, 0, sizeof(capture));
@@ -2853,7 +2866,10 @@ static void handle_adc_calibration_export_cmd(void)
             print_float_value_2("  THD calibrated", result->cal_b_thd_db, " dB");
             print_float_value_2("  ENOB raw", result->raw_b_enob, " bits");
             print_float_value_2("  ENOB calibrated", result->cal_b_enob, " bits");
-            xil_printf("\r\nChannel matching (polarity normalized):\r\n");
+            xil_printf("\r\nChannel matching (Stage-4 polarity normalized):\r\n");
+            print_double_value("  Channel A normalization factor", result->channel_a_polarity, "");
+            print_double_value("  Channel B normalization factor", result->channel_b_polarity, "");
+            xil_printf("  Polarity source       : canonical reference sign + Stage-4 A/B relation\r\n");
             print_float_value_or_invalid("  Raw A/B correlation", result->raw_matching.correlation, "");
             print_float_value_or_invalid("  Cal A/B correlation", result->cal_matching.correlation, "");
             print_float_value_or_invalid("  Raw A/B RMSE", result->raw_matching.waveform_rmse_codes, " codes");
@@ -2870,8 +2886,9 @@ static void handle_adc_calibration_export_cmd(void)
             print_double_value("  Cal relative skew B-A", result->cal_matching.relative_skew_ps, " ps");
             print_signed_float_value_or_invalid("  RMSE reduction", rmse_improvement, " codes");
             print_signed_float_value_or_invalid("  Matching improvement", residual_improvement_db, " dB");
+            xil_printf("  Matching note         : shared corrections cancel in the ratio/offset metrics; cal values are physical A/B residuals\r\n");
             xil_printf("\r\nParallel averaged output: AVAILABLE\r\n");
-            xil_printf("  Definition             : (A + polarity-normalized B) / 2\r\n");
+            xil_printf("  Definition             : (polarity-normalized A + polarity-normalized B) / 2\r\n");
             xil_printf("  Sample rate            : Fs_channel (bandwidth is not doubled)\r\n");
             print_float_value_2("  Raw SNDR", result->raw_parallel_average_sndr_db, " dB");
             print_float_value_2("  Cal SNDR", result->cal_parallel_average_sndr_db, " dB");
@@ -2927,9 +2944,9 @@ static void handle_adc_calibration_export_cmd(void)
                 print_float_value_or_invalid("  Residual difference z-like",             result->offset_difference_z_like, "");
                 print_float_value_or_invalid("  Mean normalized gain",             result->mean_normalized_gain, "");
                 print_float_value_or_invalid("  Normalized gain std dev",             result->normalized_gain_stddev, "");
-                print_double_value("  Channel A polarity",             result->channel_a_polarity, "");
-                print_double_value("  Channel B polarity",             result->channel_b_polarity, "");
-                xil_printf("  Polarity source       : frozen timing dither channel signs\r\n");
+                print_double_value("  Channel A normalization factor",             result->channel_a_polarity, "");
+                print_double_value("  Channel B normalization factor",             result->channel_b_polarity, "");
+                xil_printf("  Polarity source       : canonical reference sign + frozen Stage-4 A/B relation\r\n");
                 xil_printf("  Parallel average      : polarity-normalized A/B average at Fs_channel\r\n");
                 xil_printf("  Interleaved analysis  : unavailable for simultaneous parallel A/B\r\n");
                 xil_printf("  A/B correction model  : one shared production offset correction and one shared production gain correction\r\n");
@@ -7442,6 +7459,10 @@ static int calibration_estimate_skew_frame(
         config.max_linear_skew_samples = CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
         config.max_edge_disagreement_samples =
             CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
+        config.profile_window_half_samples =
+            CAL_SKEW_DITHER_PROFILE_WINDOW_HALF;
+        config.profile_mask_amplitude_fraction =
+            CAL_SKEW_DITHER_PROFILE_MASK_FRACTION;
         if (adc_cal_skew_estimate_from_residuals(
                 residual_a, residual_b, capture_polarized_template,
                 CAL_FIXED_WINDOW_LENGTH, &config, &shared) != 0 ||
@@ -8985,7 +9006,9 @@ restore_selection:
                                                                             xil_printf("Characterization restore writes: %lu\r\n",
                                                                                 (unsigned long)loop->characterization_restore_write_count);
                                                                             xil_printf("Probe amplitudes attempted: %s\r\n",
-                                                                                loop->characterization_attempt_count >= 3U ?
+                                                                                loop->characterization_attempt_count >= 4U ?
+                                                                                    "1, 2, 4, 8" :
+                                                                                loop->characterization_attempt_count == 3U ?
                                                                                     "1, 2, 4" :
                                                                                 loop->characterization_attempt_count == 2U ?
                                                                                     "1, 2" :
@@ -9038,6 +9061,9 @@ restore_selection:
                                                                                 xil_printf("Significance #1         : %s\r\n",
                                                                                     loop->probe_significance_passed[attempt][0] ?
                                                                                         "PASS" : "FAIL");
+                                                                                        xil_printf("Baseline remeasured #1  : %s\r\n",
+                                                                                            loop->probe_baseline_remeasured[attempt][0] ?
+                                                                                                "YES" : "NO");
                                                                                 print_double_value("Resolution #1",
                                                                                     signed_steps != 0 ?
                                                                                         loop->probe_response_samples[attempt][0] /
@@ -9064,6 +9090,9 @@ restore_selection:
                                                                                 xil_printf("Significance #2         : %s\r\n",
                                                                                     loop->probe_significance_passed[attempt][1] ?
                                                                                         "PASS" : "FAIL");
+                                                                                        xil_printf("Baseline remeasured #2  : %s\r\n",
+                                                                                            loop->probe_baseline_remeasured[attempt][1] ?
+                                                                                                "YES" : "NO");
                                                                                 print_double_value("Resolution #2",
                                                                                     signed_steps != 0 ?
                                                                                         loop->probe_response_samples[attempt][1] /
@@ -12544,6 +12573,8 @@ restore_selection:
                                                                                                               (1.0e12 / adc_get_effective_sample_rate_hz()) : NAN;
                                                                                                           state->final_relative_skew_samples =             skew_batch.final_relative_skew_samples;
                                                                                                          state->final_relative_skew_ps = skew_batch.final_relative_skew_ps;
+                                                                                                         g_automatic_calibration.final_channel_polarity =
+                                                                                                             skew_batch.latest_frame.selected_polarity;
                                                                                                          g_automatic_calibration.final_delay_register =
                                                                                                              skew_batch.final_delay_register;
                                                                                                          state->skew_policy = skew_batch.policy;
@@ -12577,7 +12608,7 @@ restore_selection:
                                                                                                         if (state == NULL) return -1;
                                                                                                         g_automatic_calibration.active = true;
                                                                                                         g_automatic_calibration.stage = ADC_CAL_STAGE_PERFORMANCE;
-                                                                                                        performance_status = adc_evaluate_performance_batch(         &g_automatic_calibration.final_output,         gain_state->gain_correction,         gain_state->fixed_offset_correction,         gain_state->nominal_system_gain,         g_stored_offset_reference.reference_frequency_hz,         offset_state->verification_residual,         offset_state->verification_standard_error,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual : NAN,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual_standard_error : NAN,         g_automatic_calibration.initial_relative_skew_samples,         g_automatic_calibration.initial_relative_skew_ps,         state->final_relative_skew_samples,         state->final_relative_skew_ps,         &g_automatic_calibration.performance);
+                                                                                                        performance_status = adc_evaluate_performance_batch(         &g_automatic_calibration.final_output,         gain_state->gain_correction,         gain_state->fixed_offset_correction,         gain_state->nominal_system_gain,         g_stored_offset_reference.reference_frequency_hz,         offset_state->verification_residual,         offset_state->verification_standard_error,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual : NAN,         gain_state->post_gain_residual_valid ?             gain_state->post_gain_residual_standard_error : NAN,         g_automatic_calibration.initial_relative_skew_samples,         g_automatic_calibration.initial_relative_skew_ps,         state->final_relative_skew_samples,         state->final_relative_skew_ps,         g_automatic_calibration.final_channel_polarity,         &g_automatic_calibration.performance);
                                                                                                         g_automatic_calibration.performance_measurement_available = true;
                                                                                                         adc_print_performance_result(&g_automatic_calibration.performance);
                                                                                                         if (performance_status == 0 && g_automatic_calibration.performance.valid) {

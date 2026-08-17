@@ -19,6 +19,8 @@ void adc_cal_skew_default_config(adc_cal_skew_config_t *config)
     config->max_linear_skew_samples = ADC_CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
     config->max_edge_disagreement_samples =
         ADC_CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
+    config->profile_window_half_samples = 0U;
+    config->profile_mask_amplitude_fraction = 0.0;
 }
 
 void adc_cal_skew_result_reset(adc_cal_skew_result_t *result)
@@ -874,7 +876,7 @@ int adc_cal_skew_run_closed_loop(
     adc_cal_skew_loop_result_t *result)
 {
     static const int characterization_amplitudes[
-        ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS] = {1, 2, 4};
+        ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS] = {1, 2, 4, 8};
     adc_cal_skew_loop_config_t active;
     adc_cal_skew_batch_measurement_t measurement;
     adc_cal_skew_batch_measurement_t stepped;
@@ -916,6 +918,8 @@ int adc_cal_skew_run_closed_loop(
         result->probe_uncertainty_samples[attempt][1] = NAN;
         result->probe_minimum_response_samples[attempt][0] = NAN;
         result->probe_minimum_response_samples[attempt][1] = NAN;
+        result->probe_baseline_remeasured[attempt][0] = 0;
+        result->probe_baseline_remeasured[attempt][1] = 0;
     }
     if (!adc_cal_skew_loop_config_valid(config) || io == NULL ||
         io->measure_batch == NULL || !adc_cal_double_isfinite(sample_rate_hz) ||
@@ -992,6 +996,8 @@ int adc_cal_skew_run_closed_loop(
         double uncertainty[2] = {NAN, NAN};
         int probe_valid[2] = {0, 0};
         int repeatable = 0;
+        adc_cal_skew_batch_measurement_t probe_baseline[2];
+        int probe_baseline_valid[2] = {0, 0};
 
         result->characterization_attempt_count = attempt + 1U;
         result->probe_amplitude[attempt] = amplitude;
@@ -1007,6 +1013,26 @@ int adc_cal_skew_run_closed_loop(
         characterization_register = current_register + signed_steps;
         result->probe_signed_steps[attempt] = signed_steps;
         result->probe_requested_code[attempt] = characterization_register;
+
+        /* Re-measure the baseline immediately before each probe so the
+         * response references a fresh baseline instead of the
+         * characterization-entry batch.  Slow bench drift otherwise
+         * inflates the measured actuator step and can deadlock the
+         * controller with a false "no effective step" decision (the
+         * 2026-08-16 bench run measured 22.1 ps/code against a real
+         * 10.2 ps/code).  The immutable baseline register code and the
+         * authoritative entry-baseline classification are unchanged. */
+        memset(&probe_baseline[0], 0, sizeof(probe_baseline[0]));
+        measurement_status = io->measure_batch(io->context, &probe_baseline[0]);
+        if (measurement_status == 0)
+            result->latest_measurement_std_samples =
+                probe_baseline[0].batch_std_samples;
+        result->accepted_frames += probe_baseline[0].accepted_frames;
+        result->rejected_frames += probe_baseline[0].rejected_frames;
+        probe_baseline_valid[0] =
+            measurement_status == 0 &&
+            adc_cal_skew_measurement_characterization_eligible(
+                config, &probe_baseline[0]);
 
         if (adc_cal_skew_verified_write(
                 config, io, current_register, characterization_register,
@@ -1053,8 +1079,10 @@ int adc_cal_skew_run_closed_loop(
         if (measurement_status == 0 &&
             adc_cal_skew_measurement_characterization_eligible(
                 config, &stepped)) {
+            const adc_cal_skew_batch_measurement_t *baseline0 =
+                probe_baseline_valid[0] ? &probe_baseline[0] : &measurement;
             probe_valid[0] = 1;
-            response[0] = stepped.skew_samples - measurement.skew_samples;
+            response[0] = stepped.skew_samples - baseline0->skew_samples;
         } else {
             last_characterization_failure = stepped.reason != NULL ?
                 stepped.reason :
@@ -1067,6 +1095,20 @@ int adc_cal_skew_run_closed_loop(
             return -8;
         }
         if (!probe_valid[0]) continue;
+
+        /* Fresh baseline for the repeat probe, measured at the restored
+         * baseline code before the second write. */
+        memset(&probe_baseline[1], 0, sizeof(probe_baseline[1]));
+        measurement_status = io->measure_batch(io->context, &probe_baseline[1]);
+        if (measurement_status == 0)
+            result->latest_measurement_std_samples =
+                probe_baseline[1].batch_std_samples;
+        result->accepted_frames += probe_baseline[1].accepted_frames;
+        result->rejected_frames += probe_baseline[1].rejected_frames;
+        probe_baseline_valid[1] =
+            measurement_status == 0 &&
+            adc_cal_skew_measurement_characterization_eligible(
+                config, &probe_baseline[1]);
 
         write_performed = 0;
         if (adc_cal_skew_verified_write(
@@ -1117,9 +1159,11 @@ int adc_cal_skew_run_closed_loop(
         if (measurement_status == 0 &&
             adc_cal_skew_measurement_characterization_eligible(
                 config, &stepped_repeat)) {
+            const adc_cal_skew_batch_measurement_t *baseline1 =
+                probe_baseline_valid[1] ? &probe_baseline[1] : &measurement;
             probe_valid[1] = 1;
             response[1] =
-                stepped_repeat.skew_samples - measurement.skew_samples;
+                stepped_repeat.skew_samples - baseline1->skew_samples;
         } else {
             last_characterization_failure =
                 stepped_repeat.reason != NULL ? stepped_repeat.reason :
@@ -1136,13 +1180,18 @@ int adc_cal_skew_run_closed_loop(
         for (uint32_t probe = 0U; probe < 2U; ++probe) {
             const adc_cal_skew_batch_measurement_t *probe_measurement =
                 probe == 0U ? &stepped : &stepped_repeat;
+            const adc_cal_skew_batch_measurement_t *baseline_ref =
+                probe_baseline_valid[probe] ? &probe_baseline[probe] :
+                &measurement;
             uncertainty[probe] = sqrt(
-                measurement.batch_std_samples *
-                    measurement.batch_std_samples /
-                    (double)measurement.accepted_frames +
+                baseline_ref->batch_std_samples *
+                    baseline_ref->batch_std_samples /
+                    (double)baseline_ref->accepted_frames +
                 probe_measurement->batch_std_samples *
                     probe_measurement->batch_std_samples /
                     (double)probe_measurement->accepted_frames);
+            result->probe_baseline_remeasured[attempt][probe] =
+                probe_baseline_valid[probe];
             result->probe_response_samples[attempt][probe] = response[probe];
             result->probe_uncertainty_samples[attempt][probe] =
                 uncertainty[probe];
@@ -1286,6 +1335,9 @@ int adc_cal_skew_run_closed_loop(
                 result->status = saturated ? ADC_CAL_SKEW_LOOP_SATURATED :
                     ADC_CAL_SKEW_LOOP_NOT_CONVERGED;
                 result->saturated = saturated;
+                result->final_register = current_register;
+                result->total_register_change =
+                    current_register - result->initial_register;
                 result->failure_reason = saturated ?
                     "required correction exceeds actuator range" :
                     "actuator resolution cannot reduce residual skew";
@@ -1541,6 +1593,7 @@ static int estimate_profile_skew(
     const double *derivative_profile,
     size_t count,
     int mask,
+    double amplitude_fraction,
     double gain,
     double *skew_samples,
     uint32_t *used_count,
@@ -1548,19 +1601,33 @@ static int estimate_profile_skew(
 {
     double numerator = 0.0;
     double denominator = 0.0;
+    double peak = 0.0;
+    double threshold = 0.0;
     uint32_t used = 0U;
 
     if (profile == NULL || template_profile == NULL ||
         derivative_profile == NULL || skew_samples == NULL ||
         used_count == NULL || energy == NULL || count == 0U ||
+        !adc_cal_double_isfinite(amplitude_fraction) ||
+        amplitude_fraction < 0.0 || amplitude_fraction >= 1.0 ||
         !adc_cal_double_isfinite(gain) || fabs(gain) <= DBL_EPSILON) {
         return -1;
+    }
+    if (amplitude_fraction > 0.0) {
+        for (size_t i = 0U; i < count; ++i) {
+            const double magnitude = fabs(template_profile[i]);
+            if (magnitude > peak) peak = magnitude;
+        }
+        threshold = amplitude_fraction * peak;
     }
     for (size_t i = 0U; i < count; ++i) {
         const double dprime = derivative_profile[i];
         bool select = true;
         if (mask > 0) select = dprime > 0.0;
         else if (mask < 0) select = dprime < 0.0;
+        if (amplitude_fraction > 0.0 &&
+            fabs(template_profile[i]) < threshold)
+            select = false;
         if (!select) continue;
         if (!adc_cal_double_isfinite(profile[i]) || !adc_cal_double_isfinite(template_profile[i]) ||
             !adc_cal_double_isfinite(dprime)) {
@@ -1585,6 +1652,7 @@ static int aggregate_profiles(
     const double *template_samples,
     size_t sample_count,
     const adc_cal_dither_result_t *events,
+    size_t window_half_samples,
     double *profile_a,
     double *profile_b,
     double *template_profile,
@@ -1596,6 +1664,7 @@ static int aggregate_profiles(
     int m_first;
     int m_last;
     size_t profile_count;
+    double scale;
     static double u_a[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
     static double v_a[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
     static double u_b[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
@@ -1610,6 +1679,16 @@ static int aggregate_profiles(
             events->events[k].center;
         if (left > rel_start) rel_start = left;
         if (right < rel_end) rel_end = right;
+    }
+    /* The template events are sized for the ideal injected pulse, but the
+     * analog chain disperses the real pulse well beyond that window.
+     * Truncating the aggregation to the template extent clips both edges
+     * and biases the rising/falling projections; when the caller asks for a
+     * wider half-window, extend the aggregation symmetrically. */
+    if (window_half_samples > 0U) {
+        const double half = (double)window_half_samples;
+        if (rel_start > -half) rel_start = -half;
+        if (rel_end < half) rel_end = half;
     }
     m_first = (int)ceil(rel_start);
     m_last = (int)floor(rel_end);
@@ -1631,30 +1710,45 @@ static int aggregate_profiles(
     memset(v_b, 0, sizeof(v_b));
     memset(u_t, 0, sizeof(u_t));
     memset(v_t, 0, sizeof(v_t));
-    for (size_t k = 0U; k < events->accepted_events; ++k) {
-        const double polarity = events->events[k].polarity;
-        for (size_t j = 0U; j < profile_count; ++j) {
-            const double position =
-                events->events[k].center + (double)(m_first + (int)j);
-            double av;
-            double bv;
-            double tv;
-            if (adc_cal_dither_interpolate(a, sample_count, position, &av) != 0 ||
-                adc_cal_dither_interpolate(b, sample_count, position, &bv) != 0 ||
-                adc_cal_dither_interpolate(template_samples,
-                                           sample_count, position, &tv) != 0) {
-                return -3;
+    {
+        size_t usable_events = 0U;
+        for (size_t k = 0U; k < events->accepted_events; ++k) {
+            const double first_position =
+                events->events[k].center + (double)m_first;
+            const double last_position =
+                events->events[k].center + (double)m_last;
+            if (first_position < 0.0 ||
+                last_position >= (double)sample_count) {
+                /* Widened windows can reach past the analysis window near
+                 * the boundary; skip the clipped event instead of failing
+                 * the whole aggregation. */
+                continue;
             }
-            u_a[j] += av;
-            v_a[j] += polarity * av;
-            u_b[j] += bv;
-            v_b[j] += polarity * bv;
-            u_t[j] += tv;
-            v_t[j] += polarity * tv;
+            ++usable_events;
+            for (size_t j = 0U; j < profile_count; ++j) {
+                const double position =
+                    events->events[k].center + (double)(m_first + (int)j);
+                double av;
+                double bv;
+                double tv;
+                if (adc_cal_dither_interpolate(a, sample_count, position, &av) != 0 ||
+                    adc_cal_dither_interpolate(b, sample_count, position, &bv) != 0 ||
+                    adc_cal_dither_interpolate(template_samples,
+                                               sample_count, position, &tv) != 0) {
+                    return -3;
+                }
+                u_a[j] += av;
+                v_a[j] += events->events[k].polarity * av;
+                u_b[j] += bv;
+                v_b[j] += events->events[k].polarity * bv;
+                u_t[j] += tv;
+                v_t[j] += events->events[k].polarity * tv;
+            }
         }
+        if (usable_events == 0U) return -1;
+        scale = (double)usable_events;
     }
     for (size_t j = 0U; j < profile_count; ++j) {
-        const double scale = (double)events->accepted_events;
         const double denom = events->separation_denominator;
         if (!adc_cal_double_isfinite(denom) ||
             denom < ADC_CAL_DITHER_DENOMINATOR_FLOOR) {
@@ -1756,6 +1850,7 @@ int adc_cal_skew_estimate_from_residuals(
     result->rejected_events = (uint32_t)dither.rejected_events;
     if (aggregate_profiles(channel_a_residual, channel_b_residual,
                            dither_template, sample_count, &dither,
+                           config->profile_window_half_samples,
                            profile_a, profile_b, template_profile,
                            derivative_profile,
                            &profile_count) != 0) {
@@ -1794,22 +1889,34 @@ int adc_cal_skew_estimate_from_residuals(
     }
     gain_b = relative_projection / relative_template_energy;
     if (estimate_profile_skew(profile_a, template_profile, derivative_profile,
-                              profile_count, 0, gain_a, &skew_a, &used,
+                              profile_count, 0,
+                              config->profile_mask_amplitude_fraction,
+                              gain_a, &skew_a, &used,
                               &energy) != 0 ||
         estimate_profile_skew(profile_b, template_profile, derivative_profile,
-                              profile_count, 0, gain_b, &skew_b, &used,
+                              profile_count, 0,
+                              config->profile_mask_amplitude_fraction,
+                              gain_b, &skew_b, &used,
                               &energy) != 0 ||
         estimate_profile_skew(profile_a, template_profile, derivative_profile,
-                              profile_count, 1, gain_a, &rise_a, &used,
+                              profile_count, 1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_a, &rise_a, &used,
                               &energy) != 0 ||
         estimate_profile_skew(profile_b, template_profile, derivative_profile,
-                              profile_count, 1, gain_b, &rise_b, &used,
+                              profile_count, 1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_b, &rise_b, &used,
                               &energy) != 0 ||
         estimate_profile_skew(profile_a, template_profile, derivative_profile,
-                              profile_count, -1, gain_a, &fall_a, &used,
+                              profile_count, -1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_a, &fall_a, &used,
                               &energy) != 0 ||
         estimate_profile_skew(profile_b, template_profile, derivative_profile,
-                              profile_count, -1, gain_b, &fall_b, &used,
+                              profile_count, -1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_b, &fall_b, &used,
                               &energy) != 0) {
         result->reason = ADC_CAL_SKEW_REASON_DERIVATIVE;
         result->failure_reason = "skew derivative projection failed";

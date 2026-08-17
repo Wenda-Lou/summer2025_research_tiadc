@@ -603,6 +603,20 @@ static adc_cal_skew_capture_context_t g_adc_cal_skew_capture_context = {
 #ifndef CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES
 #define CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES       0.03
 #endif
+#ifndef CAL_SKEW_DITHER_PROFILE_WINDOW_HALF
+/* The bench analog chain disperses the injected impulse into a ~75-125
+ * ADC-sample 10-90% blob; widen the dither profile aggregation window so
+ * the dispersed pulse edges are not truncated by the template-sized
+ * window.  Kept below half the 130-sample dither period to avoid overlap. */
+#define CAL_SKEW_DITHER_PROFILE_WINDOW_HALF           64U
+#endif
+#ifndef CAL_SKEW_DITHER_PROFILE_MASK_FRACTION
+/* With the widened +-64 window, tone-residual and ringing tails outside
+ * the pulse body otherwise dominate the rising/falling derivative
+ * projection (2026-08-16: edge estimates blew out to -402/+216 ps).
+ * Gate the projection to |template| >= 15 % of the profile peak. */
+#define CAL_SKEW_DITHER_PROFILE_MASK_FRACTION         0.15
+#endif
 #ifndef CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES
 #define CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES      0.015
 #endif
@@ -1514,6 +1528,7 @@ typedef struct {
     double initial_relative_skew_ps;
     double final_relative_skew_samples;
     double final_relative_skew_ps;
+    adc_cal_skew_polarity_t final_channel_polarity;
     int final_delay_register;
     adc_cal_skew_stage_policy_result_t skew_policy;
     const char *failure_reason;
@@ -2473,6 +2488,8 @@ static void calibration_automatic_state_reset(void)
     g_automatic_calibration.initial_relative_skew_samples = NAN;
     g_automatic_calibration.final_relative_skew_ps = NAN;
     g_automatic_calibration.final_relative_skew_samples = NAN;
+    g_automatic_calibration.final_channel_polarity =
+        ADC_CAL_SKEW_POLARITY_UNKNOWN;
     g_automatic_calibration.performance_measurement_available = false;
 }
 

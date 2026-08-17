@@ -11,7 +11,12 @@ extern "C" {
 #endif
 
 #ifndef ADC_CAL_SKEW_MAX_PROFILE_SAMPLES
-#define ADC_CAL_SKEW_MAX_PROFILE_SAMPLES 128U
+/*
+ * Widest supported aggregated pulse profile.  The bench analog chain
+ * disperses the injected ~32-ADC-sample impulse into a ~75-125 sample
+ * 10-90% blob, so the profile buffers must hold at least a +-64 window.
+ */
+#define ADC_CAL_SKEW_MAX_PROFILE_SAMPLES 192U
 #endif
 
 #ifndef ADC_CAL_SKEW_MIN_EVENTS
@@ -49,8 +54,14 @@ extern "C" {
 #endif
 
 #ifndef ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS
-/* Bounded characterization stimulus amplitudes are 1, 2, and 4 codes. */
-#define ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS 3U
+/*
+ * Adaptive amplitude ladder.  Bench batches carry ~8-12 ps of relock/jump
+ * noise on top of the ~10 ps/code actuator step, so single-code responses
+ * drown in noise; the ladder escalates 1 -> 2 -> 4 -> 8 codes until both
+ * probes are significant and repeatable.  8 codes stays well inside the
+ * 0.25-sample linear range (~80 ps at the bench step).
+ */
+#define ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS 4U
 #endif
 
 #ifndef ADC_CAL_SKEW_INITIAL_WARMUP_FRAMES
@@ -316,6 +327,10 @@ typedef struct {
         ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
     int probe_significance_passed[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
     int probe_repeatability_passed[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS];
+    /* 1 when the probe response was referenced to a fresh baseline batch
+     * measured immediately before the probe write instead of the
+     * characterization-entry baseline. */
+    int probe_baseline_remeasured[ADC_CAL_SKEW_CHARACTERIZATION_ATTEMPTS][2];
     double observed_step_samples;
     double observed_step_ps;
     int actuator_polarity;
@@ -426,6 +441,15 @@ typedef struct {
     double sample_rate_hz;
     double max_linear_skew_samples;
     double max_edge_disagreement_samples;
+    /* 0 = derive the aggregation window from the template events (legacy);
+     * N > 0 = widen the profile window symmetrically to +-N samples so a
+     * pulse dispersed by the analog chain is not truncated at its edges. */
+    uint32_t profile_window_half_samples;
+    /* 0 = no amplitude gate (legacy); F in (0, 1) = restrict the derivative
+     * projection to samples where |template| >= F * peak, so tone-residual
+     * and ringing tails outside the pulse body cannot pollute the edge
+     * estimates when a widened window includes them. */
+    double profile_mask_amplitude_fraction;
 } adc_cal_skew_config_t;
 
 typedef struct {

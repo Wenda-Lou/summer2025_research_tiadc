@@ -51,6 +51,9 @@ DITHER_EVENT_PERIOD_SECONDS = 100.0e-9
 DITHER_POSITION_DAC = 96
 DITHER_EDGE_DAC = 16
 DITHER_TOP_DAC = 32
+# Pulse edge shape: "raised_cosine" (default) or "linear" (uniform-slope
+# triangle; recommended for the dither fine-skew cross-check).
+DITHER_SHAPE = "raised_cosine"
 DITHER_SCALE_LSB = 2_000.0
 DITHER_SEED = 20_260_725
 
@@ -181,6 +184,31 @@ def raised_cosine_impulse(
     return impulse
 
 
+def linear_triangle_impulse(
+    sample_offsets: np.ndarray,
+    edge_samples: int,
+    top_samples: int,
+) -> np.ndarray:
+    """Linear-ramp triangle impulse (edge/optional-top/edge DAC samples).
+
+    The dither fine-skew estimator projects against the pulse derivative,
+    so a uniform linear slope carries the sub-sample shift information on
+    every edge sample instead of concentrating it in a curved corner.
+    """
+    t = np.asarray(sample_offsets, dtype=np.float64)
+    total = 2 * edge_samples + top_samples
+    impulse = np.zeros_like(t)
+
+    rise = (t >= 0.0) & (t < edge_samples)
+    top = (t >= edge_samples) & (t < edge_samples + top_samples)
+    fall = (t >= edge_samples + top_samples) & (t < total)
+
+    impulse[rise] = (t[rise] + 1.0) / edge_samples
+    impulse[top] = 1.0
+    impulse[fall] = (total - t[fall]) / edge_samples
+    return impulse
+
+
 def balanced_polarity_sequence(
     event_count: int,
     seed: int,
@@ -206,14 +234,17 @@ def generate_periodic_impulse_dither(
     top_samples: int,
     amplitude_codes: float,
     seed: int,
+    shape: str = "raised_cosine",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build the calibration-loop balanced impulse dither at the DAC rate."""
     if period_samples <= 0 or num_samples % period_samples:
         raise ValueError(
             "Dither waveform length must contain whole dither periods."
         )
-    if edge_samples <= 0 or top_samples <= 0:
-        raise ValueError("Dither edge and flat-top lengths must be positive.")
+    if edge_samples <= 0 or top_samples < 0:
+        raise ValueError(
+            "Dither edge must be positive and flat-top non-negative."
+        )
     if position_samples < 0:
         raise ValueError("Dither position cannot be negative.")
 
@@ -225,11 +256,23 @@ def generate_periodic_impulse_dither(
 
     event_count = num_samples // period_samples
     polarity = balanced_polarity_sequence(event_count, seed)
-    pulse_shape = raised_cosine_impulse(
-        np.arange(pulse_samples, dtype=np.float64),
-        edge_samples,
-        top_samples,
-    )
+    if shape == "raised_cosine":
+        pulse_shape = raised_cosine_impulse(
+            np.arange(pulse_samples, dtype=np.float64),
+            edge_samples,
+            top_samples,
+        )
+    elif shape == "linear":
+        pulse_shape = linear_triangle_impulse(
+            np.arange(pulse_samples, dtype=np.float64),
+            edge_samples,
+            top_samples,
+        )
+    else:
+        raise ValueError(
+            f"Unknown dither shape {shape!r}; "
+            "expected 'raised_cosine' or 'linear'."
+        )
 
     dither = np.zeros(num_samples, dtype=np.float64)
     for event_index, sign in enumerate(polarity):
@@ -387,6 +430,7 @@ def main() -> None:
             top_samples=DITHER_TOP_DAC,
             amplitude_codes=DITHER_SCALE_LSB,
             seed=DITHER_SEED,
+            shape=DITHER_SHAPE,
         )
     else:
         dither = np.zeros(num_samples, dtype=np.float64)
@@ -447,6 +491,7 @@ def main() -> None:
         ),
         "dither_edge_dac": DITHER_EDGE_DAC if ENABLE_DITHER else None,
         "dither_top_dac": DITHER_TOP_DAC if ENABLE_DITHER else None,
+        "dither_shape": DITHER_SHAPE if ENABLE_DITHER else None,
         "dither_scale_lsb": DITHER_SCALE_LSB if ENABLE_DITHER else None,
         "dither_seed": DITHER_SEED if ENABLE_DITHER else None,
         "dither_event_count": int(polarity.size),
@@ -496,9 +541,32 @@ if __name__ == "__main__":
         type=float,
         help="Tone frequencies in MHz; defaults to the configured tone.",
     )
+    parser.add_argument(
+        "--dither-shape",
+        choices=("raised_cosine", "linear"),
+        help="Dither pulse edge shape; defaults to the configured shape.",
+    )
+    parser.add_argument(
+        "--dither-edge",
+        type=int,
+        help="Dither edge length in DAC samples; defaults to the configured "
+             "value.",
+    )
+    parser.add_argument(
+        "--dither-top",
+        type=int,
+        help="Dither flat-top length in DAC samples; defaults to the "
+             "configured value.",
+    )
     args = parser.parse_args()
 
     try:
+        if args.dither_shape:
+            DITHER_SHAPE = args.dither_shape
+        if args.dither_edge:
+            DITHER_EDGE_DAC = args.dither_edge
+        if args.dither_top is not None:
+            DITHER_TOP_DAC = args.dither_top
         if args.frequencies_mhz:
             for frequency_mhz in args.frequencies_mhz:
                 TONE_FREQUENCY_HZ = frequency_mhz * 1e6

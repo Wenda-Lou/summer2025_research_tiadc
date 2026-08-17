@@ -122,6 +122,10 @@ typedef struct {
     double final_offset_correction;
     double nominal_system_gain;
     int canonical_channel;
+    /* Per-channel multipliers that put both physical ADC waveforms into the
+     * canonical reference polarity.  cal_a/cal_b passed to analyze_frame are
+     * corrected physical samples; polarity is applied exactly once inside
+     * the analysis. */
     double channel_polarity[2];
     double initial_relative_skew_samples;
     double initial_relative_skew_ps;
@@ -146,6 +150,12 @@ typedef int (*adc_cal_perf_capture_fn)(
 
 void adc_cal_perf_default_config(adc_cal_perf_config_t *config);
 void adc_cal_perf_spectral_reset(adc_cal_perf_spectral_metrics_t *metrics);
+
+int adc_cal_perf_resolve_channel_polarity(
+    int canonical_channel,
+    double canonical_reference_polarity,
+    double relative_b_over_a_polarity,
+    double channel_polarity[2]);
 
 int adc_cal_perf_analyze_record(
     const double *samples,
