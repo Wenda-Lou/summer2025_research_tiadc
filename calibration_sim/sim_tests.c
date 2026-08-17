@@ -3174,8 +3174,11 @@ typedef struct {
 } simulated_skew_actuator_t;
 
 static int simulated_skew_measure(
-    void *context, adc_cal_skew_batch_measurement_t *measurement)
+    void *context,
+    adc_cal_skew_measurement_kind_t kind,
+    adc_cal_skew_batch_measurement_t *measurement)
 {
+    (void)kind;
     simulated_skew_actuator_t *sim = (simulated_skew_actuator_t *)context;
     if (sim == NULL || measurement == NULL) return -1;
     memset(measurement, 0, sizeof(*measurement));
@@ -3298,8 +3301,11 @@ static int simulated_skew_prep_diag_event(
 }
 
 static int simulated_skew_prep_diag_measure(
-    void *context, adc_cal_skew_batch_measurement_t *measurement)
+    void *context,
+    adc_cal_skew_measurement_kind_t kind,
+    adc_cal_skew_batch_measurement_t *measurement)
 {
+    (void)kind;
     simulated_skew_prep_diag_t *sim =
         (simulated_skew_prep_diag_t *)context;
     const uint32_t call = sim != NULL ? sim->measurements : 0U;

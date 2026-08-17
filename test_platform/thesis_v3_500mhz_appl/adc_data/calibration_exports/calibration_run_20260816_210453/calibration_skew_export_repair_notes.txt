@@ -1,0 +1,17 @@
+Skew export repair notes
+capture_csv : test_platform\thesis_v3_500mhz_appl\adc_data\calibration_exports\calibration_run_20260816_210453\calibration_skew_captures.csv
+baseline_register : 24
+groups_present : 16
+groups_expected : 21
+
+Re-labelled rows:
+  calibration -> actuator_characterization_baseline : 80 rows
+
+Missing capture groups (firmware history capacity was 160 rows): 5
+  group 17: actuator_characterization_repeat
+  group 18: calibration
+  group 19: calibration
+  group 20: calibration
+  group 21: calibration
+
+No missing frames were invented. Re-run on the board with the fixed firmware to obtain a complete per-frame CSV.

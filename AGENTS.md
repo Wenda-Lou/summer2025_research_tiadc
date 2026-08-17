@@ -44,7 +44,7 @@ The repository mixes four kinds of code that support that bench:
 | `test_platform/final_ver_1/` | Vitis platform project (FSBL, hw handoff). |
 | `test_platform/final_ver_1.0.xsa` | Exported hardware specification for Vitis. |
 | `calibration_sim/` | Host C simulator + test harness (CMake). Reuses production firmware sources. |
-| `calibration_loop/` | Python impulse-dither calibration package (`python -m calibration_loop.run_calibration`). |
+| `calibration_loop/` | Python impulse-dither calibration package (`python -m calibration_loop.run_calibration`). `fix_skew_export.py` repairs pre-2026-08-16 skew CSV labels from recorded board data (does not invent truncated frames). |
 | `calibration_out/` | Example output of `calibration_loop` runs (CSV, JSON, plots). |
 | `fpga/skew_actuator/` | `adc_channel_skew_actuator_gpio.v` fractional-delay AXI-Stream module + Vivado TCL integration scripts + xsim validation logs. |
 | `axi_lite_wrapper/`, `axi_full_wrapper/` | AXI Lite / AXI Full master wrapper Verilog with SystemVerilog testbenches (Vivado xsim). |

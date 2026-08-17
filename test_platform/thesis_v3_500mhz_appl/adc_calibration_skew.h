@@ -256,8 +256,19 @@ typedef struct {
     const char *reason;
 } adc_cal_skew_batch_measurement_t;
 
+typedef enum {
+    ADC_CAL_SKEW_MEASUREMENT_LOOP_INITIAL = 0,
+    ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_BASELINE,
+    ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_PROBE,
+    ADC_CAL_SKEW_MEASUREMENT_CONTROLLER,
+    ADC_CAL_SKEW_MEASUREMENT_PREP_PRE,
+    ADC_CAL_SKEW_MEASUREMENT_PREP_POST
+} adc_cal_skew_measurement_kind_t;
+
 typedef int (*adc_cal_skew_measure_batch_fn)(
-    void *context, adc_cal_skew_batch_measurement_t *measurement);
+    void *context,
+    adc_cal_skew_measurement_kind_t kind,
+    adc_cal_skew_batch_measurement_t *measurement);
 typedef int (*adc_cal_skew_actuator_verify_fn)(void *context);
 typedef int (*adc_cal_skew_discard_capture_fn)(
     void *context, uint32_t capture_index, uint32_t capture_count);

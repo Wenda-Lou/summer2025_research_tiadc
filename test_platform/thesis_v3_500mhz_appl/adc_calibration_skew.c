@@ -942,7 +942,8 @@ int adc_cal_skew_run_closed_loop(
         result->actuator_ready_verified = 1;
     }
     memset(&measurement, 0, sizeof(measurement));
-    measurement_status = io->measure_batch(io->context, &measurement);
+    measurement_status = io->measure_batch(
+        io->context, ADC_CAL_SKEW_MEASUREMENT_LOOP_INITIAL, &measurement);
     result->initial_skew_samples = measurement.skew_samples;
     result->final_skew_samples = measurement.skew_samples;
     result->best_skew_samples = measurement.skew_samples;
@@ -1023,7 +1024,9 @@ int adc_cal_skew_run_closed_loop(
          * 10.2 ps/code).  The immutable baseline register code and the
          * authoritative entry-baseline classification are unchanged. */
         memset(&probe_baseline[0], 0, sizeof(probe_baseline[0]));
-        measurement_status = io->measure_batch(io->context, &probe_baseline[0]);
+        measurement_status = io->measure_batch(
+            io->context, ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_BASELINE,
+            &probe_baseline[0]);
         if (measurement_status == 0)
             result->latest_measurement_std_samples =
                 probe_baseline[0].batch_std_samples;
@@ -1065,7 +1068,8 @@ int adc_cal_skew_run_closed_loop(
             return -7;
         }
         memset(&stepped, 0, sizeof(stepped));
-        measurement_status = io->measure_batch(io->context, &stepped);
+        measurement_status = io->measure_batch(
+            io->context, ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_PROBE, &stepped);
         if (measurement_status == 0) {
             result->first_probe_stability =
                 adc_cal_skew_measurement_stability(config, &stepped);
@@ -1099,7 +1103,9 @@ int adc_cal_skew_run_closed_loop(
         /* Fresh baseline for the repeat probe, measured at the restored
          * baseline code before the second write. */
         memset(&probe_baseline[1], 0, sizeof(probe_baseline[1]));
-        measurement_status = io->measure_batch(io->context, &probe_baseline[1]);
+        measurement_status = io->measure_batch(
+            io->context, ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_BASELINE,
+            &probe_baseline[1]);
         if (measurement_status == 0)
             result->latest_measurement_std_samples =
                 probe_baseline[1].batch_std_samples;
@@ -1143,7 +1149,9 @@ int adc_cal_skew_run_closed_loop(
             return -8;
         }
         memset(&stepped_repeat, 0, sizeof(stepped_repeat));
-        measurement_status = io->measure_batch(io->context, &stepped_repeat);
+        measurement_status = io->measure_batch(
+            io->context, ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_PROBE,
+            &stepped_repeat);
         if (measurement_status == 0) {
             result->repeat_probe_stability =
                 adc_cal_skew_measurement_stability(config, &stepped_repeat);
@@ -1362,7 +1370,8 @@ int adc_cal_skew_run_closed_loop(
         }
         if (iteration == active.skew_max_iterations) break;
         memset(&measurement, 0, sizeof(measurement));
-        measurement_status = io->measure_batch(io->context, &measurement);
+        measurement_status = io->measure_batch(
+            io->context, ADC_CAL_SKEW_MEASUREMENT_CONTROLLER, &measurement);
         if (measurement_status == 0) {
             result->latest_measurement_stability =
                 adc_cal_skew_measurement_stability(&active, &measurement);
@@ -1513,7 +1522,9 @@ int adc_cal_skew_run_preparation_diagnostic(
     if (adc_cal_skew_prep_diag_snapshot(
             io, ADC_CAL_SKEW_PREP_SNAPSHOT_BEFORE_BASELINE, result) != 0)
         return -5;
-    if (io->measure_batch(io->context, &result->pre_measurement) != 0 ||
+    if (io->measure_batch(
+            io->context, ADC_CAL_SKEW_MEASUREMENT_PREP_PRE,
+            &result->pre_measurement) != 0 ||
         !adc_cal_skew_measurement_valid(config, &result->pre_measurement)) {
         result->reason = result->pre_measurement.reason != NULL ?
             result->pre_measurement.reason :
@@ -1559,7 +1570,9 @@ int adc_cal_skew_run_preparation_diagnostic(
             status = -11;
             goto restore_state;
         }
-    if (io->measure_batch(io->context, &result->post_measurement) != 0) {
+    if (io->measure_batch(
+            io->context, ADC_CAL_SKEW_MEASUREMENT_PREP_POST,
+            &result->post_measurement) != 0) {
         result->reason = result->post_measurement.reason != NULL ?
             result->post_measurement.reason :
             "post-operation skew measurement failed";

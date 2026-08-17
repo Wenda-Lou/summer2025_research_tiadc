@@ -152,7 +152,13 @@ bool adc_record_measured_sample_rate_hz(double rate_hz)
      CALIBRATION_GAIN_BATCH_SIZE)
 #define ADC_CAL_GAIN_HISTORY_CAPACITY \
     CALIBRATION_GAIN_MAX_ACCEPTED_ITERATIONS
-#define ADC_CAL_SKEW_CAPTURE_HISTORY_CAPACITY       160U
+/* One closed-loop skew run stores up to:
+ *   initial baseline (1 batch)
+ * + 4 characterization rungs x 4 batches (baseline/probe x 2)
+ * + up to CAL_SKEW_MAX_ITERATIONS controller batches.
+ * With 10-frame batches and 10 controller iterations that is 270 frames;
+ * keep margin so the final repeat probe and every controller batch fit. */
+#define ADC_CAL_SKEW_CAPTURE_HISTORY_CAPACITY       320U
 #define ADC_CAL_SKEW_HISTORY_CAPACITY              10U
 #define ADC_PERFORMANCE_FUNDAMENTAL_SEARCH_BINS   3U
 #define ADC_PERFORMANCE_HANN_SIGNAL_HALF_WIDTH    2U

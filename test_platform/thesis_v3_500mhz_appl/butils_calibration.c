@@ -8343,38 +8343,43 @@ restore_selection:
                                                                             controller_batches[
                                                                                 ADC_CAL_SKEW_HISTORY_CAPACITY + 1U];
                                                                     } calibration_skew_loop_context_t;
-                                                                    static int calibration_skew_loop_measure(
+                                                                                                                                        static int calibration_skew_loop_measure(
                                                                         void *context,
+                                                                        adc_cal_skew_measurement_kind_t kind,
                                                                         adc_cal_skew_batch_measurement_t *measurement) {
                                                                         calibration_skew_loop_context_t *loop =
                                                                             (calibration_skew_loop_context_t *)context;
                                                                         int status;
+                                                                        int store_controller_batch = 0;
                                                                         if (loop == NULL || loop->batch == NULL || measurement == NULL)
                                                                             return -1;
                                                                         g_adc_cal_skew_capture_context.capture_group_index =
                                                                             loop->measurement_call_count + 1U;
-                                                                        if (loop->measurement_call_count == 0U) {
-                                                                            g_adc_cal_skew_capture_context.iteration = 0U;
+                                                                        g_adc_cal_skew_capture_context.iteration = 0U;
+                                                                        switch (kind) {
+                                                                        case ADC_CAL_SKEW_MEASUREMENT_LOOP_INITIAL:
                                                                             g_adc_cal_skew_capture_context.capture_phase =
                                                                                 "closed_loop_initial_baseline";
-                                                                        }
-                                                                        else if (loop->characterization_measurement_pending &&
-                                                                            loop->characterization_probe == 0U) {
-                                                                            g_adc_cal_skew_capture_context.iteration = 0U;
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_BASELINE:
                                                                             g_adc_cal_skew_capture_context.capture_phase =
-                                                                                "actuator_characterization_after";
-                                                                        }
-                                                                        else if (loop->characterization_measurement_pending) {
-                                                                            g_adc_cal_skew_capture_context.iteration = 0U;
+                                                                                "actuator_characterization_baseline";
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_MEASUREMENT_CHARACTERIZATION_PROBE:
                                                                             g_adc_cal_skew_capture_context.capture_phase =
-                                                                                "actuator_characterization_repeat";
-                                                                        }
-                                                                        else {
+                                                                                loop->characterization_probe == 0U ?
+                                                                                    "actuator_characterization_after" :
+                                                                                    "actuator_characterization_repeat";
+                                                                            break;
+                                                                        case ADC_CAL_SKEW_MEASUREMENT_CONTROLLER:
                                                                             ++loop->controller_measurement_count;
                                                                             g_adc_cal_skew_capture_context.iteration =
                                                                                 loop->controller_measurement_count;
-                                                                            g_adc_cal_skew_capture_context.capture_phase =
-                                                                                "calibration";
+                                                                            g_adc_cal_skew_capture_context.capture_phase = "calibration";
+                                                                            store_controller_batch = 1;
+                                                                            break;
+                                                                        default:
+                                                                            return -1;
                                                                         }
                                                                         g_adc_cal_skew_capture_context.active_delay_register =
                                                                             loop->active_register;
@@ -8382,12 +8387,12 @@ restore_selection:
                                                                         status = calibration_run_skew_open_loop(
                                                                             loop->batch, loop->diagnose_mode);
                                                                         loop->characterization_measurement_pending = false;
-                                                                        if (g_adc_cal_skew_capture_context.iteration > 0U &&
+                                                                        if (store_controller_batch &&
+                                                                            g_adc_cal_skew_capture_context.iteration > 0U &&
                                                                             g_adc_cal_skew_capture_context.iteration <=
                                                                                 ADC_CAL_SKEW_HISTORY_CAPACITY) {
                                                                             loop->controller_batches[
-                                                                                g_adc_cal_skew_capture_context.iteration] =
-                                                                                *loop->batch;
+                                                                                g_adc_cal_skew_capture_context.iteration] = *loop->batch;
                                                                         }
                                                                         memset(measurement, 0, sizeof(*measurement));
                                                                         measurement->valid = loop->batch->accepted_frames >=
@@ -8423,22 +8428,23 @@ restore_selection:
                                                                                     ADC_CAL_SKEW_STABILITY_HIGH_NOISE);
                                                                             loop->initial_baseline_stability =
                                                                                 loop->batch->policy.stability;
-                                                                            xil_printf("Characterization dispatch: baseline class %s | policy %s | entering probe %s\r\n",
-                                                                                adc_cal_skew_stability_name(
-                                                                                    loop->initial_baseline_stability),
-                                                                                loop->initial_baseline_stability ==
-                                                                                    ADC_CAL_SKEW_STABILITY_MARGINAL ?
-                                                                                        "CAUTIOUS" :
-                                                                                loop->initial_baseline_stability ==
-                                                                                    ADC_CAL_SKEW_STABILITY_HIGH_NOISE ?
-                                                                                        "CAUTIOUS-HIGH-NOISE" :
-                                                                                loop->initial_baseline_stability ==
-                                                                                    ADC_CAL_SKEW_STABILITY_STABLE ?
-                                                                                        "NORMAL" : "BLOCKED",
-                                                                                entering_probe ? "YES" : "NO");
+                                                                                                                                                xil_printf("Characterization dispatch: baseline class %s | policy %s | entering probe %s\r\n",
+                                                                        adc_cal_skew_stability_name(
+                                                                            loop->initial_baseline_stability),
+                                                                        loop->initial_baseline_stability ==
+                                                                            ADC_CAL_SKEW_STABILITY_MARGINAL ?
+                                                                                "CAUTIOUS" :
+                                                                        loop->initial_baseline_stability ==
+                                                                            ADC_CAL_SKEW_STABILITY_HIGH_NOISE ?
+                                                                                "CAUTIOUS-HIGH-NOISE" :
+                                                                        loop->initial_baseline_stability ==
+                                                                            ADC_CAL_SKEW_STABILITY_STABLE ?
+                                                                                "NORMAL" : "BLOCKED",
+                                                                        entering_probe ? "YES" : "NO");
                                                                         }
                                                                         return status == 0 || measurement->valid ? 0 : -2;
                                                                     }
+
                                                                     static int calibration_skew_loop_read(
                                                                         void *context, int *value) {
                                                                         calibration_skew_loop_context_t *loop =
@@ -9463,21 +9469,24 @@ restore_selection:
 
                                                                     static int calibration_skew_prep_measure(
                                                                         void *opaque,
+                                                                        adc_cal_skew_measurement_kind_t kind,
                                                                         adc_cal_skew_batch_measurement_t *measurement) {
                                                                         calibration_skew_prep_diag_context_t *diagnostic =
                                                                             (calibration_skew_prep_diag_context_t *)opaque;
                                                                         calibration_skew_batch_result_t *batch;
                                                                         int status;
                                                                         if (diagnostic == NULL || measurement == NULL ||
+                                                                            (kind != ADC_CAL_SKEW_MEASUREMENT_PREP_PRE &&
+                                                                             kind != ADC_CAL_SKEW_MEASUREMENT_PREP_POST) ||
                                                                             diagnostic->measurement_call_count >= 2U)
                                                                             return -1;
-                                                                        batch = diagnostic->measurement_call_count == 0U ?
+                                                                        batch = kind == ADC_CAL_SKEW_MEASUREMENT_PREP_PRE ?
                                                                             &diagnostic->pre_batch : &diagnostic->post_batch;
                                                                         g_adc_cal_skew_capture_context.capture_group_index =
                                                                             diagnostic->measurement_call_count + 1U;
                                                                         g_adc_cal_skew_capture_context.iteration = 0U;
                                                                         g_adc_cal_skew_capture_context.capture_phase =
-                                                                            diagnostic->measurement_call_count == 0U ?
+                                                                            kind == ADC_CAL_SKEW_MEASUREMENT_PREP_PRE ?
                                                                                 "skewprep_pre_operation" :
                                                                                 "skewprep_post_operation";
                                                                         ++diagnostic->measurement_call_count;
