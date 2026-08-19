@@ -73,55 +73,69 @@ ADC_FRAME_SAMPLES = 1_016
 DAC_TO_ADC_RATE_RATIO = DAC_SAMPLE_RATE_HZ / ADC_SAMPLE_RATE_HZ
 GENERATED_SAMPLES_DIR = Path(__file__).resolve().parent / "generated_samples"
 
-# Derive the DAC- and ADC-domain event spacing from the physical interval so a
-# future clock update cannot leave a stale sample count behind.
-DITHER_PERIOD_DAC = int(round(
-    DITHER_EVENT_PERIOD_SECONDS * DAC_SAMPLE_RATE_HZ
-))
-DITHER_PERIOD_ADC = int(round(
-    DITHER_EVENT_PERIOD_SECONDS * ADC_SAMPLE_RATE_HZ
-))
-if not math.isclose(
-    DITHER_PERIOD_DAC / DAC_SAMPLE_RATE_HZ,
-    DITHER_EVENT_PERIOD_SECONDS,
-    rel_tol=0.0,
-    abs_tol=1.0e-18,
-) or not math.isclose(
-    DITHER_PERIOD_ADC / ADC_SAMPLE_RATE_HZ,
-    DITHER_EVENT_PERIOD_SECONDS,
-    rel_tol=0.0,
-    abs_tol=1.0e-18,
-):
-    raise RuntimeError(
-        "Dither event period must map to whole DAC and ADC samples."
-    )
 DAC_ADC_RATIO_FRACTION = Fraction(
     int(round(DAC_SAMPLE_RATE_HZ)),
     int(round(ADC_SAMPLE_RATE_HZ)),
 )
 DAC_RATE_NUMERATOR = DAC_ADC_RATIO_FRACTION.numerator
 DAC_RATE_DENOMINATOR = DAC_ADC_RATIO_FRACTION.denominator
-event_period_adc_numerator = DITHER_PERIOD_DAC * DAC_RATE_DENOMINATOR
-if event_period_adc_numerator % DAC_RATE_NUMERATOR != 0:
-    raise RuntimeError(
-        "Dither period must map to a whole number of ADC samples."
-    )
-if DITHER_PERIOD_ADC != event_period_adc_numerator // DAC_RATE_NUMERATOR:
-    raise RuntimeError("Dither spacing derivations disagree.")
+
+# Derive the DAC- and ADC-domain event spacing from the physical interval so a
+# future clock update cannot leave a stale sample count behind.
+def derive_dither_periods(period_seconds: float) -> tuple[int, int]:
+    if period_seconds <= 0.0:
+        raise ValueError("Dither event period must be positive.")
+    dither_period_dac = int(round(period_seconds * DAC_SAMPLE_RATE_HZ))
+    dither_period_adc = int(round(period_seconds * ADC_SAMPLE_RATE_HZ))
+    if not math.isclose(
+        dither_period_dac / DAC_SAMPLE_RATE_HZ,
+        period_seconds,
+        rel_tol=0.0,
+        abs_tol=1.0e-18,
+    ) or not math.isclose(
+        dither_period_adc / ADC_SAMPLE_RATE_HZ,
+        period_seconds,
+        rel_tol=0.0,
+        abs_tol=1.0e-18,
+    ):
+        raise RuntimeError(
+            "Dither event period must map to whole DAC and ADC samples."
+        )
+    if dither_period_dac * DAC_RATE_DENOMINATOR % DAC_RATE_NUMERATOR != 0:
+        raise RuntimeError(
+            "Dither period must map to a whole number of ADC samples."
+        )
+    if dither_period_adc != (
+        dither_period_dac * DAC_RATE_DENOMINATOR // DAC_RATE_NUMERATOR
+    ):
+        raise RuntimeError("Dither spacing derivations disagree.")
+    return dither_period_dac, dither_period_adc
+
+
+DITHER_PERIOD_DAC, DITHER_PERIOD_ADC = derive_dither_periods(
+    DITHER_EVENT_PERIOD_SECONDS
+)
 DAC_FILE_ALIGNMENT_SAMPLES = 256
-# The loop length is aligned for DPG download, contains whole dither periods,
-# and closes on an ADC sample boundary. Double it only if polarity balancing
-# would otherwise leave an odd event count.
-NUM_SAMPLES = math.lcm(
-    DAC_FILE_ALIGNMENT_SAMPLES,
-    DITHER_PERIOD_DAC,
-    DAC_RATE_NUMERATOR,
-)
-DITHER_NUM_SAMPLES = (
-    NUM_SAMPLES
-    if (NUM_SAMPLES // DITHER_PERIOD_DAC) % 2 == 0
-    else 2 * NUM_SAMPLES
-)
+
+
+def derive_sample_counts(period_dac: int) -> tuple[int, int]:
+    """Loop length aligned for DPG download, containing whole dither
+    periods and closing on an ADC sample boundary.  Doubled only if
+    polarity balancing would otherwise leave an odd event count."""
+    num_samples = math.lcm(
+        DAC_FILE_ALIGNMENT_SAMPLES,
+        period_dac,
+        DAC_RATE_NUMERATOR,
+    )
+    dither_num_samples = (
+        num_samples
+        if (num_samples // period_dac) % 2 == 0
+        else 2 * num_samples
+    )
+    return num_samples, dither_num_samples
+
+
+NUM_SAMPLES, DITHER_NUM_SAMPLES = derive_sample_counts(DITHER_PERIOD_DAC)
 INT16_MIN = -32_768
 INT16_MAX = 32_767
 
@@ -311,6 +325,7 @@ def frequency_filename_label(frequency_hz: float) -> str:
 def output_path_for_frequency(
     frequency_hz: float,
     dither_enabled: bool,
+    dither_period_adc: int = 130,
 ) -> Path:
     """Return a frequency-named path without replacing an existing bundle."""
     frequency_label = frequency_filename_label(frequency_hz)
@@ -320,6 +335,8 @@ def output_path_for_frequency(
     )
     mode_suffix = "impulse_dither" if dither_enabled else "non_dither"
     stem = f"sine_{frequency_label}MHz_{sample_rate_label}GSPS_{mode_suffix}"
+    if dither_enabled and dither_period_adc != 130:
+        stem += f"_p{dither_period_adc}"
 
     sequence_number = 0
     while True:
@@ -387,8 +404,18 @@ def plot_generated_txt(
     return png_file
 
 
-def main() -> None:
-    num_samples = DITHER_NUM_SAMPLES if ENABLE_DITHER else NUM_SAMPLES
+def main(dither_period_dac: int | None = None,
+         dither_period_adc: int | None = None,
+         event_period_seconds: float | None = None) -> None:
+    if event_period_seconds is not None:
+        dither_period_dac, dither_period_adc = derive_dither_periods(
+            event_period_seconds
+        )
+    if dither_period_dac is None or dither_period_adc is None:
+        dither_period_dac = DITHER_PERIOD_DAC
+        dither_period_adc = DITHER_PERIOD_ADC
+    num_samples, dither_num_samples = derive_sample_counts(dither_period_dac)
+    num_samples = dither_num_samples if ENABLE_DITHER else num_samples
 
     tone_bin = nearest_coherent_bin(
         requested_frequency_hz=TONE_FREQUENCY_HZ,
@@ -402,6 +429,7 @@ def main() -> None:
     output_file = output_path_for_frequency(
         TONE_FREQUENCY_HZ,
         ENABLE_DITHER,
+        dither_period_adc,
     )
 
     if num_samples % DAC_FILE_ALIGNMENT_SAMPLES != 0:
@@ -424,7 +452,7 @@ def main() -> None:
     if ENABLE_DITHER:
         dither, polarity = generate_periodic_impulse_dither(
             num_samples=num_samples,
-            period_samples=DITHER_PERIOD_DAC,
+            period_samples=dither_period_dac,
             position_samples=DITHER_POSITION_DAC,
             edge_samples=DITHER_EDGE_DAC,
             top_samples=DITHER_TOP_DAC,
@@ -464,9 +492,9 @@ def main() -> None:
         "dac_adc_ratio_fraction": (
             f"{DAC_RATE_NUMERATOR}/{DAC_RATE_DENOMINATOR}"
         ),
-        "dither_period_adc": DITHER_PERIOD_ADC if ENABLE_DITHER else None,
+        "dither_period_adc": dither_period_adc if ENABLE_DITHER else None,
         "dither_event_period_seconds": (
-            DITHER_EVENT_PERIOD_SECONDS if ENABLE_DITHER else None
+            dither_period_adc / ADC_SAMPLE_RATE_HZ if ENABLE_DITHER else None
         ),
         "adc_frame_samples": ADC_FRAME_SAMPLES,
         "periodic_dac_file_samples": num_samples,
@@ -485,7 +513,7 @@ def main() -> None:
             "balanced random-polarity raised-cosine impulse"
             if ENABLE_DITHER else None
         ),
-        "dither_period_dac": DITHER_PERIOD_DAC if ENABLE_DITHER else None,
+        "dither_period_dac": dither_period_dac if ENABLE_DITHER else None,
         "dither_position_dac": (
             DITHER_POSITION_DAC if ENABLE_DITHER else None
         ),
@@ -558,6 +586,14 @@ if __name__ == "__main__":
         help="Dither flat-top length in DAC samples; defaults to the "
              "configured value.",
     )
+    parser.add_argument(
+        "--dither-event-period-ns",
+        type=float,
+        help="Dither event period in nanoseconds (default 100.0 ns = 130 "
+             "ADC samples; 200.0 ns = 260 ADC samples doubles the event "
+             "spacing so the aggregation window can widen without filling "
+             "the period).",
+    )
     args = parser.parse_args()
 
     try:
@@ -567,11 +603,16 @@ if __name__ == "__main__":
             DITHER_EDGE_DAC = args.dither_edge
         if args.dither_top is not None:
             DITHER_TOP_DAC = args.dither_top
+        event_period_seconds = (
+            args.dither_event_period_ns * 1e-9
+            if args.dither_event_period_ns is not None
+            else None
+        )
         if args.frequencies_mhz:
             for frequency_mhz in args.frequencies_mhz:
                 TONE_FREQUENCY_HZ = frequency_mhz * 1e6
-                main()
+                main(event_period_seconds=event_period_seconds)
         else:
-            main()
+            main(event_period_seconds=event_period_seconds)
     except Exception as exc:
         raise SystemExit(f"Error: {exc}") from exc

@@ -151,6 +151,18 @@ typedef int (*adc_cal_perf_capture_fn)(
 void adc_cal_perf_default_config(adc_cal_perf_config_t *config);
 void adc_cal_perf_spectral_reset(adc_cal_perf_spectral_metrics_t *metrics);
 
+/* Fit-based SNDR/ENOB for per-capture pipeline tracking: the tone fit
+ * isolates the fundamental, so SNDR = 10*log10(amp^2/2 / rmse^2) and
+ * ENOB = (SNDR - 1.76)/6.02.  The residual includes harmonics, dither
+ * pulses and noise, matching the spectral SNDR definition closely enough
+ * for trend tracking.  Returns 0 and fills both outputs, or -1/-2 on
+ * invalid arguments / non-finite or non-positive inputs (outputs NAN). */
+int adc_cal_perf_sndr_enob_from_tone_fit(
+    double amplitude_codes,
+    double rmse_codes,
+    double *sndr_db,
+    double *enob_bits);
+
 int adc_cal_perf_resolve_channel_polarity(
     int canonical_channel,
     double canonical_reference_polarity,

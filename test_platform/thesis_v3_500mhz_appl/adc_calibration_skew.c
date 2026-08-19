@@ -21,6 +21,7 @@ void adc_cal_skew_default_config(adc_cal_skew_config_t *config)
         ADC_CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
     config->profile_window_half_samples = 0U;
     config->profile_mask_amplitude_fraction = 0.0;
+    config->profile_window_detrend = 0U;
 }
 
 void adc_cal_skew_result_reset(adc_cal_skew_result_t *result)
@@ -1659,6 +1660,164 @@ static int estimate_profile_skew(
     return adc_cal_double_isfinite(*skew_samples) ? 0 : -4;
 }
 
+static int finish_profile_estimate(
+    const double *profile_a,
+    const double *profile_b,
+    double *template_profile,
+    double *derivative_profile,
+    size_t profile_count,
+    const adc_cal_skew_config_t *config,
+    double pulse_energy,
+    double quality,
+    adc_cal_skew_result_t *result)
+{
+    double relative_template_energy = 0.0;
+    double relative_projection = 0.0;
+    double gain_a;
+    double gain_b;
+    double skew_a = NAN;
+    double skew_b = NAN;
+    double rise_a = NAN;
+    double rise_b = NAN;
+    double fall_a = NAN;
+    double fall_b = NAN;
+    uint32_t used = 0U;
+    double energy = 0.0;
+
+    /* The DAC pulse is an event locator, not an analog shape oracle.  The
+     * ADC/DAC chain can distort its edges enough that subtracting two
+     * independent channel-vs-DAC skew estimates leaves a large common shape
+     * bias.  For relative B-A skew, use Channel A's captured event profile as
+     * the local template and fit Channel B directly against it. */
+    for (size_t j = 0U; j < profile_count; ++j) {
+        relative_template_energy += profile_a[j] * profile_a[j];
+        relative_projection += profile_b[j] * profile_a[j];
+        template_profile[j] = profile_a[j];
+    }
+    if (relative_template_energy <= ADC_CAL_SKEW_DERIVATIVE_ENERGY_FLOOR) {
+        result->reason = ADC_CAL_SKEW_REASON_TEMPLATE;
+        result->failure_reason = "Channel A event profile has insufficient energy";
+        return -7;
+    }
+    for (size_t j = 0U; j < profile_count; ++j) {
+        const double previous = j > 0U ? template_profile[j - 1U] :
+            template_profile[j];
+        const double next = j + 1U < profile_count ?
+            template_profile[j + 1U] : template_profile[j];
+        derivative_profile[j] = 0.5 * (next - previous);
+    }
+    gain_a = 1.0;
+    gain_b = relative_projection / relative_template_energy;
+    if (estimate_profile_skew(profile_a, template_profile, derivative_profile,
+                              profile_count, 0,
+                              config->profile_mask_amplitude_fraction,
+                              gain_a, &skew_a, &used,
+                              &energy) != 0 ||
+        estimate_profile_skew(profile_b, template_profile, derivative_profile,
+                              profile_count, 0,
+                              config->profile_mask_amplitude_fraction,
+                              gain_b, &skew_b, &used,
+                              &energy) != 0 ||
+        estimate_profile_skew(profile_a, template_profile, derivative_profile,
+                              profile_count, 1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_a, &rise_a, &used,
+                              &energy) != 0 ||
+        estimate_profile_skew(profile_b, template_profile, derivative_profile,
+                              profile_count, 1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_b, &rise_b, &used,
+                              &energy) != 0 ||
+        estimate_profile_skew(profile_a, template_profile, derivative_profile,
+                              profile_count, -1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_a, &fall_a, &used,
+                              &energy) != 0 ||
+        estimate_profile_skew(profile_b, template_profile, derivative_profile,
+                              profile_count, -1,
+                              config->profile_mask_amplitude_fraction,
+                              gain_b, &fall_b, &used,
+                              &energy) != 0) {
+        result->reason = ADC_CAL_SKEW_REASON_DERIVATIVE;
+        result->failure_reason = "skew derivative projection failed";
+        return -8;
+    }
+    result->channel_a_skew_samples = skew_a;
+    result->channel_b_skew_samples = skew_b;
+    result->relative_skew_samples = skew_b - skew_a;
+    result->rising_skew_samples = rise_b - rise_a;
+    result->falling_skew_samples = fall_b - fall_a;
+    result->edge_disagreement_samples =
+        fabs(result->rising_skew_samples - result->falling_skew_samples);
+    result->relative_skew_ps =
+        result->relative_skew_samples * 1.0e12 / config->sample_rate_hz;
+    result->derivative_energy = energy;
+    result->pulse_energy = pulse_energy;
+    result->quality = quality;
+    if (!adc_cal_double_isfinite(result->relative_skew_samples) ||
+        !adc_cal_double_isfinite(result->edge_disagreement_samples)) {
+        result->reason = ADC_CAL_SKEW_REASON_NUMERICAL;
+        result->failure_reason = "non-finite skew estimate";
+        return -9;
+    }
+    if (fabs(result->relative_skew_samples) >
+        config->max_linear_skew_samples) {
+        result->reason = ADC_CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE;
+        result->valid = 1;
+        result->status = ADC_CAL_SKEW_STATUS_WARNING;
+        result->failure_reason = "skew outside supported linear range";
+        return 0;
+    }
+    if (result->edge_disagreement_samples >
+        config->max_edge_disagreement_samples) {
+        result->reason = ADC_CAL_SKEW_REASON_EDGE_DISAGREEMENT;
+        result->valid = 1;
+        result->status = ADC_CAL_SKEW_STATUS_WARNING;
+        result->failure_reason = "edge estimates disagree";
+        return 0;
+    }
+    result->valid = 1;
+    result->status = ADC_CAL_SKEW_STATUS_PASS;
+    result->reason = ADC_CAL_SKEW_REASON_NONE;
+    result->failure_reason = "none";
+    return 0;
+}
+
+static int detrend_window_linear(
+    const double *window,
+    size_t count,
+    int m_first,
+    double *out)
+{
+    double sx = 0.0;
+    double sy = 0.0;
+    double sxx = 0.0;
+    double sxy = 0.0;
+    double denom;
+    double slope;
+    double intercept;
+
+    if (window == NULL || out == NULL || count == 0U) return -1;
+    for (size_t j = 0U; j < count; ++j) {
+        const double x = (double)m_first + (double)j;
+        sx += x;
+        sy += window[j];
+        sxx += x * x;
+        sxy += x * window[j];
+    }
+    denom = (double)count * sxx - sx * sx;
+    if (!adc_cal_double_isfinite(denom) || fabs(denom) <= DBL_EPSILON) {
+        return -1;
+    }
+    slope = ((double)count * sxy - sx * sy) / denom;
+    intercept = (sy - slope * sx) / (double)count;
+    for (size_t j = 0U; j < count; ++j) {
+        out[j] = window[j] -
+            (slope * ((double)m_first + (double)j) + intercept);
+    }
+    return 0;
+}
+
 static int aggregate_profiles(
     const double *a,
     const double *b,
@@ -1666,6 +1825,7 @@ static int aggregate_profiles(
     size_t sample_count,
     const adc_cal_dither_result_t *events,
     size_t window_half_samples,
+    int detrend,
     double *profile_a,
     double *profile_b,
     double *template_profile,
@@ -1684,6 +1844,8 @@ static int aggregate_profiles(
     static double v_b[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
     static double u_t[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
     static double v_t[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    static double detrend_a[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    static double detrend_b[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
 
     for (size_t k = 0U; k < events->accepted_events; ++k) {
         const double left = (double)events->events[k].start -
@@ -1738,24 +1900,69 @@ static int aggregate_profiles(
                 continue;
             }
             ++usable_events;
-            for (size_t j = 0U; j < profile_count; ++j) {
-                const double position =
-                    events->events[k].center + (double)(m_first + (int)j);
-                double av;
-                double bv;
-                double tv;
-                if (adc_cal_dither_interpolate(a, sample_count, position, &av) != 0 ||
-                    adc_cal_dither_interpolate(b, sample_count, position, &bv) != 0 ||
-                    adc_cal_dither_interpolate(template_samples,
-                                               sample_count, position, &tv) != 0) {
+            if (detrend != 0) {
+                /* Remove each event window's linear trend (DC + slope)
+                 * before aggregation: board evidence (2026-08-19) shows
+                 * window-level residual DC/ramp biases the rising and
+                 * falling derivative projections in opposite directions,
+                 * inflating the edge disagreement by 100-240 ps.  The
+                 * template window is not detrended (ideal DAC shape). */
+                for (size_t j = 0U; j < profile_count; ++j) {
+                    const double position =
+                        events->events[k].center + (double)(m_first + (int)j);
+                    double av;
+                    double bv;
+                    double tv;
+                    if (adc_cal_dither_interpolate(
+                            a, sample_count, position, &av) != 0 ||
+                        adc_cal_dither_interpolate(
+                            b, sample_count, position, &bv) != 0 ||
+                        adc_cal_dither_interpolate(
+                            template_samples, sample_count,
+                            position, &tv) != 0) {
+                        return -3;
+                    }
+                    detrend_a[j] = av;
+                    detrend_b[j] = bv;
+                    u_t[j] += tv;
+                    v_t[j] += events->events[k].polarity * tv;
+                }
+                if (detrend_window_linear(
+                        detrend_a, profile_count, m_first, detrend_a) != 0 ||
+                    detrend_window_linear(
+                        detrend_b, profile_count, m_first, detrend_b) != 0) {
                     return -3;
                 }
-                u_a[j] += av;
-                v_a[j] += events->events[k].polarity * av;
-                u_b[j] += bv;
-                v_b[j] += events->events[k].polarity * bv;
-                u_t[j] += tv;
-                v_t[j] += events->events[k].polarity * tv;
+                for (size_t j = 0U; j < profile_count; ++j) {
+                    u_a[j] += detrend_a[j];
+                    v_a[j] += events->events[k].polarity * detrend_a[j];
+                    u_b[j] += detrend_b[j];
+                    v_b[j] += events->events[k].polarity * detrend_b[j];
+                }
+            }
+            else {
+                for (size_t j = 0U; j < profile_count; ++j) {
+                    const double position =
+                        events->events[k].center + (double)(m_first + (int)j);
+                    double av;
+                    double bv;
+                    double tv;
+                    if (adc_cal_dither_interpolate(
+                            a, sample_count, position, &av) != 0 ||
+                        adc_cal_dither_interpolate(
+                            b, sample_count, position, &bv) != 0 ||
+                        adc_cal_dither_interpolate(
+                            template_samples, sample_count,
+                            position, &tv) != 0) {
+                        return -3;
+                    }
+                    u_a[j] += av;
+                    v_a[j] += events->events[k].polarity * av;
+                    u_b[j] += bv;
+                    v_b[j] += events->events[k].polarity * bv;
+                    u_t[j] += tv;
+                    v_t[j] += events->events[k].polarity * tv;
+                }
             }
         }
         if (usable_events == 0U) return -1;
@@ -1810,18 +2017,6 @@ int adc_cal_skew_estimate_from_residuals(
     static double template_profile[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
     static double derivative_profile[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
     size_t profile_count = 0U;
-    uint32_t used = 0U;
-    double energy = 0.0;
-    double skew_a = NAN;
-    double skew_b = NAN;
-    double rise_a = NAN;
-    double rise_b = NAN;
-    double fall_a = NAN;
-    double fall_b = NAN;
-    double gain_a;
-    double gain_b;
-    double relative_template_energy = 0.0;
-    double relative_projection = 0.0;
 
     if (result == NULL) return -1;
     adc_cal_skew_result_reset(result);
@@ -1864,6 +2059,7 @@ int adc_cal_skew_estimate_from_residuals(
     if (aggregate_profiles(channel_a_residual, channel_b_residual,
                            dither_template, sample_count, &dither,
                            config->profile_window_half_samples,
+                           (int)config->profile_window_detrend,
                            profile_a, profile_b, template_profile,
                            derivative_profile,
                            &profile_count) != 0) {
@@ -1871,107 +2067,140 @@ int adc_cal_skew_estimate_from_residuals(
         result->failure_reason = "event profile aggregation failed";
         return -6;
     }
-    /* The DAC pulse is an event locator, not an analog shape oracle.  The
-     * ADC/DAC chain can distort its edges enough that subtracting two
-     * independent channel-vs-DAC skew estimates leaves a large common shape
-     * bias.  For relative B-A skew, use Channel A's captured event profile as
-     * the local template and fit Channel B directly against it. */
-    for (size_t j = 0U; j < profile_count; ++j) {
-        relative_template_energy += profile_a[j] * profile_a[j];
-        relative_projection += profile_b[j] * profile_a[j];
-        template_profile[j] = profile_a[j];
-    }
-    if (relative_template_energy <= ADC_CAL_SKEW_DERIVATIVE_ENERGY_FLOOR) {
-        result->reason = ADC_CAL_SKEW_REASON_TEMPLATE;
-        result->failure_reason = "Channel A event profile has insufficient energy";
-        return -7;
-    }
-    for (size_t j = 0U; j < profile_count; ++j) {
-        const double previous = j > 0U ? template_profile[j - 1U] :
-            template_profile[j];
-        const double next = j + 1U < profile_count ?
-            template_profile[j + 1U] : template_profile[j];
-        derivative_profile[j] = 0.5 * (next - previous);
-    }
-    gain_a = 1.0;
+    /* The DAC pulse is an event locator, not an analog shape oracle; the
+     * shared finish helper derives the local template from Channel A's
+     * captured profile, fits Channel B against it, and runs the four edge
+     * projections and the status classification. */
     if (adc_cal_dither_analyze(channel_b_residual, dither_template,
                                sample_count, &dither_config, &dither) != 0) {
         result->reason = ADC_CAL_SKEW_REASON_DITHER;
         result->failure_reason = "channel B dither analysis failed";
         return -7;
     }
-    gain_b = relative_projection / relative_template_energy;
-    if (estimate_profile_skew(profile_a, template_profile, derivative_profile,
-                              profile_count, 0,
-                              config->profile_mask_amplitude_fraction,
-                              gain_a, &skew_a, &used,
-                              &energy) != 0 ||
-        estimate_profile_skew(profile_b, template_profile, derivative_profile,
-                              profile_count, 0,
-                              config->profile_mask_amplitude_fraction,
-                              gain_b, &skew_b, &used,
-                              &energy) != 0 ||
-        estimate_profile_skew(profile_a, template_profile, derivative_profile,
-                              profile_count, 1,
-                              config->profile_mask_amplitude_fraction,
-                              gain_a, &rise_a, &used,
-                              &energy) != 0 ||
-        estimate_profile_skew(profile_b, template_profile, derivative_profile,
-                              profile_count, 1,
-                              config->profile_mask_amplitude_fraction,
-                              gain_b, &rise_b, &used,
-                              &energy) != 0 ||
-        estimate_profile_skew(profile_a, template_profile, derivative_profile,
-                              profile_count, -1,
-                              config->profile_mask_amplitude_fraction,
-                              gain_a, &fall_a, &used,
-                              &energy) != 0 ||
-        estimate_profile_skew(profile_b, template_profile, derivative_profile,
-                              profile_count, -1,
-                              config->profile_mask_amplitude_fraction,
-                              gain_b, &fall_b, &used,
-                              &energy) != 0) {
-        result->reason = ADC_CAL_SKEW_REASON_DERIVATIVE;
-        result->failure_reason = "skew derivative projection failed";
-        return -8;
+    return finish_profile_estimate(
+        profile_a, profile_b, template_profile, derivative_profile,
+        profile_count, config, dither.template_energy, dither.quality, result);
+}
+
+int adc_cal_skew_estimate_joint_frames(
+    const double *const *channel_a_residuals,
+    const double *const *channel_b_residuals,
+    const double *dither_template,
+    size_t sample_count,
+    size_t frame_count,
+    const adc_cal_skew_config_t *config,
+    adc_cal_skew_result_t *result)
+{
+    adc_cal_skew_config_t local_config;
+    adc_cal_dither_config_t dither_config;
+    static double joint_a[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    static double joint_b[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    static double window_a[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    static double window_b[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    static double template_profile[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    static double derivative_profile[ADC_CAL_SKEW_MAX_PROFILE_SAMPLES];
+    const size_t window_half = config != NULL ?
+        config->profile_window_half_samples : 0U;
+    const size_t profile_count = 2U * window_half + 1U;
+    double total_energy = 0.0;
+    size_t total_events = 0U;
+    size_t usable_frames = 0U;
+
+    if (result == NULL) return -1;
+    adc_cal_skew_result_reset(result);
+    if (channel_a_residuals == NULL || channel_b_residuals == NULL ||
+        dither_template == NULL || frame_count == 0U ||
+        sample_count == 0U || sample_count > ADC_CAL_DITHER_MAX_EVENTS * 4U) {
+        result->reason = ADC_CAL_SKEW_REASON_CONTEXT;
+        result->failure_reason = "invalid joint skew input";
+        return -2;
     }
-    result->channel_a_skew_samples = skew_a;
-    result->channel_b_skew_samples = skew_b;
-    result->relative_skew_samples = skew_b - skew_a;
-    result->rising_skew_samples = rise_b - rise_a;
-    result->falling_skew_samples = fall_b - fall_a;
-    result->edge_disagreement_samples =
-        fabs(result->rising_skew_samples - result->falling_skew_samples);
-    result->relative_skew_ps =
-        result->relative_skew_samples * 1.0e12 / config->sample_rate_hz;
-    result->derivative_energy = energy;
-    result->pulse_energy = dither.template_energy;
-    result->quality = dither.quality;
-    if (!adc_cal_double_isfinite(result->relative_skew_samples) ||
-        !adc_cal_double_isfinite(result->edge_disagreement_samples)) {
-        result->reason = ADC_CAL_SKEW_REASON_NUMERICAL;
-        result->failure_reason = "non-finite skew estimate";
-        return -9;
+    if (config == NULL) {
+        adc_cal_skew_default_config(&local_config);
+        config = &local_config;
     }
-    if (fabs(result->relative_skew_samples) >
-        config->max_linear_skew_samples) {
-        result->reason = ADC_CAL_SKEW_REASON_OUTSIDE_LINEAR_RANGE;
-        result->valid = 1;
-        result->status = ADC_CAL_SKEW_STATUS_WARNING;
-        result->failure_reason = "skew outside supported linear range";
-        return 0;
+    if (window_half == 0U ||
+        profile_count > ADC_CAL_SKEW_MAX_PROFILE_SAMPLES) {
+        result->reason = ADC_CAL_SKEW_REASON_CONTEXT;
+        result->failure_reason =
+            "joint estimate requires a widened profile window";
+        return -3;
     }
-    if (result->edge_disagreement_samples >
-        config->max_edge_disagreement_samples) {
-        result->reason = ADC_CAL_SKEW_REASON_EDGE_DISAGREEMENT;
-        result->valid = 1;
-        result->status = ADC_CAL_SKEW_STATUS_WARNING;
-        result->failure_reason = "edge estimates disagree";
-        return 0;
+    if (!adc_cal_double_isfinite(config->sample_rate_hz) ||
+        config->sample_rate_hz <= 0.0 ||
+        !adc_cal_double_isfinite(config->max_linear_skew_samples) ||
+        !adc_cal_double_isfinite(config->max_edge_disagreement_samples)) {
+        result->reason = ADC_CAL_SKEW_REASON_CONTEXT;
+        result->failure_reason = "invalid skew configuration";
+        return -4;
     }
-    result->valid = 1;
-    result->status = ADC_CAL_SKEW_STATUS_PASS;
-    result->reason = ADC_CAL_SKEW_REASON_NONE;
-    result->failure_reason = "none";
-    return 0;
+    memset(joint_a, 0, sizeof(joint_a));
+    memset(joint_b, 0, sizeof(joint_b));
+    adc_cal_dither_default_config(&dither_config);
+    dither_config.minimum_events = config->minimum_events;
+    dither_config.boundary_margin = 1U;
+    for (size_t k = 0U; k < frame_count; ++k) {
+        adc_cal_dither_result_t dither;
+        const double *ra = channel_a_residuals[k];
+        const double *rb = channel_b_residuals[k];
+        if (ra == NULL || rb == NULL) continue;
+        if (adc_cal_dither_analyze(ra, dither_template, sample_count,
+                                   &dither_config, &dither) != 0) {
+            continue;
+        }
+        ++usable_frames;
+        for (size_t e = 0U; e < dither.accepted_events; ++e) {
+            const double center = dither.events[e].center;
+            const double polarity = dither.events[e].polarity;
+            bool valid_window = true;
+            if (center - (double)window_half < 0.0 ||
+                center + (double)window_half >
+                    (double)(sample_count - 1U)) {
+                continue;
+            }
+            for (size_t j = 0U; j < profile_count; ++j) {
+                const double position =
+                    center + (double)j - (double)window_half;
+                if (adc_cal_dither_interpolate(
+                        ra, sample_count, position, &window_a[j]) != 0 ||
+                    adc_cal_dither_interpolate(
+                        rb, sample_count, position, &window_b[j]) != 0) {
+                    valid_window = false;
+                    break;
+                }
+            }
+            if (!valid_window) continue;
+            for (size_t j = 0U; j < profile_count; ++j) {
+                joint_a[j] += polarity * window_a[j];
+                joint_b[j] += polarity * window_b[j];
+            }
+            ++total_events;
+        }
+    }
+    if (usable_frames == 0U) {
+        result->reason = ADC_CAL_SKEW_REASON_DITHER;
+        result->failure_reason = "no frame produced dither events";
+        return -5;
+    }
+    if (total_events == 0U) {
+        result->reason = ADC_CAL_SKEW_REASON_TOO_FEW_EVENTS;
+        result->failure_reason = "no complete dither events across frames";
+        return -6;
+    }
+    for (size_t j = 0U; j < profile_count; ++j) {
+        joint_a[j] /= (double)total_events;
+        joint_b[j] /= (double)total_events;
+        total_energy += joint_a[j] * joint_a[j];
+    }
+    if (total_energy <= ADC_CAL_SKEW_DERIVATIVE_ENERGY_FLOOR) {
+        result->reason = ADC_CAL_SKEW_REASON_TEMPLATE;
+        result->failure_reason =
+            "joint Channel A profile has insufficient energy";
+        return -7;
+    }
+    result->accepted_events = (uint32_t)total_events;
+    result->rejected_events = 0U;
+    return finish_profile_estimate(
+        joint_a, joint_b, template_profile, derivative_profile,
+        profile_count, config, total_energy, NAN, result);
 }

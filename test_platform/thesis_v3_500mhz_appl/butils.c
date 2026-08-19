@@ -196,6 +196,9 @@ typedef struct {
     double delay_register_active;
     double active_polarity;
     const char *status;
+    /* Selected-channel spectral SNDR/ENOB of the analysis window (dB/bits). */
+    float sndr_db;
+    float enob_bits;
 } adc_cal_timing_history_record_t;
 
 typedef struct {
@@ -245,6 +248,9 @@ typedef struct {
     float correlation;
     float rmse_codes;
     float tolerance_codes;
+    /* Selected-channel spectral SNDR/ENOB of the corrected analysis window. */
+    float sndr_db;
+    float enob_bits;
 } adc_cal_offset_capture_record_t;
 
 typedef struct {
@@ -263,6 +269,10 @@ typedef struct {
     float residual_min_codes;
     float residual_max_codes;
     const char *status;
+    /* Mean accepted-frame spectral SNDR/ENOB of the corrected analysis
+     * window (dB/bits). */
+    float sndr_db;
+    float enob_bits;
 } adc_cal_offset_history_record_t;
 
 typedef struct {
@@ -289,6 +299,9 @@ typedef struct {
     double dither_gain;
     bool dither_valid;
     const char *dither_reason;
+    /* Selected-channel spectral SNDR/ENOB of the corrected analysis window. */
+    float sndr_db;
+    float enob_bits;
 } adc_cal_gain_capture_record_t;
 
 typedef struct {
@@ -309,6 +322,9 @@ typedef struct {
     uint32_t dither_event_count;
     const char *dither_warning_reason;
     const char *status;
+    /* Mean accepted-frame spectral SNDR/ENOB of the corrected window. */
+    float sndr_db;
+    float enob_bits;
 } adc_cal_gain_history_record_t;
 
 typedef struct {
@@ -351,6 +367,16 @@ typedef struct {
     double dither_skew_ps;
     double tone_dither_disagreement_samples;
     double tone_dither_disagreement_ps;
+    /* Per-frame tone-fit SNDR/ENOB (A and B, from amplitude/rmse). */
+    double tone_a_sndr_db;
+    double tone_a_enob_bits;
+    double tone_b_sndr_db;
+    double tone_b_enob_bits;
+    /* Per-frame dither diagnostics; NAN when the estimate is unavailable. */
+    double dither_rising_skew_ps;
+    double dither_falling_skew_ps;
+    double dither_edge_disagreement_ps;
+    const char *dither_reason;
 } adc_cal_skew_capture_record_t;
 
 typedef struct {
@@ -386,6 +412,17 @@ typedef struct {
     uint32_t dither_valid_frames;
     uint32_t dither_invalid_frames;
     const char *status;
+    /* Mean accepted-frame tone-fit SNDR/ENOB (A and B). */
+    double tone_a_sndr_db;
+    double tone_a_enob_bits;
+    double tone_b_sndr_db;
+    double tone_b_enob_bits;
+    /* Cross-frame joint dither estimate for this iteration's batch
+     * (all accepted frames aggregated into one profile pair). */
+    bool dither_joint_valid;
+    double dither_joint_skew_ps;
+    double dither_joint_edge_disagreement_ps;
+    double dither_joint_tone_disagreement_ps;
 } adc_cal_skew_history_record_t;
 
 typedef struct {
@@ -539,7 +576,12 @@ static adc_cal_skew_capture_context_t g_adc_cal_skew_capture_context = {
 #define CAL_SKEW_CLOSED_LOOP_ENABLE                   1
 #endif
 #ifndef CAL_SKEW_BATCH_DIAGNOSTICS
-#define CAL_SKEW_BATCH_DIAGNOSTICS                    1
+/* Per-frame skew diagnostics print ~20 lines per frame and flood the UART
+ * (10 frames x many batches x iterations drown the earlier stage output;
+ * 2026-08-19 the gain/offset logs became unreachable).  All per-frame
+ * detail is exported in the calibration_skew_captures.csv diagnostic
+ * columns, so keep the UART summary-only by default. */
+#define CAL_SKEW_BATCH_DIAGNOSTICS                    0
 #endif
 #ifndef CAL_SKEW_MAX_ITERATIONS
 #define CAL_SKEW_MAX_ITERATIONS                       10U
@@ -613,7 +655,10 @@ static adc_cal_skew_capture_context_t g_adc_cal_skew_capture_context = {
 /* The bench analog chain disperses the injected impulse into a ~75-125
  * ADC-sample 10-90% blob; widen the dither profile aggregation window so
  * the dispersed pulse edges are not truncated by the template-sized
- * window.  Kept below half the 130-sample dither period to avoid overlap. */
+ * window.  Kept below half the 130-sample dither period to avoid overlap
+ * (the doubled-period 260-sample geometry was tested and rejected on
+ * 2026-08-19 because the wider pulse pollutes the tone fit; keep this
+ * macro matched to the waveform actually loaded on the DPG). */
 #define CAL_SKEW_DITHER_PROFILE_WINDOW_HALF           64U
 #endif
 #ifndef CAL_SKEW_DITHER_PROFILE_MASK_FRACTION
@@ -622,6 +667,16 @@ static adc_cal_skew_capture_context_t g_adc_cal_skew_capture_context = {
  * projection (2026-08-16: edge estimates blew out to -402/+216 ps).
  * Gate the projection to |template| >= 15 % of the profile peak. */
 #define CAL_SKEW_DITHER_PROFILE_MASK_FRACTION         0.15
+#endif
+#ifndef CAL_SKEW_DITHER_PROFILE_WINDOW_DETREND
+/* Per-event window linear detrending.  Offline replay showed it helps some
+ * frames (100-240 ps -> <23.1 ps) but hurts others (window nearly fills the
+ * 130-sample event period, so the linear fit absorbs pulse shoulders), and
+ * the 2026-08-19 board run with detrend=1 still reported dither-valid
+ * 0/10 on every skew iteration.  Kept OFF: the cross-frame joint estimate
+ * (adc_cal_skew_estimate_joint_frames) randomizes the same window bias
+ * across frames without this tradeoff. */
+#define CAL_SKEW_DITHER_PROFILE_WINDOW_DETREND         0U
 #endif
 #ifndef CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES
 #define CAL_SKEW_WARN_EDGE_DISAGREEMENT_SAMPLES      0.015
@@ -1743,7 +1798,10 @@ static int calibration_estimate_skew_frame(
     adc_cal_skew_polarity_t known_polarity,
     int previous_valid,
     double previous_skew_samples,
-    calibration_skew_frame_result_t *result);
+    calibration_skew_frame_result_t *result,
+    double *out_residual_a,
+    double *out_residual_b,
+    double *out_dither_template);
 static int calibration_interpolate_i16(
     const int16_t *samples,
     size_t count,
@@ -2422,7 +2480,41 @@ void handle_dma_cmd(char* line) {
         }
         XAxiDma_Resume(&dma_inst);
         xil_printf("resume completed!\r\n");
-    } else { ERR("Invalid option \"%s\" (use -r or -w or -d)", option); }
+    } else if (strcmp(option, "-burst") == 0) {
+        token = strtok(NULL, " ");
+        if (!token) { ERR("Missing burst frame count (dma -burst N)"); return; }
+        int burst_count = atoi(token);
+        if (burst_count <= 0 || burst_count > 100) {
+            ERR("Burst frame count must be 1..100.");
+            return;
+        }
+        if (adc_sweep_active)
+        {
+            ERR("DMA commands are disabled while an ADC sweep is in progress.");
+            return;
+        }
+        xil_printf("Starting %d-frame DMA burst (capture + UDP per frame)...\r\n",
+                   burst_count);
+        for (int i = 1; i <= burst_count; ++i) {
+            xil_printf("Burst frame %d/%d: capturing...\r\n", i, burst_count);
+            if (adc_capture_frame() != XST_SUCCESS) {
+                xil_printf("Burst frame %d failed; aborting burst.\r\n", i);
+                break;
+            }
+            /*
+             * adc_capture_frame() already invalidates the cache after DMA
+             * completion. Repeating it here is harmless and ensures
+             * udp_send_mem() reads the newest samples from DDR.
+             */
+            Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+            udp_send_mem();
+            xil_printf("Burst frame %d/%d transmitted\r\n", i, burst_count);
+            /* Small separation so the host receiver can finish storing the
+             * current frame before the next one arrives. */
+            usleep(100000); /* 100 ms */
+        }
+        xil_printf("DMA burst complete.\r\n");
+    } else { ERR("Invalid option \"%s\" (use -r or -w or -d or -burst)", option); }
 }
 
 void handle_mem_cmd(char* line) {

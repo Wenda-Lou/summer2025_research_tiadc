@@ -1834,3 +1834,34 @@ int adc_cal_dither_analyze(
         ADC_CAL_DITHER_ERR_NUMERICAL;
     return result->valid ? 0 : result->status;
 }
+
+int adc_cal_dither_polarize_template(
+    const double *residual_a,
+    size_t sample_count,
+    const adc_cal_dither_result_t *template_events,
+    const double *aligned_template,
+    double *polarized_template)
+{
+    if (residual_a == NULL || template_events == NULL ||
+        aligned_template == NULL || polarized_template == NULL) {
+        return -1;
+    }
+    if (template_events->accepted_events == 0U) return -2;
+    for (size_t k = 0U; k < template_events->accepted_events; ++k) {
+        const size_t start = template_events->events[k].start;
+        const size_t end = template_events->events[k].end;
+        const double template_sign = template_events->events[k].polarity;
+        double capture_sum = 0.0;
+        double capture_sign;
+        if (start >= end || end > sample_count) return -3;
+        for (size_t i = start; i < end; ++i) {
+            capture_sum += residual_a[i];
+        }
+        capture_sign = capture_sum >= 0.0 ? 1.0 : -1.0;
+        for (size_t i = start; i < end; ++i) {
+            polarized_template[i] = capture_sign * template_sign *
+                aligned_template[i];
+        }
+    }
+    return 0;
+}

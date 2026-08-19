@@ -1242,6 +1242,106 @@ static int adc_evaluate_performance_batch(
     return status == 0 && result->valid ? 0 : -5;
 }
 
+/* Cross-frame joint dither estimate state: residual buffers of the accepted
+ * frames of one skew batch plus the first frame's aligned DAC dither
+ * template.  The joint estimator aggregates all event windows across
+ * frames, which randomizes the frame-level window bias that otherwise
+ * inflates the per-frame edge disagreement (2026-08-19: 6 frames / 42
+ * events collapsed 70-350 ps per-frame disagreement to 4.7 ps and
+ * |dither - tone| to 12.4 ps). */
+static double g_joint_residual_a[
+    CAL_SKEW_BATCH_SIZE][CAL_FIXED_WINDOW_LENGTH];
+static double g_joint_residual_b[
+    CAL_SKEW_BATCH_SIZE][CAL_FIXED_WINDOW_LENGTH];
+static double g_joint_template[CAL_FIXED_WINDOW_LENGTH];
+static uint32_t g_joint_frame_count;
+static bool g_joint_template_ready;
+static adc_cal_skew_result_t g_joint_result;
+static bool g_joint_result_valid;
+static double g_joint_tone_disagreement_ps;
+
+static int calibration_run_skew_joint_estimate(
+    const calibration_skew_batch_result_t *batch,
+    double sample_rate_hz)
+{
+    const double *ptrs_a[CAL_SKEW_BATCH_SIZE];
+    const double *ptrs_b[CAL_SKEW_BATCH_SIZE];
+    adc_cal_skew_config_t joint_config;
+    const uint32_t count = g_joint_frame_count;
+
+    if (count < 2U || !g_joint_template_ready ||
+        batch == NULL || !isfinite(sample_rate_hz) ||
+        sample_rate_hz <= 0.0) {
+        g_joint_result_valid = false;
+        return -1;
+    }
+    for (uint32_t i = 0U; i < count; ++i) {
+        ptrs_a[i] = g_joint_residual_a[i];
+        ptrs_b[i] = g_joint_residual_b[i];
+    }
+    adc_cal_skew_default_config(&joint_config);
+    joint_config.minimum_events = 3U;
+    joint_config.sample_rate_hz = sample_rate_hz;
+    joint_config.max_linear_skew_samples =
+        CAL_SKEW_MAX_LINEAR_SKEW_SAMPLES;
+    joint_config.max_edge_disagreement_samples =
+        CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES;
+    joint_config.profile_window_half_samples =
+        CAL_SKEW_DITHER_PROFILE_WINDOW_HALF;
+    joint_config.profile_mask_amplitude_fraction = 0.0;
+    joint_config.profile_window_detrend = 0U;
+    g_joint_result_valid = false;
+    if (adc_cal_skew_estimate_joint_frames(
+            ptrs_a, ptrs_b, g_joint_template,
+            CAL_FIXED_WINDOW_LENGTH, count,
+            &joint_config, &g_joint_result) != 0 ||
+        !g_joint_result.valid) {
+        return -2;
+    }
+    /* A produced estimate is not a passing cross-check: the joint result
+     * only counts as VALID when the estimator itself passed (no
+     * EDGE_DISAGREEMENT / OUTSIDE_LINEAR_RANGE warning) AND the joint
+     * dither skew agrees with the batch tone median inside the same gate
+     * the per-frame cross-check uses. */
+    if (g_joint_result.status != ADC_CAL_SKEW_STATUS_PASS) {
+        return -2;
+    }
+    g_joint_result_valid = true;
+    g_joint_tone_disagreement_ps =
+        fabs(g_joint_result.relative_skew_samples -
+             batch->final_relative_skew_samples) *
+        1.0e12 / sample_rate_hz;
+    if (g_joint_tone_disagreement_ps >
+        CAL_SKEW_MAX_EDGE_DISAGREEMENT_SAMPLES * 1.0e12 / sample_rate_hz) {
+        g_joint_result_valid = false;
+    }
+    return 0;
+}
+
+static void adc_cal_history_spectral_from_i16(
+    const int16_t *samples,
+    size_t count,
+    double sample_rate_hz,
+    float *sndr_db,
+    float *enob_bits)
+{
+    static double scratch[ADC_CAL_PERFORMANCE_MAX_SAMPLES];
+    adc_cal_perf_spectral_metrics_t metrics;
+
+    if (sndr_db != NULL) *sndr_db = NAN;
+    if (enob_bits != NULL) *enob_bits = NAN;
+    if (samples == NULL || count == 0U || sndr_db == NULL ||
+        enob_bits == NULL ||
+        count > ADC_CAL_PERFORMANCE_MAX_SAMPLES ||
+        !isfinite(sample_rate_hz) || sample_rate_hz <= 0.0) return;
+    for (size_t i = 0U; i < count; ++i) scratch[i] = (double)samples[i];
+    adc_cal_perf_spectral_reset(&metrics);
+    if (adc_cal_perf_analyze_record(
+            scratch, count, sample_rate_hz, &metrics) != 0) return;
+    *sndr_db = metrics.sndr_db;
+    *enob_bits = metrics.enob;
+}
+
 static void adc_cal_history_record_timing(
     uint32_t frame_index,
     const calibration_aligned_frame_t *frame,
@@ -1294,6 +1394,11 @@ static void adc_cal_history_record_timing(
     record->active_polarity = NAN;
     record->status = accepted ? "ACCEPTED" :
         (reason != NULL ? reason : "REJECTED");
+    adc_cal_history_spectral_from_i16(
+        frame->aligned_raw_adc_samples,
+        frame->valid_analysis_sample_count,
+        adc_get_effective_sample_rate_hz(),
+        &record->sndr_db, &record->enob_bits);
     g_adc_cal_export_available = true;
 }
 
@@ -1358,6 +1463,11 @@ static void adc_cal_history_record_offset_capture(
     record->rmse_codes = accepted ?
         frame->metrics.fitted_rmse_codes : NAN;
     record->tolerance_codes = CALIBRATION_OFFSET_TOLERANCE_CODES;
+    adc_cal_history_spectral_from_i16(
+        frame->aligned_corrected_adc_samples,
+        frame->valid_analysis_sample_count,
+        adc_get_effective_sample_rate_hz(),
+        &record->sndr_db, &record->enob_bits);
     g_adc_cal_export_available = true;
 }
 
@@ -1418,6 +1528,11 @@ static void adc_cal_history_record_gain_capture(
         dither != NULL ?
         calibration_dither_gain_reason_name(dither->reason) :
         "not evaluated";
+    adc_cal_history_spectral_from_i16(
+        frame->aligned_corrected_adc_samples,
+        frame->valid_analysis_sample_count,
+        adc_get_effective_sample_rate_hz(),
+        &record->sndr_db, &record->enob_bits);
     g_adc_cal_export_available = true;
 }
 
@@ -1457,6 +1572,26 @@ static void adc_cal_history_record_offset_iteration(
     record->residual_max_codes = batch->accepted > 0U ?
         batch->maximum : NAN;
     record->status = status != NULL ? status : "RUNNING";
+    {
+        uint32_t accepted_perf = 0U;
+        float sndr_sum = 0.0f;
+        float enob_sum = 0.0f;
+        for (uint32_t i = 0U;
+             i < g_adc_cal_export_history.offset_capture_count; ++i) {
+            const adc_cal_offset_capture_record_t *c =
+                &g_adc_cal_export_history.offset_captures[i];
+            if (c->iteration != record->iteration || !c->accepted) continue;
+            if (isfinite(c->sndr_db)) {
+                sndr_sum += c->sndr_db;
+                ++accepted_perf;
+            }
+            if (isfinite(c->enob_bits)) enob_sum += c->enob_bits;
+        }
+        record->sndr_db = accepted_perf > 0U ?
+            sndr_sum / (float)accepted_perf : NAN;
+        record->enob_bits = accepted_perf > 0U ?
+            enob_sum / (float)accepted_perf : NAN;
+    }
     g_adc_cal_export_available = true;
 }
 
@@ -1500,6 +1635,26 @@ static void adc_cal_history_record_gain_iteration(
     record->dither_warning_reason =
         calibration_dither_gain_reason_name(batch->dither_latest.reason);
     record->status = status != NULL ? status : "RUNNING";
+    {
+        uint32_t accepted_perf = 0U;
+        float sndr_sum = 0.0f;
+        float enob_sum = 0.0f;
+        for (uint32_t i = 0U;
+             i < g_adc_cal_export_history.gain_capture_count; ++i) {
+            const adc_cal_gain_capture_record_t *c =
+                &g_adc_cal_export_history.gain_captures[i];
+            if (c->iteration != record->iteration || !c->accepted) continue;
+            if (isfinite(c->sndr_db)) {
+                sndr_sum += c->sndr_db;
+                ++accepted_perf;
+            }
+            if (isfinite(c->enob_bits)) enob_sum += c->enob_bits;
+        }
+        record->sndr_db = accepted_perf > 0U ?
+            sndr_sum / (float)accepted_perf : NAN;
+        record->enob_bits = accepted_perf > 0U ?
+            enob_sum / (float)accepted_perf : NAN;
+    }
     g_adc_cal_export_available = true;
 }
 
@@ -1594,6 +1749,41 @@ static void adc_cal_history_record_skew_capture(
     record->tone_dither_disagreement_ps =
         result->dither_crosscheck_valid ?
         result->tone_dither_disagreement_samples * ps_per_sample : NAN;
+    record->tone_a_sndr_db = NAN;
+    record->tone_a_enob_bits = NAN;
+    record->tone_b_sndr_db = NAN;
+    record->tone_b_enob_bits = NAN;
+    if (result->channel[0].tone.valid) {
+        double sndr = NAN;
+        double enob = NAN;
+        if (adc_cal_perf_sndr_enob_from_tone_fit(
+                result->channel[0].tone.amplitude,
+                result->channel[0].tone.rmse, &sndr, &enob) == 0) {
+            record->tone_a_sndr_db = sndr;
+            record->tone_a_enob_bits = enob;
+        }
+    }
+    if (result->channel[1].tone.valid) {
+        double sndr = NAN;
+        double enob = NAN;
+        if (adc_cal_perf_sndr_enob_from_tone_fit(
+                result->channel[1].tone.amplitude,
+                result->channel[1].tone.rmse, &sndr, &enob) == 0) {
+            record->tone_b_sndr_db = sndr;
+            record->tone_b_enob_bits = enob;
+        }
+    }
+    record->dither_rising_skew_ps =
+        result->dither_channel_a_valid ?
+        result->relative_rising_skew_samples * ps_per_sample : NAN;
+    record->dither_falling_skew_ps =
+        result->dither_channel_a_valid ?
+        result->relative_falling_skew_samples * ps_per_sample : NAN;
+    record->dither_edge_disagreement_ps =
+        result->dither_channel_a_valid ?
+        result->edge_disagreement_ps : NAN;
+    record->dither_reason = result->dither_crosscheck_reason != NULL ?
+        result->dither_crosscheck_reason : "not evaluated";
     g_adc_cal_export_available = true;
 }
 
@@ -1669,6 +1859,39 @@ static void adc_cal_history_record_skew_iteration(
         saturated ? "SATURATED" :
         applied_steps != 0 ? "UPDATED" :
         consecutive_passes > 0U ? "PASS" : "NO_EFFECTIVE_STEP";
+    {
+        uint32_t accepted_perf = 0U;
+        double sndr_a_sum = 0.0;
+        double enob_a_sum = 0.0;
+        double sndr_b_sum = 0.0;
+        double enob_b_sum = 0.0;
+        for (uint32_t i = 0U;
+             i < g_adc_cal_export_history.skew_capture_count; ++i) {
+            const adc_cal_skew_capture_record_t *c =
+                &g_adc_cal_export_history.skew_captures[i];
+            if (c->iteration != record->iteration || !c->accepted) continue;
+            if (isfinite(c->tone_a_sndr_db)) sndr_a_sum += c->tone_a_sndr_db;
+            if (isfinite(c->tone_a_enob_bits)) enob_a_sum += c->tone_a_enob_bits;
+            if (isfinite(c->tone_b_sndr_db)) sndr_b_sum += c->tone_b_sndr_db;
+            if (isfinite(c->tone_b_enob_bits)) enob_b_sum += c->tone_b_enob_bits;
+            ++accepted_perf;
+        }
+        record->tone_a_sndr_db = accepted_perf > 0U ?
+            sndr_a_sum / (double)accepted_perf : NAN;
+        record->tone_a_enob_bits = accepted_perf > 0U ?
+            enob_a_sum / (double)accepted_perf : NAN;
+        record->tone_b_sndr_db = accepted_perf > 0U ?
+            sndr_b_sum / (double)accepted_perf : NAN;
+        record->tone_b_enob_bits = accepted_perf > 0U ?
+            enob_b_sum / (double)accepted_perf : NAN;
+    }
+    record->dither_joint_valid = g_joint_result_valid;
+    record->dither_joint_skew_ps = g_joint_result_valid ?
+        g_joint_result.relative_skew_samples * ps_per_sample : NAN;
+    record->dither_joint_edge_disagreement_ps = g_joint_result_valid ?
+        g_joint_result.edge_disagreement_samples * ps_per_sample : NAN;
+    record->dither_joint_tone_disagreement_ps = g_joint_result_valid ?
+        g_joint_tone_disagreement_ps : NAN;
     g_adc_cal_export_available = true;
 }
 
@@ -1754,7 +1977,7 @@ static bool adc_store_timing_captures_csv(void)
         "delay_register_active,active_polarity,integer_lag_samples,fractional_lag_samples,total_lag_samples,"
         "correlation,expected_tone_frequency_hz,fitted_tone_frequency_hz,tone_frequency_error_hz,"
         "tone_rmse_codes,tone_correlation,dither_valid,dither_peak,dither_lag_samples,"
-        "selected_dac_adc_ratio,selected_as_reference\r\n";
+        "selected_dac_adc_ratio,selected_as_reference,sndr_db,enob_bits\r\n";
 
     if (g_adc_cal_export_history.timing_count == 0U ||
         !adc_cal_export_begin(header)) return false;
@@ -1788,8 +2011,11 @@ static bool adc_store_timing_captures_csv(void)
             !adc_cal_export_field(r->dither_peak) ||
             !adc_cal_export_field(r->dither_lag_samples) ||
             !adc_cal_export_field(r->selected_reference_ratio) ||
-            !adc_cal_export_append("%u\r\n",
-                r->selected_reference_frame ? 1U : 0U)) return false;
+            !adc_cal_export_append("%u,",
+                r->selected_reference_frame ? 1U : 0U) ||
+            !adc_cal_export_field(r->sndr_db) ||
+            !adc_cal_export_field(r->enob_bits) ||
+            !adc_cal_export_append("\r\n")) return false;
     }
     return true;
 }
@@ -1910,7 +2136,7 @@ static bool adc_store_offset_captures_csv(void)
         "channel,canonical_phase,offset_correction_active_codes,gain_correction_active,"
         "delay_register_active,active_polarity,"
         "measured_offset_residual_codes,fit_offset_codes,correlation,rmse_codes,"
-        "filtered_residual_at_iteration_start,tolerance_codes\r\n";
+        "filtered_residual_at_iteration_start,tolerance_codes,sndr_db,enob_bits\r\n";
 
     if (g_adc_cal_export_history.offset_capture_count == 0U ||
         !adc_cal_export_begin(header)) return false;
@@ -1940,6 +2166,9 @@ static bool adc_store_offset_captures_csv(void)
             !adc_cal_export_field(r->rmse_codes) ||
             !adc_cal_export_field(r->filtered_residual_at_iteration_start) ||
             !adc_cal_export_number(r->tolerance_codes) ||
+            !adc_cal_export_append(",") ||
+            !adc_cal_export_field(r->sndr_db) ||
+            !adc_cal_export_field(r->enob_bits) ||
             !adc_cal_export_append("\r\n")) return false;
     }
     return true;
@@ -1950,7 +2179,8 @@ static bool adc_store_offset_iterations_csv(void)
     static const char header[] =
         "stage,iteration,accepted_frames,rejected_frames,raw_batch_residual,"
         "filtered_batch_residual,correction_before,correction_after,correction_delta,"
-        "residual_std,residual_min,residual_max,tolerance,pass_count,required_passes,status\r\n";
+        "residual_std,residual_min,residual_max,tolerance,pass_count,required_passes,"
+        "status,sndr_db,enob_bits\r\n";
 
     if (g_adc_cal_export_history.offset_count == 0U ||
         !adc_cal_export_begin(header)) return false;
@@ -1970,9 +2200,12 @@ static bool adc_store_offset_iterations_csv(void)
             !adc_cal_export_field(r->residual_min_codes) ||
             !adc_cal_export_field(r->residual_max_codes) ||
             !adc_cal_export_field(r->tolerance_codes) ||
-            !adc_cal_export_append("%lu,%lu,%s\r\n",
+            !adc_cal_export_append("%lu,%lu,%s,",
                 (unsigned long)r->consecutive_passes,
-                (unsigned long)r->required_passes, r->status)) return false;
+                (unsigned long)r->required_passes, r->status) ||
+            !adc_cal_export_field(r->sndr_db) ||
+            !adc_cal_export_field(r->enob_bits) ||
+            !adc_cal_export_append("\r\n")) return false;
     }
     return true;
 }
@@ -1984,7 +2217,8 @@ static bool adc_store_gain_captures_csv(void)
         "physical_adc_rate_hz,configured_dac_rate_hz,reference_rate_compensation,"
         "channel,canonical_phase,offset_correction_active_codes,gain_correction_active,"
         "delay_register_active,active_polarity,"
-        "measured_gain,gain_error,correlation,rmse_codes,dither_gain,dither_valid,dither_reason\r\n";
+        "measured_gain,gain_error,correlation,rmse_codes,dither_gain,dither_valid,"
+        "dither_reason,sndr_db,enob_bits\r\n";
 
     if (g_adc_cal_export_history.gain_capture_count == 0U ||
         !adc_cal_export_begin(header)) return false;
@@ -2013,8 +2247,11 @@ static bool adc_store_gain_captures_csv(void)
             !adc_cal_export_field(r->correlation) ||
             !adc_cal_export_field(r->rmse_codes) ||
             !adc_cal_export_field(r->dither_gain) ||
-            !adc_cal_export_append("%u,%s\r\n",
-                r->dither_valid ? 1U : 0U, r->dither_reason)) return false;
+            !adc_cal_export_append("%u,%s,",
+                r->dither_valid ? 1U : 0U, r->dither_reason) ||
+            !adc_cal_export_field(r->sndr_db) ||
+            !adc_cal_export_field(r->enob_bits) ||
+            !adc_cal_export_append("\r\n")) return false;
     }
     return true;
 }
@@ -2025,7 +2262,7 @@ static bool adc_store_gain_iterations_csv(void)
         "stage,iteration,accepted_frames,rejected_frames,batch_gain,batch_gain_error,"
         "gain_correction_before,gain_correction_after,gain_correction_delta,tolerance,"
         "pass_count,required_passes,verification_correlation,dither_gain,dither_gain_status,"
-        "dither_event_count,dither_warning_reason,status\r\n";
+        "dither_event_count,dither_warning_reason,status,sndr_db,enob_bits\r\n";
 
     if (g_adc_cal_export_history.gain_count == 0U ||
         !adc_cal_export_begin(header)) return false;
@@ -2047,10 +2284,13 @@ static bool adc_store_gain_iterations_csv(void)
                 (unsigned long)r->required_passes) ||
             !adc_cal_export_field(r->verification_correlation) ||
             !adc_cal_export_field(r->dither_gain) ||
-            !adc_cal_export_append("%s,%lu,%s,%s\r\n",
+            !adc_cal_export_append("%s,%lu,%s,%s,",
                 r->dither_gain_status,
                 (unsigned long)r->dither_event_count,
-                r->dither_warning_reason, r->status)) return false;
+                r->dither_warning_reason, r->status) ||
+            !adc_cal_export_field(r->sndr_db) ||
+            !adc_cal_export_field(r->enob_bits) ||
+            !adc_cal_export_append("\r\n")) return false;
     }
     return true;
 }
@@ -2067,7 +2307,10 @@ static bool adc_store_skew_captures_csv(void)
         "tone_A_frequency_hz,tone_B_frequency_hz,tone_A_amplitude,tone_B_amplitude,"
         "tone_A_correlation,tone_B_correlation,tone_A_rmse,tone_B_rmse,"
         "dither_A_valid,dither_B_valid,dither_skew_valid,dither_skew_samples,dither_skew_ps,"
-        "tone_dither_disagreement_samples,tone_dither_disagreement_ps\r\n";
+        "tone_dither_disagreement_samples,tone_dither_disagreement_ps,"
+        "tone_A_sndr_db,tone_A_enob_bits,tone_B_sndr_db,tone_B_enob_bits,"
+        "dither_reason,dither_rising_skew_ps,dither_falling_skew_ps,"
+        "dither_edge_disagreement_ps\r\n";
 
     if (g_adc_cal_export_history.skew_capture_count == 0U ||
         !adc_cal_export_begin(header)) return false;
@@ -2116,6 +2359,17 @@ static bool adc_store_skew_captures_csv(void)
             !adc_cal_export_field(r->dither_skew_ps) ||
             !adc_cal_export_field(r->tone_dither_disagreement_samples) ||
             !adc_cal_export_number(r->tone_dither_disagreement_ps) ||
+            !adc_cal_export_append(",") ||
+            !adc_cal_export_field(r->tone_a_sndr_db) ||
+            !adc_cal_export_field(r->tone_a_enob_bits) ||
+            !adc_cal_export_field(r->tone_b_sndr_db) ||
+            !adc_cal_export_field(r->tone_b_enob_bits) ||
+            !adc_cal_export_append("%s,",
+                r->dither_reason != NULL ? r->dither_reason :
+                    "not evaluated") ||
+            !adc_cal_export_field(r->dither_rising_skew_ps) ||
+            !adc_cal_export_field(r->dither_falling_skew_ps) ||
+            !adc_cal_export_field(r->dither_edge_disagreement_ps) ||
             !adc_cal_export_append("\r\n")) return false;
     }
     return true;
@@ -2131,7 +2385,10 @@ static bool adc_store_skew_iterations_csv(void)
         "requested_steps,applied_steps,tolerance_samples,tolerance_ps,consecutive_passes,"
         "required_passes,estimator_valid,estimator_stable,correction_applied,saturated,"
         "dither_skew_samples,dither_skew_ps,tone_dither_disagreement_ps,"
-        "dither_valid_frames,dither_invalid_frames,status\r\n";
+        "dither_valid_frames,dither_invalid_frames,status,"
+        "tone_A_sndr_db,tone_A_enob_bits,tone_B_sndr_db,tone_B_enob_bits,"
+        "dither_joint_valid,dither_joint_skew_ps,"
+        "dither_joint_edge_disagreement_ps,dither_joint_tone_disagreement_ps\r\n";
 
     if (g_adc_cal_export_history.skew_count == 0U ||
         !adc_cal_export_begin(header)) return false;
@@ -2170,10 +2427,20 @@ static bool adc_store_skew_iterations_csv(void)
             !adc_cal_export_field(r->dither_skew_samples) ||
             !adc_cal_export_field(r->dither_skew_ps) ||
             !adc_cal_export_field(r->tone_dither_disagreement_ps) ||
-            !adc_cal_export_append("%lu,%lu,%s\r\n",
+            !adc_cal_export_append("%lu,%lu,%s,",
                 (unsigned long)r->dither_valid_frames,
                 (unsigned long)r->dither_invalid_frames,
-                r->status)) return false;
+                r->status) ||
+            !adc_cal_export_field(r->tone_a_sndr_db) ||
+            !adc_cal_export_field(r->tone_a_enob_bits) ||
+            !adc_cal_export_field(r->tone_b_sndr_db) ||
+            !adc_cal_export_field(r->tone_b_enob_bits) ||
+            !adc_cal_export_append("%u,",
+                r->dither_joint_valid ? 1U : 0U) ||
+            !adc_cal_export_field(r->dither_joint_skew_ps) ||
+            !adc_cal_export_field(r->dither_joint_edge_disagreement_ps) ||
+            !adc_cal_export_field(r->dither_joint_tone_disagreement_ps) ||
+            !adc_cal_export_append("\r\n")) return false;
     }
     return true;
 }
@@ -7270,7 +7537,10 @@ static int calibration_estimate_skew_frame(
     adc_cal_skew_polarity_t known_polarity,
     int previous_valid,
     double previous_skew_samples,
-    calibration_skew_frame_result_t *result)
+    calibration_skew_frame_result_t *result,
+    double *out_residual_a,
+    double *out_residual_b,
+    double *out_dither_template)
 {
     static double tone_a[CAL_FIXED_WINDOW_LENGTH];
     static double tone_b[CAL_FIXED_WINDOW_LENGTH];
@@ -7440,18 +7710,12 @@ static int calibration_estimate_skew_frame(
         }
         memset(capture_polarized_template, 0,
             sizeof(capture_polarized_template));
-        for (size_t k = 0U; k < template_events.accepted_events; ++k) {
-            const size_t start = template_events.events[k].start;
-            const size_t end = template_events.events[k].end;
-            const double template_sign = template_events.events[k].polarity;
-            double capture_sum = 0.0;
-            double capture_sign;
-            for (size_t i = start; i < end; ++i) capture_sum += residual_a[i];
-            capture_sign = capture_sum >= 0.0 ? 1.0 : -1.0;
-            for (size_t i = start; i < end; ++i) {
-                capture_polarized_template[i] = capture_sign * template_sign *
-                    aligned_dither_template[i];
-            }
+        if (adc_cal_dither_polarize_template(
+                residual_a, CAL_FIXED_WINDOW_LENGTH,
+                &template_events, aligned_dither_template,
+                capture_polarized_template) != 0) {
+            dither_failure_reason = "dither template polarization failed";
+            break;
         }
         adc_cal_skew_default_config(&config);
         config.minimum_events = CAL_DITHER_GAIN_MIN_COMPLETE_EVENTS;
@@ -7463,6 +7727,8 @@ static int calibration_estimate_skew_frame(
             CAL_SKEW_DITHER_PROFILE_WINDOW_HALF;
         config.profile_mask_amplitude_fraction =
             CAL_SKEW_DITHER_PROFILE_MASK_FRACTION;
+        config.profile_window_detrend =
+            CAL_SKEW_DITHER_PROFILE_WINDOW_DETREND;
         if (adc_cal_skew_estimate_from_residuals(
                 residual_a, residual_b, capture_polarized_template,
                 CAL_FIXED_WINDOW_LENGTH, &config, &shared) != 0 ||
@@ -7584,6 +7850,16 @@ static int calibration_estimate_skew_frame(
     result->channel[1].status = result->estimator_status;
     result->channel[0].reason = result->reason;
     result->channel[1].reason = result->reason;
+    if (out_residual_a != NULL && out_residual_b != NULL) {
+        memcpy(out_residual_a, residual_a,
+               sizeof(double) * CAL_FIXED_WINDOW_LENGTH);
+        memcpy(out_residual_b, residual_b,
+               sizeof(double) * CAL_FIXED_WINDOW_LENGTH);
+    }
+    if (out_dither_template != NULL && dither_estimate_available) {
+        memcpy(out_dither_template, aligned_dither_template,
+               sizeof(double) * CAL_FIXED_WINDOW_LENGTH);
+    }
     return 0;
 }
 static double calibration_median_double(     double *values, size_t count) {
@@ -8067,6 +8343,9 @@ restore_selection:
                                                                          * closed-loop initial baseline, starts without prior-frame
                                                                          * skew or polarity history. */
                                                                         memset(batch, 0, sizeof(*batch));
+                                                                        g_joint_frame_count = 0U;
+                                                                        g_joint_template_ready = false;
+                                                                        g_joint_result_valid = false;
                                                                         batch->stage_status = CAL_SKEW_STAGE_FAIL;
                                                                         batch->estimator_status = CAL_SKEW_ESTIMATOR_INVALID;
                                                                         batch->reason = CAL_SKEW_REASON_PREREQUISITE;
@@ -8116,12 +8395,20 @@ restore_selection:
                                                                             else {
                                                                                 ++batch->frames_captured;
                                                                                 ++batch->valid_paired_channel_frames;
-                                                                                if (calibration_estimate_skew_frame(
+                                                                                const int estimate_status =
+                                                                                    calibration_estimate_skew_frame(
                                                                                         channel_a, channel_b, reference,
                                                                                         timing_context,
                                                                                         CAL_SKEW_CHANNEL_B_RELATIVE_POLARITY,
                                                                                         previous_skew_valid,
-                                                                                        previous_skew_samples, &result) != 0 ||
+                                                                                        previous_skew_samples, &result,
+                                                                                        g_joint_frame_count < CAL_SKEW_BATCH_SIZE ?
+                                                                                            g_joint_residual_a[g_joint_frame_count] : NULL,
+                                                                                        g_joint_frame_count < CAL_SKEW_BATCH_SIZE ?
+                                                                                            g_joint_residual_b[g_joint_frame_count] : NULL,
+                                                                                        !g_joint_template_ready ?
+                                                                                            g_joint_template : NULL);
+                                                                                if (estimate_status != 0 ||
                                                                                     !result.valid) {
                                                                                 ++batch->rejected_frames;
                                                                                 batch->latest_frame = result;
@@ -8155,6 +8442,10 @@ restore_selection:
                                                                                 }
                                                                                 ++batch->accepted_frames;
                                                                                 batch->latest_frame = result;
+                                                                                if (g_joint_frame_count < CAL_SKEW_BATCH_SIZE) {
+                                                                                    ++g_joint_frame_count;
+                                                                                }
+                                                                                g_joint_template_ready = true;
                                                                                 if (result.selected_polarity == ADC_CAL_SKEW_POLARITY_SAME)             ++batch->same_polarity_frames;
                                                                                 else if (result.selected_polarity == ADC_CAL_SKEW_POLARITY_INVERTED)             ++batch->inverted_polarity_frames;
                                                                                 if (previous_polarity != ADC_CAL_SKEW_POLARITY_UNKNOWN &&             result.selected_polarity != previous_polarity)             ++batch->polarity_branch_changes;
@@ -8580,6 +8871,10 @@ restore_selection:
                                                                                 ADC_CAL_SKEW_HISTORY_CAPACITY) {
                                                                             const uint32_t measurement_iteration =
                                                                                 iteration - 1U;
+                                                                            (void)calibration_run_skew_joint_estimate(
+                                                                                &loop->controller_batches[
+                                                                                    measurement_iteration],
+                                                                                adc_get_effective_sample_rate_hz());
                                                                             adc_cal_history_record_skew_iteration(
                                                                                 measurement_iteration,
                                                                                 &loop->controller_batches[
@@ -8832,6 +9127,18 @@ restore_selection:
                                                                             (unsigned long)batch->frames_captured);
                                                                         xil_printf("Dither fine-skew estimate: %s\r\n", dither_crosscheck_status);
                                                                         xil_printf("Dither cross-check       : %s\r\n", dither_crosscheck_status);
+                                                                        if (g_joint_result_valid) {
+                                                                            xil_printf("Dither joint (N-frame)  : VALID, %lu frames | skew ",                    (unsigned long)g_joint_frame_count);
+                                                                            print_double_inline(g_joint_result.relative_skew_samples *                         (1.0e12 / adc_get_effective_sample_rate_hz()));
+                                                                            xil_printf(" ps | edge ");
+                                                                            print_double_inline(g_joint_result.edge_disagreement_samples *                         (1.0e12 / adc_get_effective_sample_rate_hz()));
+                                                                            xil_printf(" ps | tone diff ");
+                                                                            print_double_inline(g_joint_tone_disagreement_ps);
+                                                                            xil_printf(" ps\r\n");
+                                                                        }
+                                                                        else {
+                                                                            xil_printf("Dither joint (N-frame)  : INVALID (%lu frames)\r\n",                    (unsigned long)g_joint_frame_count);
+                                                                        }
                                                                         if (batch->dither_crosscheck_invalid_frames > 0U)         xil_printf("Dither rejection reason : %s\r\n",             !batch->latest_frame.dither_crosscheck_valid && batch->latest_frame.dither_crosscheck_reason != NULL ?                 batch->latest_frame.dither_crosscheck_reason : "one or more earlier frames rejected");
                                                                         xil_printf("Register writes          : %s\r\n",
                                                                             batch->closed_loop_enabled &&

@@ -5008,6 +5008,67 @@ static int unit_skew_estimator_direct(sim_assert_context_t *ctx)
 
         SIM_ASSERT_TRUE(ctx, sync_bias > spread_bias);
     }
+
+    /* Window-level tone-residual bias (H2 detrend, 2026-08-19): a slow
+     * sine whose phase advances 0.9375 cycles per event (the 199.375 MHz
+     * bench geometry) leaves a polarity-correlated DC/ramp inside the
+     * aggregated event windows, biasing the rising and falling derivative
+     * projections in opposite directions (measured 0.168-sample
+     * disagreement with legacy aggregation); per-event window detrending
+     * must recover the true skew and drop below the 0.03-sample gate.
+     * Detrending is only meaningful with a widened profile window (the
+     * board path uses +-64): inside a template-sized window the pulse
+     * itself is a ramp and detrending removes the signal. */
+    {
+        adc_cal_skew_config_t dc_config;
+        adc_cal_skew_result_t dc_result;
+        double disagree_legacy;
+        double disagree_detrend;
+        make_dither_template(template_samples, 256U, 32U, 4U, 10.0, 0);
+        make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
+        make_dither_residual(template_samples, b, 256U, 1.0, 0.10, 0.0, NULL);
+        for (size_t i = 0U; i < 256U; ++i) {
+            const double phase =
+                2.0 * M_PI * 0.9375 * (double)i / 130.0;
+            a[i] += 1.0 * sin(phase);
+            b[i] -= 1.0 * sin(phase + 0.3);
+        }
+        adc_cal_skew_default_config(&dc_config);
+        dc_config.minimum_events = 3U;
+        dc_config.profile_window_half_samples = 24U;
+        dc_config.profile_window_detrend = 0U;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            a, b, template_samples, 256U, &dc_config, &dc_result), 0);
+        disagree_legacy = dc_result.edge_disagreement_samples;
+        SIM_ASSERT_TRUE(ctx, disagree_legacy > 0.03);
+        dc_config.profile_window_detrend = 1U;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            a, b, template_samples, 256U, &dc_config, &dc_result), 0);
+        disagree_detrend = dc_result.edge_disagreement_samples;
+        SIM_ASSERT_TRUE(ctx, disagree_detrend < disagree_legacy);
+        SIM_ASSERT_TRUE(ctx, disagree_detrend < 0.03);
+        SIM_ASSERT_NEAR(ctx, dc_result.relative_skew_samples, 0.10, 0.02);
+        SIM_ASSERT_NEAR(ctx, dc_result.rising_skew_samples, 0.10, 0.03);
+        SIM_ASSERT_NEAR(ctx, dc_result.falling_skew_samples, 0.10, 0.03);
+    }
+
+    /* Detrending must not disturb a clean frame (no window DC) when used
+     * with the widened window it is designed for. */
+    {
+        adc_cal_skew_config_t clean_config;
+        adc_cal_skew_result_t clean_result;
+        make_dither_template(template_samples, 256U, 32U, 4U, 10.0, 0);
+        make_dither_residual(template_samples, a, 256U, 1.0, 0.0, 0.0, NULL);
+        make_dither_residual(template_samples, b, 256U, 1.0, 0.10, 0.0, NULL);
+        adc_cal_skew_default_config(&clean_config);
+        clean_config.minimum_events = 3U;
+        clean_config.profile_window_half_samples = 24U;
+        clean_config.profile_window_detrend = 1U;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            a, b, template_samples, 256U, &clean_config, &clean_result), 0);
+        SIM_ASSERT_NEAR(ctx, clean_result.relative_skew_samples, 0.10, 0.02);
+        SIM_ASSERT_TRUE(ctx, clean_result.edge_disagreement_samples < 0.03);
+    }
     return 1;
 }
 
@@ -5337,6 +5398,61 @@ static int unit_performance_estimator_direct(sim_assert_context_t *ctx)
     make_perf_tone(repeat, 800U, config.sample_rate_hz, 130000000.0,
                    1000.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, false, &rng_repeat);
     SIM_ASSERT_EQ_INT(ctx, memcmp(noisy, repeat, sizeof(noisy)), 0);
+
+    /* Stage-5 polarity self-correction (2026-08-19): when the canonical
+     * channel polarity is mislabelled (A = -1 while cal_a is in phase with
+     * the reference), the canonical correlation flips negative and the
+     * reference RMSE blows up ~40x (board: 759 vs 19 codes); the analyzer
+     * must flip both channels back (global inversion keeps A/B, spectra
+     * and matching unchanged) so correlation > 0 and RMSE stays small. */
+    {
+        double sc_cal_a[800];
+        double sc_cal_b[800];
+        double sc_reference[800];
+        double sc_raw_a[800];
+        double sc_raw_b[800];
+        adc_cal_perf_config_t pconfig;
+        adc_cal_perf_frame_result_t flipped;
+        adc_cal_perf_frame_result_t clean_frame;
+        uint32_t rng3 = 7U;
+        make_perf_tone(sc_cal_a, 800U, config.sample_rate_hz, 130000000.0,
+                       1000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, &rng3);
+        for (size_t i = 0U; i < 800U; ++i) {
+            /* physically inverted B (the Stage-4 INVERTED relation); the
+             * mislabelled polarity below is (-1, +1) although the correct
+             * normalization for this pair is (1, -1) */
+            sc_cal_b[i] = -sc_cal_a[i];
+            sc_reference[i] = sc_cal_a[i];
+            sc_raw_a[i] = sc_cal_a[i];
+            sc_raw_b[i] = -sc_cal_a[i];
+        }
+        adc_cal_perf_default_config(&pconfig);
+        pconfig.sample_count = 800U;
+        pconfig.sample_rate_hz = config.sample_rate_hz;
+        pconfig.expected_fundamental_hz = 130000000.0;
+        pconfig.canonical_channel = 0;
+        /* mislabelled canonical polarity: -1 although cal_a is in phase */
+        pconfig.channel_polarity[0] = -1.0;
+        pconfig.channel_polarity[1] = 1.0;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
+            sc_raw_a, sc_raw_b, sc_cal_a, sc_cal_b, sc_reference,
+            &pconfig, 1U, &flipped), 0);
+        SIM_ASSERT_TRUE(ctx, flipped.correlation > 0.9f);
+        SIM_ASSERT_TRUE(ctx, flipped.cal_a_reference_correlation > 0.9f);
+        SIM_ASSERT_TRUE(ctx, flipped.cal_b_reference_correlation > 0.9f);
+        SIM_ASSERT_TRUE(ctx, flipped.rmse < 5.0f);
+        /* correct labelling: same result without any flip */
+        pconfig.channel_polarity[0] = 1.0;
+        pconfig.channel_polarity[1] = -1.0;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_analyze_frame(
+            sc_raw_a, sc_raw_b, sc_cal_a, sc_cal_b, sc_reference,
+            &pconfig, 2U, &clean_frame), 0);
+        SIM_ASSERT_TRUE(ctx, clean_frame.correlation > 0.9f);
+        /* spectral metrics are sign-invariant across the self-correction */
+        SIM_ASSERT_NEAR(ctx, flipped.cal_parallel_average.sndr_db,
+                        clean_frame.cal_parallel_average.sndr_db, 1.0e-3);
+        SIM_ASSERT_NEAR(ctx, flipped.rmse, clean_frame.rmse, 1.0e-4);
+    }
     return 1;
 }
 
@@ -5395,6 +5511,206 @@ static int unit_boundary_conditions(sim_assert_context_t *ctx)
     return 1;
 }
 
+static int unit_dither_polarize_contract(sim_assert_context_t *ctx)
+{
+    /* make_dither_template polarity_mode 0 alternates: + - + - ... */
+    double template_samples[256];
+    double residual[256];
+    double polarized[256];
+    adc_cal_dither_config_t config;
+    adc_cal_dither_result_t events;
+
+    make_dither_template(template_samples, 256U, 32U, 4U, 10.0, 0);
+    make_dither_residual(template_samples, residual, 256U, 1.0, 0.0, 0.0, NULL);
+
+    adc_cal_dither_default_config(&config);
+    config.minimum_events = 3U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_events(
+        template_samples, 256U, &config, &events), 0);
+    SIM_ASSERT_TRUE(ctx, events.accepted_events >= 3U);
+
+    /* Exact-match capture: the polarized template must stay alternating
+     * (mean polarity ~0, separation denominator ~1), so the downstream
+     * polarity-balance check must NOT reject it with POLARITY. */
+    memset(polarized, 0, sizeof(polarized));
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_polarize_template(
+        residual, 256U, &events, template_samples, polarized), 0);
+    {
+        adc_cal_dither_result_t pol_events;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_events(
+            polarized, 256U, &config, &pol_events), 0);
+        SIM_ASSERT_TRUE(ctx, fabs(pol_events.mean_polarity) < 0.1);
+        SIM_ASSERT_TRUE(ctx, pol_events.separation_denominator > 0.9);
+    }
+
+    /* Globally inverted capture: still alternating, all signs flipped. */
+    make_dither_residual(template_samples, residual, 256U, -1.0, 0.0, 0.0, NULL);
+    memset(polarized, 0, sizeof(polarized));
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_polarize_template(
+        residual, 256U, &events, template_samples, polarized), 0);
+    {
+        adc_cal_dither_result_t pol_events;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_events(
+            polarized, 256U, &config, &pol_events), 0);
+        SIM_ASSERT_TRUE(ctx, fabs(pol_events.mean_polarity) < 0.1);
+        SIM_ASSERT_TRUE(ctx, pol_events.separation_denominator > 0.9);
+    }
+
+    /* Same-sign capture: event windows come from the alternating template,
+     * but every capture event sums to the same sign, so the polarized
+     * template is uniform and the balance check must reject it with
+     * POLARITY (the estimator refuses to compute a degenerate profile
+     * rather than emitting a wrong number). */
+    make_dither_template(template_samples, 256U, 32U, 4U, 10.0, 0);
+    make_dither_template(residual, 256U, 32U, 4U, 10.0, 1);
+    {
+        adc_cal_dither_result_t pol_events;
+        memset(polarized, 0, sizeof(polarized));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_polarize_template(
+            residual, 256U, &events, template_samples, polarized), 0);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_dither_find_events(
+            polarized, 256U, &config, &pol_events),
+            ADC_CAL_DITHER_ERR_POLARITY);
+    }
+
+    /* End-to-end regression: an exact match with an alternating template
+     * must estimate cleanly (PASS, ~0 skew) and never fail with POLARITY. */
+    {
+        adc_cal_skew_config_t cfg;
+        adc_cal_skew_result_t res;
+        make_dither_template(template_samples, 256U, 32U, 4U, 10.0, 0);
+        make_dither_residual(template_samples, residual, 256U, 1.0, 0.0,
+                             0.0, NULL);
+        adc_cal_skew_default_config(&cfg);
+        cfg.minimum_events = 3U;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+            residual, residual, template_samples, 256U, &cfg, &res), 0);
+        SIM_ASSERT_TRUE(ctx, res.valid);
+        SIM_ASSERT_EQ_INT(ctx, res.status, ADC_CAL_SKEW_STATUS_PASS);
+        SIM_ASSERT_NEAR(ctx, res.relative_skew_samples, 0.0, 0.01);
+    }
+
+    /* Argument guards. */
+    SIM_ASSERT_TRUE(ctx, adc_cal_dither_polarize_template(
+        NULL, 256U, &events, template_samples, polarized) != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_dither_polarize_template(
+        residual, 256U, &events, template_samples, NULL) != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_dither_polarize_template(
+        residual, 256U, NULL, template_samples, polarized) != 0);
+    return 1;
+}
+
+static int unit_perf_sndr_fit_helper(sim_assert_context_t *ctx)
+{
+    double sndr = NAN;
+    double enob = NAN;
+    /* amp=1000, rmse=10 -> signal power 5e5, noise power 1e2 ->
+     * SNDR = 10*log10(5000) = 36.9897 dB, ENOB = (SNDR - 1.76)/6.02. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_sndr_enob_from_tone_fit(
+        1000.0, 10.0, &sndr, &enob), 0);
+    SIM_ASSERT_NEAR(ctx, sndr, 10.0 * log10(5000.0), 1.0e-9);
+    SIM_ASSERT_NEAR(ctx, enob, (sndr - 1.76) / 6.02, 1.0e-9);
+    /* Monotonic: more residual noise -> lower SNDR. */
+    {
+        double sndr2 = NAN;
+        double enob2 = NAN;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_perf_sndr_enob_from_tone_fit(
+            1000.0, 20.0, &sndr2, &enob2), 0);
+        SIM_ASSERT_TRUE(ctx, sndr2 < sndr);
+        SIM_ASSERT_TRUE(ctx, enob2 < enob);
+    }
+    /* Guards: non-positive / non-finite inputs and null outputs. */
+    SIM_ASSERT_TRUE(ctx, adc_cal_perf_sndr_enob_from_tone_fit(
+        0.0, 10.0, &sndr, &enob) != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_perf_sndr_enob_from_tone_fit(
+        1000.0, 0.0, &sndr, &enob) != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_perf_sndr_enob_from_tone_fit(
+        NAN, 10.0, &sndr, &enob) != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_perf_sndr_enob_from_tone_fit(
+        1000.0, 10.0, NULL, &enob) != 0);
+    return 1;
+}
+
+static int unit_skew_joint_frames(sim_assert_context_t *ctx)
+{
+    /* Cross-frame joint aggregation: each frame carries a different-phase
+     * tone-residual-like sine bias (0.9375 cycles/event), which inflates
+     * the single-frame edge disagreement; aggregating the event windows
+     * across frames randomizes that bias and must recover the true skew
+     * (2026-08-19 board: 6 frames / 42 events -> 4.7 ps disagreement,
+     * |dither - tone| 12.4 ps). */
+    enum { FRAMES = 4U, N = 256U };
+    double frames_a[FRAMES][N];
+    double frames_b[FRAMES][N];
+    double template_samples[N];
+    const double *ptrs_a[FRAMES];
+    const double *ptrs_b[FRAMES];
+    adc_cal_skew_config_t config;
+    adc_cal_skew_result_t result;
+    double single_frame_disagreement = 0.0;
+
+    make_dither_template(template_samples, N, 32U, 4U, 10.0, 0);
+    for (size_t k = 0U; k < FRAMES; ++k) {
+        const double phase = 2.0 * M_PI * (double)k / (double)FRAMES +
+            0.17;
+        make_dither_residual(template_samples, frames_a[k], N,
+                             1.0, 0.0, 0.0, NULL);
+        make_dither_residual(template_samples, frames_b[k], N,
+                             1.0, 0.10, 0.0, NULL);
+        for (size_t i = 0U; i < N; ++i) {
+            const double angle =
+                2.0 * M_PI * 0.9375 * (double)i / 130.0 + phase;
+            frames_a[k][i] += 1.0 * sin(angle);
+            frames_b[k][i] -= 1.0 * sin(angle + 0.3);
+        }
+        ptrs_a[k] = frames_a[k];
+        ptrs_b[k] = frames_b[k];
+    }
+
+    /* Single frame 0 alone: the bias keeps the disagreement above the gate. */
+    adc_cal_skew_default_config(&config);
+    config.minimum_events = 3U;
+    config.profile_window_half_samples = 24U;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_from_residuals(
+        frames_a[0], frames_b[0], template_samples, N, &config, &result), 0);
+    single_frame_disagreement = result.edge_disagreement_samples;
+    SIM_ASSERT_TRUE(ctx, single_frame_disagreement > 0.03);
+
+    /* Joint aggregation over all four frames recovers the true skew. */
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_joint_frames(
+        ptrs_a, ptrs_b, template_samples, N, FRAMES, &config, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.valid);
+    SIM_ASSERT_EQ_INT(ctx, result.status, ADC_CAL_SKEW_STATUS_PASS);
+    SIM_ASSERT_TRUE(ctx, result.edge_disagreement_samples < 0.03);
+    SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, 0.10, 0.02);
+    SIM_ASSERT_TRUE(ctx, result.accepted_events >= FRAMES * 3U);
+
+    /* Clean frames (no bias): joint estimate stays on the true skew. */
+    for (size_t k = 0U; k < FRAMES; ++k) {
+        make_dither_residual(template_samples, frames_a[k], N,
+                             1.0, 0.0, 0.0, NULL);
+        make_dither_residual(template_samples, frames_b[k], N,
+                             1.0, 0.10, 0.0, NULL);
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_skew_estimate_joint_frames(
+        ptrs_a, ptrs_b, template_samples, N, FRAMES, &config, &result), 0);
+    SIM_ASSERT_TRUE(ctx, result.valid);
+    SIM_ASSERT_NEAR(ctx, result.relative_skew_samples, 0.10, 0.02);
+    SIM_ASSERT_TRUE(ctx, result.edge_disagreement_samples < 0.03);
+
+    /* Guards. */
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_estimate_joint_frames(
+        NULL, ptrs_b, template_samples, N, FRAMES, &config, &result) != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_estimate_joint_frames(
+        ptrs_a, ptrs_b, NULL, N, FRAMES, &config, &result) != 0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_estimate_joint_frames(
+        ptrs_a, ptrs_b, template_samples, N, 0U, &config, &result) != 0);
+    config.profile_window_half_samples = 0U;
+    SIM_ASSERT_TRUE(ctx, adc_cal_skew_estimate_joint_frames(
+        ptrs_a, ptrs_b, template_samples, N, FRAMES, &config, &result) != 0);
+    return 1;
+}
+
 static void run_unit_tests(sim_assert_context_t *ctx)
 {
     (void)unit_dma_round_trip(ctx);
@@ -5419,6 +5735,9 @@ static void run_unit_tests(sim_assert_context_t *ctx)
     (void)unit_skew_closed_loop_controller(ctx);
     (void)unit_skew_stage_policy(ctx);
     (void)unit_skew_estimator_direct(ctx);
+    (void)unit_skew_joint_frames(ctx);
+    (void)unit_dither_polarize_contract(ctx);
+    (void)unit_perf_sndr_fit_helper(ctx);
     (void)unit_performance_estimator_direct(ctx);
     (void)unit_boundary_conditions(ctx);
 }

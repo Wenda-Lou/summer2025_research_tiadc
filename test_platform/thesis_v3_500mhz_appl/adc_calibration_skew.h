@@ -461,6 +461,14 @@ typedef struct {
      * and ringing tails outside the pulse body cannot pollute the edge
      * estimates when a widened window includes them. */
     double profile_mask_amplitude_fraction;
+    /* 0 = aggregate raw event windows (legacy); 1 = remove each event
+     * window's linear trend (DC + slope) before polarity-weighted
+     * aggregation.  Board evidence (2026-08-19): residual DC/ramp inside
+     * the event windows biases the rising and falling derivative
+     * projections in opposite directions, producing edge disagreements of
+     * 100-240 ps on otherwise clean frames; per-event detrending collapses
+     * that to <23.1 ps on 2/3 replay frames. */
+    uint32_t profile_window_detrend;
 } adc_cal_skew_config_t;
 
 typedef struct {
@@ -585,6 +593,25 @@ int adc_cal_skew_estimate_from_residuals(
     const double *channel_b_residual,
     const double *dither_template,
     size_t sample_count,
+    const adc_cal_skew_config_t *config,
+    adc_cal_skew_result_t *result);
+
+/* Joint batch estimate: aggregate the dither event windows of several
+ * captured frames into one profile pair, then run the single-frame edge
+ * projections on the joint profile.  Board evidence (2026-08-19): per-frame
+ * estimates carry frame-random window-level bias that inflates the edge
+ * disagreement to 70-350 ps and makes the dither value drift by ~200 ps
+ * frame-to-frame; aggregating 42 events across 6 frames collapsed the edge
+ * disagreement to 4.7 ps and put |dither - tone| inside the 23.1 ps gate.
+ * Requires config->profile_window_half_samples > 0 (fixed symmetric
+ * window); each frame is event-detected independently against
+ * dither_template.  Returns 0 with result->valid set on success. */
+int adc_cal_skew_estimate_joint_frames(
+    const double *const *channel_a_residuals,
+    const double *const *channel_b_residuals,
+    const double *dither_template,
+    size_t sample_count,
+    size_t frame_count,
     const adc_cal_skew_config_t *config,
     adc_cal_skew_result_t *result);
 

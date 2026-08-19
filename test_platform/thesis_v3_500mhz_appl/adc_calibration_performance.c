@@ -56,6 +56,29 @@ void adc_cal_perf_default_config(adc_cal_perf_config_t *config)
     config->frame_result_capacity = 0U;
 }
 
+int adc_cal_perf_sndr_enob_from_tone_fit(
+    double amplitude_codes,
+    double rmse_codes,
+    double *sndr_db,
+    double *enob_bits)
+{
+    double sndr;
+    if (sndr_db == NULL || enob_bits == NULL) return -1;
+    *sndr_db = NAN;
+    *enob_bits = NAN;
+    if (!adc_cal_double_isfinite(amplitude_codes) ||
+        !adc_cal_double_isfinite(rmse_codes) ||
+        amplitude_codes <= DBL_EPSILON || rmse_codes <= DBL_EPSILON) {
+        return -2;
+    }
+    sndr = 10.0 * log10(0.5 * amplitude_codes * amplitude_codes /
+                        (rmse_codes * rmse_codes));
+    if (!adc_cal_double_isfinite(sndr)) return -3;
+    *sndr_db = sndr;
+    *enob_bits = (sndr - 1.76) / 6.02;
+    return 0;
+}
+
 int adc_cal_perf_resolve_channel_polarity(
     int canonical_channel,
     double canonical_reference_polarity,
@@ -463,39 +486,63 @@ int adc_cal_perf_analyze_frame(
     raw_canonical = config->canonical_channel == 0 ? raw_a : raw_b;
     normalized_cal_canonical = config->canonical_channel == 0 ?
         normalized_cal_a : normalized_cal_b;
-    for (size_t i = 0U; i < config->sample_count; ++i) {
-        normalized_cal_a[i] = config->channel_polarity[0] * cal_a[i];
-        normalized_cal_b[i] = config->channel_polarity[1] * cal_b[i];
-        const double before_polarity = config->final_gain_correction *
-            (raw_canonical[i] + config->final_offset_correction);
-        const double residual_before = before_polarity - reference[i];
-        const double a_difference = raw_a[i] - cal_a[i];
-        const double residual = normalized_cal_canonical[i] - reference[i];
-        const double residual_a = normalized_cal_a[i] - reference[i];
-        const double residual_b = normalized_cal_b[i] - reference[i];
-        const double b_difference = raw_b[i] - cal_b[i];
-        if (!adc_cal_double_isfinite(raw_a[i]) || !adc_cal_double_isfinite(raw_b[i]) ||
-            !adc_cal_double_isfinite(cal_a[i]) || !adc_cal_double_isfinite(cal_b[i]) ||
-            !adc_cal_double_isfinite(reference[i])) {
-            result->failure_reason = "non-finite performance sample";
-            return -3;
+    {
+        /* Polarity self-correction: the canonical channel's normalized cal
+         * must correlate positively with the reference.  Board evidence
+         * (2026-08-19): the Stage-4/timing channel-sign bookkeeping can
+         * disagree with the actual signal (polarity[A] = -1 while cal_a is
+         * in phase with the reference), which flipped the canonical
+         * correlation to -0.998 and inflated the reference RMSE ~40x
+         * (759 vs 19 codes).  A global two-channel flip preserves the A/B
+         * relation and leaves the spectral metrics and matching unchanged
+         * (both are sign-invariant).  NaN correlation (non-finite input)
+         * is left untouched and caught by the finite checks below. */
+        double polarity_a = config->channel_polarity[0];
+        double polarity_b = config->channel_polarity[1];
+        for (size_t i = 0U; i < config->sample_count; ++i) {
+            normalized_cal_a[i] = polarity_a * cal_a[i];
+            normalized_cal_b[i] = polarity_b * cal_b[i];
         }
-        residual_sum += residual;
-        residual_square_sum += residual * residual;
-        residual_a_square_sum += residual_a * residual_a;
-        residual_b_square_sum += residual_b * residual_b;
-        residual_before_square_sum += residual_before * residual_before;
-        raw_parallel_average[i] = 0.5 *
-            (config->channel_polarity[0] * raw_a[i] +
-             config->channel_polarity[1] * raw_b[i]);
-        cal_parallel_average[i] = 0.5 *
-            (normalized_cal_a[i] + normalized_cal_b[i]);
-        raw_cal_b_square_sum += b_difference * b_difference;
-        raw_cal_a_square_sum += a_difference * a_difference;
-        if (fabs(b_difference) > raw_cal_b_max)
-            raw_cal_b_max = fabs(b_difference);
-        if (fabs(a_difference) > raw_cal_a_max)
-            raw_cal_a_max = fabs(a_difference);
+        if (correlation(normalized_cal_canonical, reference,
+                        config->sample_count) < 0.0) {
+            polarity_a = -polarity_a;
+            polarity_b = -polarity_b;
+            for (size_t i = 0U; i < config->sample_count; ++i) {
+                normalized_cal_a[i] = -normalized_cal_a[i];
+                normalized_cal_b[i] = -normalized_cal_b[i];
+            }
+        }
+        for (size_t i = 0U; i < config->sample_count; ++i) {
+            const double before_polarity = config->final_gain_correction *
+                (raw_canonical[i] + config->final_offset_correction);
+            const double residual_before = before_polarity - reference[i];
+            const double a_difference = raw_a[i] - cal_a[i];
+            const double residual = normalized_cal_canonical[i] - reference[i];
+            const double residual_a = normalized_cal_a[i] - reference[i];
+            const double residual_b = normalized_cal_b[i] - reference[i];
+            const double b_difference = raw_b[i] - cal_b[i];
+            if (!adc_cal_double_isfinite(raw_a[i]) || !adc_cal_double_isfinite(raw_b[i]) ||
+                !adc_cal_double_isfinite(cal_a[i]) || !adc_cal_double_isfinite(cal_b[i]) ||
+                !adc_cal_double_isfinite(reference[i])) {
+                result->failure_reason = "non-finite performance sample";
+                return -3;
+            }
+            residual_sum += residual;
+            residual_square_sum += residual * residual;
+            residual_a_square_sum += residual_a * residual_a;
+            residual_b_square_sum += residual_b * residual_b;
+            residual_before_square_sum += residual_before * residual_before;
+            raw_parallel_average[i] = 0.5 *
+                (polarity_a * raw_a[i] + polarity_b * raw_b[i]);
+            cal_parallel_average[i] = 0.5 *
+                (normalized_cal_a[i] + normalized_cal_b[i]);
+            raw_cal_b_square_sum += b_difference * b_difference;
+            raw_cal_a_square_sum += a_difference * a_difference;
+            if (fabs(b_difference) > raw_cal_b_max)
+                raw_cal_b_max = fabs(b_difference);
+            if (fabs(a_difference) > raw_cal_a_max)
+                raw_cal_a_max = fabs(a_difference);
+        }
     }
     result->mean_residual =
         (float)(residual_sum / (double)config->sample_count);

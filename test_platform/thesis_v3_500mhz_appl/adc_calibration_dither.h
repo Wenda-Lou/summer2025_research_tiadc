@@ -477,6 +477,24 @@ int adc_cal_dither_analyze(
     const adc_cal_dither_config_t *config,
     adc_cal_dither_result_t *result);
 
+/* Polarize an aligned dither template event-by-event against a capture
+ * residual.  Each accepted event window is multiplied by
+ * capture_sign * template_sign, where capture_sign is the sign of the
+ * residual summed over that event's window and template_sign is the
+ * template event's own polarity.  The template sign factor cancels the
+ * template's alternation, so a capture whose events follow the template's
+ * alternating polarity sequence yields an alternating polarized template,
+ * while a capture whose events are all one sign yields a uniform template
+ * that the downstream polarity-balance check must reject (POLARITY).
+ * Only the accepted event windows are written; the caller must zero the
+ * destination first. */
+int adc_cal_dither_polarize_template(
+    const double *residual_a,
+    size_t sample_count,
+    const adc_cal_dither_result_t *template_events,
+    const double *aligned_template,
+    double *polarized_template);
+
 int adc_cal_dither_interpolate(
     const double *samples,
     size_t count,
