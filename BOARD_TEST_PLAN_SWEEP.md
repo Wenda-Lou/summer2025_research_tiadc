@@ -14,6 +14,7 @@
 | Amplitude | 500 LSB 最佳；250 LSB 接近下限；750 LSB 以上检测下降 |
 | Pulse width | 窄到 12 DAC（6 ADC samples）仍 ~98% 可检测 |
 | Duty / sparsity | 周期 520 DAC 开始不稳；1040 DAC 完全失效 |
+| Frequency-aware period | 精确 300 MHz 已由工具生成配置，模拟器验证通过 |
 
 ---
 
@@ -69,6 +70,14 @@ DPG 设置：
 | ★★☆ | p1040_e16t32 | `calibration_out/pulse_sweep/pulse_p1040_e16t32.txt` | 预期失效，检测 ~0% |
 | ☆☆☆ | p1040_e8t8 | `calibration_out/pulse_sweep/pulse_p1040_e8t8.txt` | 预期失效，检测 ~0% |
 
+### Phase D — Frequency-Aware Period 验证（可选，能力验证）
+
+| 优先级 | Label | 波形文件 | 模拟器预期 |
+|---|---|---|---|
+| ★★☆ | freq300 | `calibration_out/freq_aware_300/freq_aware_300MHz.txt` | 精确 300 MHz，`adc -cal` 完整跑通，事件检测正常 |
+
+这个 run 用于验证 frequency-aware period 在真实硬件上可用，不是当前论文主线必需项。台架时间充裕时补跑。
+
 ---
 
 ## 4. 最少必跑组合（台架时间紧时）
@@ -86,6 +95,12 @@ p520_e16t32（稀疏对照）
 ```
 
 这 7 个已经能覆盖两个维度的主要 trade-off。
+
+如果时间允许，加第 8 个：
+
+```text
+freq300   （frequency-aware 300 MHz 能力验证）
+```
 
 ---
 
@@ -130,3 +145,6 @@ p520_e16t32（稀疏对照）
 - Pulse 详细操作：`calibration_out/pulse_sweep/BENCH_OPERATION.md`
 - Amplitude 模拟器结果：`AMPLITUDE_SWEEP_RESULTS.md`
 - Pulse 模拟器结果：`PULSE_SWEEP_RESULTS.md`
+- Frequency-aware period 工具：`calibration_loop/frequency_aware_period.py`
+- Frequency-aware 说明：`FREQUENCY_AWARE_PERIOD.md`
+- 300 MHz 波形：`calibration_out/freq_aware_300/`
