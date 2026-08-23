@@ -1,0 +1,20 @@
+{
+  "target_hz": 300000000.0,
+  "best": {
+    "target_hz": 300000000.0,
+    "actual_hz": 300000000.0,
+    "freq_error_hz": 0.0,
+    "n_dac_points": 16640,
+    "dither_period_dac": 640,
+    "dither_position_dac": 288,
+    "dither_edge_dac": 16,
+    "dither_top_dac": 32,
+    "events_per_loop": 26,
+    "slot_period_adc": 320,
+    "pulse_len_dac": 64,
+    "duty_cycle": 0.1,
+    "cycles_per_event": 73.84615384615384,
+    "coherence": 0.11806080342044868,
+    "sig_cycles": 1920
+  }
+}
