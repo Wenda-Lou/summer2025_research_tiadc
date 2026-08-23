@@ -1,0 +1,110 @@
+{
+  "created": "2026-08-22 23:31:40",
+  "runs": [
+    {
+      "amplitude_lsb": 250.0,
+      "reference": "D:\\TIADC\\summer2025_research_tiadc\\calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a250.txt",
+      "timing_correlation_mean": 0.9994983000000001,
+      "timing_tone_rmse_mean": 10.1469324,
+      "timing_accepted_rate": 1.0,
+      "offset_final_correction_codes": 5.225815,
+      "gain_final_correction": 0.976994,
+      "raw_skew_baseline_mean_ps": -49.1921907,
+      "final_skew_ps": -5.209838,
+      "final_offset_codes": 5.225815,
+      "final_gain": 0.976994,
+      "performance_valid": "1",
+      "dither": {
+        "skew_capture_rows": 130,
+        "dither_A_valid_rate": 0.9846153846153847,
+        "dither_B_valid_rate": 0.9846153846153847,
+        "dither_skew_valid_rate": 0.0
+      },
+      "skew_iteration_count": 4
+    },
+    {
+      "amplitude_lsb": 500.0,
+      "reference": "D:\\TIADC\\summer2025_research_tiadc\\calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a500.txt",
+      "timing_correlation_mean": 0.9994465,
+      "timing_tone_rmse_mean": 10.6516656,
+      "timing_accepted_rate": 1.0,
+      "offset_final_correction_codes": 5.228019,
+      "gain_final_correction": 0.976965,
+      "raw_skew_baseline_mean_ps": -49.1937708,
+      "final_skew_ps": -5.208716,
+      "final_offset_codes": 5.228019,
+      "final_gain": 0.976965,
+      "performance_valid": "1",
+      "dither": {
+        "skew_capture_rows": 130,
+        "dither_A_valid_rate": 1.0,
+        "dither_B_valid_rate": 1.0,
+        "dither_skew_valid_rate": 0.0
+      },
+      "skew_iteration_count": 4
+    },
+    {
+      "amplitude_lsb": 750.0,
+      "reference": "D:\\TIADC\\summer2025_research_tiadc\\calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a750.txt",
+      "timing_correlation_mean": 0.9993603,
+      "timing_tone_rmse_mean": 11.4046476,
+      "timing_accepted_rate": 1.0,
+      "offset_final_correction_codes": 5.729809,
+      "gain_final_correction": 1.01572,
+      "raw_skew_baseline_mean_ps": -49.2161096,
+      "final_skew_ps": -5.187477,
+      "final_offset_codes": 5.729809,
+      "final_gain": 1.01572,
+      "performance_valid": "1",
+      "dither": {
+        "skew_capture_rows": 130,
+        "dither_A_valid_rate": 0.8384615384615385,
+        "dither_B_valid_rate": 0.8384615384615385,
+        "dither_skew_valid_rate": 0.0
+      },
+      "skew_iteration_count": 4
+    },
+    {
+      "amplitude_lsb": 1000.0,
+      "reference": "D:\\TIADC\\summer2025_research_tiadc\\calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a1000.txt",
+      "timing_correlation_mean": 0.9992398,
+      "timing_tone_rmse_mean": 12.3340745,
+      "timing_accepted_rate": 1.0,
+      "offset_final_correction_codes": 5.521665,
+      "gain_final_correction": 0.963663,
+      "raw_skew_baseline_mean_ps": -56.5433058,
+      "final_skew_ps": 5.565015,
+      "final_offset_codes": 5.521665,
+      "final_gain": 0.963663,
+      "performance_valid": "1",
+      "dither": {
+        "skew_capture_rows": 150,
+        "dither_A_valid_rate": 0.8133333333333334,
+        "dither_B_valid_rate": 0.8133333333333334,
+        "dither_skew_valid_rate": 0.006666666666666667
+      },
+      "skew_iteration_count": 6
+    },
+    {
+      "amplitude_lsb": 2000.0,
+      "reference": "D:\\TIADC\\summer2025_research_tiadc\\calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a2000.txt",
+      "timing_correlation_mean": 0.9984165,
+      "timing_tone_rmse_mean": 16.915948,
+      "timing_accepted_rate": 1.0,
+      "offset_final_correction_codes": 5.763622,
+      "gain_final_correction": 0.960545,
+      "raw_skew_baseline_mean_ps": -54.3849499,
+      "final_skew_ps": -4.9265,
+      "final_offset_codes": 5.763622,
+      "final_gain": 0.960545,
+      "performance_valid": "1",
+      "dither": {
+        "skew_capture_rows": 70,
+        "dither_A_valid_rate": 0.7,
+        "dither_B_valid_rate": 0.7,
+        "dither_skew_valid_rate": 0.0
+      },
+      "skew_iteration_count": 2
+    }
+  ]
+}

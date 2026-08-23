@@ -52,7 +52,7 @@ BASELINE = dict(
     seed=20260725,
 )
 
-DEFAULT_AMPLITUDES_LSB = [500.0, 1000.0, 2000.0, 3000.0, 4000.0]
+DEFAULT_AMPLITUDES_LSB = [250.0, 500.0, 750.0, 1000.0, 2000.0]
 
 
 def board_cfg(amplitude_lsb: float) -> DitherConfig:
