@@ -7,7 +7,7 @@ This matches the current bench baseline waveform:
     fs_adc          = 1.300 GSPS
     dither period   = 260 DAC samples = 130 ADC samples
     pulse geometry  = 16/32/16 DAC samples (raised cosine)
-    tone            = 199.375 MHz (coherent, 0.9375 cycles/event)
+    tone            = 299.375 MHz (coherent, 29.9375 cycles/event)
 
 Usage:
 
@@ -42,7 +42,7 @@ BASELINE = dict(
     fs_dac=2600.0e6,
     n_dac_points=16640,
     adc_ratio=2,
-    sig_cycles=1276,
+    sig_cycles=1916,  # 299.375 MHz coherent bin; exact 300 MHz would be 30 cycles/event and fail coherence
     amp_dbfs=-1.5,
     dither_period_dac=260,
     dither_position_dac=96,
@@ -65,7 +65,7 @@ def board_cfg(amplitude_lsb: float) -> DitherConfig:
 def generate_one(
     amplitude_lsb: float,
     out_dir: str | Path,
-    prefix: str = "sine_199p375MHz_2p6GSPS_impulse_dither",
+    prefix: str = "sine_299p375MHz_2p6GSPS_impulse_dither",
 ) -> dict:
     """Generate one DPG TXT + JSON pair for the requested dither amplitude."""
     cfg = board_cfg(amplitude_lsb)
@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--prefix",
-        default="sine_199p375MHz_2p6GSPS_impulse_dither",
+        default="sine_299p375MHz_2p6GSPS_impulse_dither",
         help="Stem prefix for generated files",
     )
     parser.add_argument(
@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> None:
             f"  python -m calibration_loop.run_calibration bench "
             f"--uart COM3 --dither-period 260 --dither-position 96 "
             f"--dither-edge 16 --dither-top 32 --dither-scale {amp} "
-            f"--sig-cycles 1276 --n-dac-points 16640 --amp-dbfs -1.5 "
+            f"--sig-cycles 1916 --n-dac-points 16640 --amp-dbfs -1.5 "
             f"--seed 20260725 --stem sweep_a{amp}"
         )
 

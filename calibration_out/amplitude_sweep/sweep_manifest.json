@@ -1,0 +1,132 @@
+{
+  "baseline": {
+    "fs_dac": 2600000000.0,
+    "n_dac_points": 16640,
+    "adc_ratio": 2,
+    "sig_cycles": 1916,
+    "amp_dbfs": -1.5,
+    "dither_period_dac": 260,
+    "dither_position_dac": 96,
+    "dither_edge_dac": 16,
+    "dither_top_dac": 32,
+    "dither_scale_lsb": 2000.0,
+    "seed": 20260725
+  },
+  "amplitudes": [
+    {
+      "amplitude_lsb": 500.0,
+      "stem": "sine_299p375MHz_2p6GSPS_impulse_dither_a500",
+      "txt": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a500.txt",
+      "json": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a500.json",
+      "n_events": 64,
+      "duty_cycle": 0.24615384615384617,
+      "clipping": false,
+      "min_sample": -28068,
+      "max_sample": 28069,
+      "tone_hz": 299375000.0,
+      "sim": {
+        "iterations": 40,
+        "rows": 40,
+        "accepted_rows": 40,
+        "gain_ratio": 1.00062133757639,
+        "offset_mismatch_codes": -0.0920465782646288,
+        "skew_mismatch_ps": -0.17715599313469,
+        "raw_sndr_db": 62.6800116565847,
+        "cal_sndr_db": 62.680011656584696,
+        "detected_rows": 40
+      }
+    },
+    {
+      "amplitude_lsb": 1000.0,
+      "stem": "sine_299p375MHz_2p6GSPS_impulse_dither_a1000",
+      "txt": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a1000.txt",
+      "json": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a1000.json",
+      "n_events": 64,
+      "duty_cycle": 0.24615384615384617,
+      "clipping": false,
+      "min_sample": -28568,
+      "max_sample": 28569,
+      "tone_hz": 299375000.0,
+      "sim": {
+        "iterations": 40,
+        "rows": 40,
+        "accepted_rows": 40,
+        "gain_ratio": 1.0003324317574702,
+        "offset_mismatch_codes": -0.08764280263214137,
+        "skew_mismatch_ps": 0.3391702845991773,
+        "raw_sndr_db": 59.4965358653606,
+        "cal_sndr_db": 59.496535865360585,
+        "detected_rows": 40
+      }
+    },
+    {
+      "amplitude_lsb": 2000.0,
+      "stem": "sine_299p375MHz_2p6GSPS_impulse_dither_a2000",
+      "txt": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a2000.txt",
+      "json": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a2000.json",
+      "n_events": 64,
+      "duty_cycle": 0.24615384615384617,
+      "clipping": false,
+      "min_sample": -29568,
+      "max_sample": 29569,
+      "tone_hz": 299375000.0,
+      "sim": {
+        "iterations": 40,
+        "rows": 40,
+        "accepted_rows": 40,
+        "gain_ratio": 1.00017692704955,
+        "offset_mismatch_codes": -0.09539806248988268,
+        "skew_mismatch_ps": 0.155004447621657,
+        "raw_sndr_db": 54.57965781332997,
+        "cal_sndr_db": 54.57965781332997,
+        "detected_rows": 40
+      }
+    },
+    {
+      "amplitude_lsb": 3000.0,
+      "stem": "sine_299p375MHz_2p6GSPS_impulse_dither_a3000",
+      "txt": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a3000.txt",
+      "json": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a3000.json",
+      "n_events": 64,
+      "duty_cycle": 0.24615384615384617,
+      "clipping": false,
+      "min_sample": -30568,
+      "max_sample": 30569,
+      "tone_hz": 299375000.0,
+      "sim": {
+        "iterations": 40,
+        "rows": 40,
+        "accepted_rows": 40,
+        "gain_ratio": 1.000107123299392,
+        "offset_mismatch_codes": -0.09439147305842042,
+        "skew_mismatch_ps": 0.07046980272534853,
+        "raw_sndr_db": 51.29018389015142,
+        "cal_sndr_db": 51.290183890151425,
+        "detected_rows": 40
+      }
+    },
+    {
+      "amplitude_lsb": 4000.0,
+      "stem": "sine_299p375MHz_2p6GSPS_impulse_dither_a4000",
+      "txt": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a4000.txt",
+      "json": "calibration_out\\amplitude_sweep\\sine_299p375MHz_2p6GSPS_impulse_dither_a4000.json",
+      "n_events": 64,
+      "duty_cycle": 0.24615384615384617,
+      "clipping": false,
+      "min_sample": -31568,
+      "max_sample": 31569,
+      "tone_hz": 299375000.0,
+      "sim": {
+        "iterations": 40,
+        "rows": 40,
+        "accepted_rows": 40,
+        "gain_ratio": 1.0000725660458023,
+        "offset_mismatch_codes": -0.09472083825394767,
+        "skew_mismatch_ps": 0.05315523567627878,
+        "raw_sndr_db": 48.86449360013187,
+        "cal_sndr_db": 48.86449360013188,
+        "detected_rows": 40
+      }
+    }
+  ]
+}
