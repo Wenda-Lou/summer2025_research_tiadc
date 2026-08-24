@@ -1,0 +1,418 @@
+Stage 1/5: Timing Alignment
+-----------------------------------------
+Waveform metadata ADC : 1300.000000 MSPS
+Waveform metadata DAC : 2600.000000 MSPS
+Waveform/hardware rates: PASS
+Frames accepted         : 10/10
+Dither-valid frames     : 10/10
+Channel                 : Channel A
+Mean correlation      : 0.998815
+Minimum correlation   : 0.998656
+Median lag            : 13.997157 samples
+Canonical phase         : ODD
+Fixed window            : 108 ... 907
+----------------------------------------
+Timing Alignment Summary
+----------------------------------------
+Existing correlation    : PASS
+Tone fit                : PASS
+Dither structural       : PASS
+Dither peak confidence  : STRONG
+Channel consistency     : PASS
+Existing/dither check   : PASS
+Window validation       : PASS
+Numerical validation    : PASS
+Overall status          : PASS
+Recommendation          : ACCEPT
+Status                  : PASS
+Pre-calibration baseline: 30 paired frames captured
+
+Stage 2/5: Offset Calibration
+-----------------------------------------
+Waveform metadata ADC : 1300.000000 MSPS
+Waveform metadata DAC : 2600.000000 MSPS
+Waveform/hardware rates: PASS
+Batch  1 | 30/30 | residual -4.757053 | filtered -4.757053 | correction +1.500000 | dither +0.378295 | delta -5.135348 | events 6 | new PASS | RUNNING
+Batch  2 | 30/30 | residual -6.265470 | filtered -5.360419 | correction +3.000000 | dither -0.200679 | delta -6.064791 | events 6 | new WARNING | RUNNING
+Batch  3 | 30/30 | residual -1.543136 | filtered -3.833506 | correction +4.341727 | dither +0.395611 | delta -1.938748 | events 6 | new WARNING | RUNNING
+Batch  4 | 30/30 | residual -1.038470 | filtered -2.715492 | correction +5.292150 | dither -0.511591 | delta -0.526879 | events 6 | new PASS | RUNNING
+Batch  5 | 30/30 | residual +1.278947 | filtered -1.117716 | correction +5.683350 | dither +0.887753 | delta +0.391194 | events 6 | new WARNING | RUNNING
+Batch  6 | 30/30 | residual +2.014822 | filtered +0.135299 | correction +5.683350 | dither +0.359849 | delta +1.654973 | events 6 | new WARNING | PASS 1/2
+Batch  7 | 30/30 | residual +2.853114 | filtered +1.222425 | correction +5.255501 | dither -0.460400 | delta +3.313514 | events 6 | new PASS | RUNNING
+Batch  8 | 30/30 | residual +2.404947 | filtered +1.695434 | correction +4.662099 | dither +0.295875 | delta +2.109072 | events 6 | new PASS | RUNNING
+Batch  9 | 30/30 | residual +0.502697 | filtered +1.218339 | correction +4.235681 | dither -0.582951 | delta +1.085648 | events 6 | new WARNING | RUNNING
+Batch 10 | 30/30 | residual +1.829572 | filtered +1.462832 | correction +3.723689 | dither +0.174840 | delta +1.654732 | events 6 | new WARNING | RUNNING
+Batch 11 | 30/30 | residual +2.078697 | filtered +1.709178 | correction +3.125477 | dither -0.196652 | delta +2.275349 | events 6 | new WARNING | RUNNING
+Batch 12 | 30/30 | residual +0.112280 | filtered +1.070419 | correction +2.750830 | dither -0.260980 | delta +0.373260 | events 6 | new PASS | RUNNING
+Batch 13 | 30/30 | residual -1.479928 | filtered +0.050280 | correction +2.750830 | dither +0.222268 | delta -1.702196 | events 6 | new WARNING | PASS 1/2
+Batch 14 | 30/30 | residual -1.315136 | filtered -0.495886 | correction +2.750830 | dither -0.691106 | delta -0.624030 | events 6 | new WARNING | PASS 2/2
+Verify 1/3 | frames 30 | residual -0.505053 | PASS
+
+Offset controller       : CONVERGED
+Existing offset loop status : PASS
+Dither estimator status     : PASS
+Verification            : PASS
+Verification frames     : 30
+Verification residual : -0.505053 codes
+Verification standard error: 1.216443 codes
+Verification correlation: 0.998097
+Offset correction     : 2.750830 codes
+Status                  : CONVERGED
+
+-----------------------------------------
+Dither-Aware Offset Diagnostic
+-----------------------------------------
+Complete events          : 6
+Discarded boundary events: 0
+Mean event polarity   : 0.000000
+Separation denominator: 1.000000
+Flat-top samples         : 21
+Existing residual     : 0.268322 codes
+Dither offset         : 0.391129 codes
+Fitted-tone DC        : 0.302313 codes
+Existing-dither delta : -0.122807 codes
+Dither-DC delta       : 0.088817 codes
+Offset-profile deviation: 0.752825 codes
+Tone fit RMSE         : 11.587877 codes
+Tone-only correlation : 0.999491
+Estimate units           : corrected ADC codes
+New estimator status     : PASS
+
+Stage 3/5: Gain Calibration
+-----------------------------------------
+Offset input status     : CONVERGED
+Fixed offset correction: 2.750830 codes
+Batch  1 | 30/30 | gain 0.971882 | dither 0.464833 | flat 0.477293 | events 6 | new WARNING | reason FIT_QUALITY | error -0.028118 | correction 1.007233 | RUNNING
+Batch  2 | 30/30 | gain 0.975795 | dither 0.454552 | flat 0.469077 | events 6 | new WARNING | reason FIT_QUALITY | error -0.024205 | correction 1.013479 | RUNNING
+Batch  3 | 30/30 | gain 0.987402 | dither 0.465113 | flat 0.479571 | events 6 | new WARNING | reason FIT_QUALITY | error -0.012598 | correction 1.016712 | RUNNING
+Batch  4 | 30/30 | gain 0.981970 | dither 0.466878 | flat 0.479495 | events 6 | new WARNING | reason FIT_QUALITY | error -0.018030 | correction 1.021379 | RUNNING
+Batch  5 | 30/30 | gain 0.993014 | dither 0.456451 | flat 0.470149 | events 5 | new WARNING | reason FIT_QUALITY | error -0.006986 | correction 1.022457 | RUNNING
+Batch  6 | 30/30 | gain 0.997580 | dither 0.467115 | flat 0.480807 | events 6 | new WARNING | reason FIT_QUALITY | error -0.002420 | correction 1.022829 | RUNNING
+Batch  7 | 30/30 | gain 0.996530 | dither 0.467384 | flat 0.481611 | events 6 | new WARNING | reason FIT_QUALITY | error -0.003470 | correction 1.023363 | RUNNING
+Batch  8 | 30/30 | gain 0.995126 | dither 0.461903 | flat 0.476533 | events 6 | new WARNING | reason FIT_QUALITY | error -0.004874 | correction 1.024115 | RUNNING
+Batch  9 | 30/30 | gain 0.995537 | dither 0.457924 | flat 0.472973 | events 6 | new WARNING | reason FIT_QUALITY | error -0.004463 | correction 1.024804 | RUNNING
+Batch 10 | 30/30 | gain 0.992342 | dither 0.465965 | flat 0.478819 | events 6 | new WARNING | reason FIT_QUALITY | error -0.007658 | correction 1.024804 | PASS 1/2
+Batch 11 | 30/30 | gain 0.997905 | dither 0.474069 | flat 0.487670 | events 5 | new WARNING | reason FIT_QUALITY | error -0.002095 | correction 1.024804 | PASS 2/2
+
+Verification            : PASS
+Verification frames     : 30
+Normalized final gain : 0.998859
+Verification error    : -0.001141
+Verification correlation: 0.998369
+Gain correction       : 1.024804
+Existing gain loop status : PASS
+Dither gain status        : WARNING
+Status                  : CONVERGED
+
+Final calibrated capture: READY (800 samples)
+Post-gain residual check: -3.053910 codes
+
+Stage 4/5: Skew Measurement and Correction
+-----------------------------------------
+Closed-loop selection   : REQUESTED
+Actuator preparation    : COMPLETED BEFORE TIMING
+Actuator readiness check: PASS
+Readiness access        : READ ONLY
+Correction writes       : ENABLED WITH READBACK
+Actuator backend        : AD9695 complementary fine delay
+-----------------------------------------
+Closed-Loop Skew Measurement Summary
+-----------------------------------------
+Reference channel        : Channel A
+Measured channel         : Channel B
+Primary estimator        : common-frequency tone phase
+Dither estimator         : independent cross-check
+Dither event detection   : VALID
+Dither events available  : 10/10
+Dither fine-skew estimate: PARTIAL
+Dither cross-check       : PARTIAL
+Dither joint (N-frame)  : INVALID (10 frames)
+Dither rejection reason : one or more earlier frames rejected
+Register writes          : ENABLED WITH READBACK
+Actuator status          : AVAILABLE
+Actuator readiness check: PASS
+Readiness access        : READ ONLY
+Correction writes       : ENABLED WITH READBACK
+Closed-loop initial baseline: -0.141753 samples
+Closed-loop initial baseline: -109.040842 ps
+Initial baseline skew std: 0.028597 samples
+Initial baseline skew std: 21.997699 ps
+Skew error/noise ratio: 4.956920
+Preferred stability limit: 19.230769 ps
+Marginal/high-noise boundary: 26.923077 ps
+Initial baseline classification: MARGINAL
+Characterization allowed: YES
+Characterization policy : CAUTIOUS
+Characterization gate   : PASS - MARGINAL BASELINE
+Characterization dispatch: baseline class MARGINAL | policy CAUTIOUS | entering probe YES
+First probe classification: STABLE
+Repeat probe classification: MARGINAL
+Response significance   : 1.5 x combined batch standard error
+Characterization uncertainty: 0.012468 samples
+Characterization uncertainty: 9.591031 ps
+Minimum clear response: 0.018703 samples
+Minimum clear response: 14.386547 ps
+Final relative skew   : -0.001992 samples
+Final relative skew   : -1.532627 ps
+Residual skew         : -0.001992 samples
+Residual skew         : -1.532627 ps
+Best relative skew    : -0.001992 samples
+Best relative skew    : -1.532627 ps
+Raw tone phase difference: 3.129248 rad
+Raw tone skew         : 2.162659 samples
+Raw tone skew         : 1663.583544 ps
+Polarity hypothesis      : INVERTED
+Applied phase adjustment: -3.141593 rad
+Corrected phase difference: -0.012345 rad
+Branch-selection reason  : previous-frame consistency
+Dither relative skew  : 0.007663 samples
+Dither relative skew  : 5.894561 ps
+Tone/dither disagreement: 12.457288 ps
+Dither rising-edge    : 5.598762 ps
+Dither falling-edge   : 6.247538 ps
+Dither edge disagreement: 0.648776 ps
+Latest measurement skew std: 2.842331 ps
+Latest measurement classification: STABLE
+Accepted frames          : 10
+Rejected frames          : 0
+Frames captured          : 10
+Valid paired channels    : 10
+Channel A tone fits      : 10
+Channel B tone fits      : 10
+Paired tone fits         : 10
+Valid phase differences  : 10
+Valid polarity branches  : 10
+Primary accepted/rejected: 10/0
+Same-polarity branches   : 0
+Inverted branches        : 10
+Polarity branch changes  : 0
+Dither estimates available: 10/10
+Dither-valid frames      : 1
+Dither-invalid frames    : 9
+Initial delay register   : 24
+Final delay register     : 34
+Total register change    : 10
+Characterization writes : 6
+Characterization restore writes: 6
+Probe amplitudes attempted: 1, 2, 4
+Successful probe amplitude: 4
+
+Probe amplitude        : 1 code
+Signed probe steps      : 1
+Baseline code           : 24
+Requested code          : 25
+Readback code #1        : 25 (PASS)
+Readback code #2        : 25 (PASS)
+Response #1           : 25.438133 ps
+Probe #1 std          : 15.399866 ps
+Probe #1 uncertainty  : 6.444973 ps
+Required response #1  : 9.667459 ps
+Significance #1         : PASS
+Baseline remeasured #1  : YES
+Resolution #1         : 25.438133 ps/code
+Response #2           : 7.618992 ps
+Probe #2 std          : 21.818002 ps
+Probe #2 uncertainty  : 8.559180 ps
+Required response #2  : 12.838770 ps
+Significance #2         : FAIL
+Baseline remeasured #2  : YES
+Resolution #2         : 7.618992 ps/code
+Repeatability           : FAIL
+Restored code           : 24
+Restore readback        : PASS
+Escalating probe        : 1 -> 2
+
+Probe amplitude        : 2 codes
+Signed probe steps      : 2
+Baseline code           : 24
+Requested code          : 26
+Readback code #1        : 26 (PASS)
+Readback code #2        : 26 (PASS)
+Response #1           : 6.390447 ps
+Probe #1 std          : 19.574647 ps
+Probe #1 uncertainty  : 8.434052 ps
+Required response #1  : 12.651078 ps
+Significance #1         : FAIL
+Baseline remeasured #1  : YES
+Resolution #1         : 3.195224 ps/code
+Response #2           : 25.672564 ps
+Probe #2 std          : 18.917650 ps
+Probe #2 uncertainty  : 8.134611 ps
+Required response #2  : 12.201916 ps
+Significance #2         : PASS
+Baseline remeasured #2  : YES
+Resolution #2         : 12.836282 ps/code
+Repeatability           : FAIL
+Restored code           : 24
+Restore readback        : PASS
+Escalating probe        : 2 -> 4
+
+Probe amplitude        : 4 codes
+Signed probe steps      : 4
+Baseline code           : 24
+Requested code          : 28
+Readback code #1        : 28 (PASS)
+Readback code #2        : 28 (PASS)
+Response #1           : 26.972658 ps
+Probe #1 std          : 17.559431 ps
+Probe #1 uncertainty  : 8.053392 ps
+Required response #1  : 12.080088 ps
+Significance #1         : PASS
+Baseline remeasured #1  : YES
+Resolution #1         : 6.743164 ps/code
+Response #2           : 35.308057 ps
+Probe #2 std          : 19.624408 ps
+Probe #2 uncertainty  : 9.591031 ps
+Required response #2  : 14.386547 ps
+Significance #2         : PASS
+Baseline remeasured #2  : YES
+Resolution #2         : 8.827014 ps/code
+Repeatability           : PASS
+Restored code           : 24
+Restore readback        : PASS
+Characterization final code restored: YES BEFORE CONTROLLER (code 24)
+Controller entered      : YES
+Actuator resolution   : 0.010121 samples/code
+Measured actuator step: 7.785089 ps/code
+Actuator polarity        : INCREASING REG INCREASES B-A
+Iterations completed     : 6
+Converged                : YES
+Saturated                : NO
+Skew measurement        : PASS - MARGINAL
+Measurement reason      : valid marginal baseline eligible for cautious characterization
+Skew estimator validity : VALID
+Skew stability          : MARGINAL
+Skew within tolerance   : YES
+Correction actuator     : AVAILABLE
+Skew correction applied : YES
+Actuator characterization: PASS
+Closed-loop correction  : PASS
+Correction reason       : none
+Correction status        : CONVERGED
+Consecutive passes       : 2/2
+Stage status             : PASS
+
+Stage 5/5: Performance Measurement
+-----------------------------------------
+Performance Measurement
+-----------------------
+Frames evaluated        : 30/30
+Sample rate             : 1300.000000 MSPS per channel
+
+Channel A (raw / calibrated):
+  SNDR raw            : 33.58 dB
+  SNDR calibrated     : 33.67 dB
+  SFDR raw            : 32.67 dB
+  SFDR calibrated     : 32.80 dB
+  THD raw             : -47.90 dB
+  THD calibrated      : -48.06 dB
+  ENOB raw            : 5.29 bits
+  ENOB calibrated     : 5.30 bits
+
+Channel B (raw / calibrated):
+  SNDR raw            : 33.90 dB
+  SNDR calibrated     : 33.65 dB
+  SFDR raw            : 33.00 dB
+  SFDR calibrated     : 32.78 dB
+  THD raw             : -48.36 dB
+  THD calibrated      : -48.18 dB
+  ENOB raw            : 5.34 bits
+  ENOB calibrated     : 5.30 bits
+
+Channel matching (Stage-4 polarity normalized):
+  Channel A normalization factor: 1.000000
+  Channel B normalization factor: -1.000000
+  Polarity source       : canonical reference sign + Stage-4 A/B relation
+  Raw A/B correlation : 0.989447
+  Cal A/B correlation : 0.999919
+  Raw A/B RMSE        : 59.988487 codes
+  Cal A/B RMSE        : 12.975026 codes
+  Raw residual/signal : -16.40 dBc
+  Cal residual/signal : -29.69 dBc
+  Raw offset mismatch : +6.240871 codes
+  Cal offset mismatch : +6.279514 codes
+  Raw B/A gain ratio  : 1.058990
+  Cal B/A gain ratio  : 0.996933
+  Raw gain mismatch   : +0.058990
+  Cal gain mismatch   : -0.003067
+  Raw relative skew B-A: -109.040842 ps
+  Cal relative skew B-A: -1.532627 ps
+  RMSE reduction      : +47.013462 codes
+  Matching improvement: +13.290861 dB
+  Matching note         : shared corrections cancel in the ratio/offset metrics; cal values are physical A/B residuals
+
+Parallel averaged output: AVAILABLE
+  Definition             : (polarity-normalized A + polarity-normalized B) / 2
+  Sample rate            : Fs_channel (bandwidth is not doubled)
+  Raw SNDR            : 33.97 dB
+  Cal SNDR            : 33.90 dB
+  Raw SFDR            : 32.83 dB
+  Cal SFDR            : 32.80 dB
+  Raw THD             : -49.55 dB
+  Cal THD             : -49.59 dB
+  Raw ENOB            : 5.35 bits
+  Cal ENOB            : 5.34 bits
+
+Interleaved/TIADC metrics: UNAVAILABLE
+Reason                  : A/B are simultaneous parallel channels
+Image spur              : UNAVAILABLE
+Raw source             : paired DMA baseline captured before Stage 4
+Cal source             : new DMA capture after Stage 4 plus stored polarity/offset/gain
+Raw/cal buffers identical: NO
+Raw/cal A identical    : NO
+Raw/cal B identical    : NO
+RMS(raw_A - cal_A)    : 30.994417 codes
+Max abs(raw_A - cal_A): 83.126602 codes
+RMS(raw_B - cal_B)    : 59.133362 codes
+Max abs(raw_B - cal_B): 124.319260 codes
+Stage 5 DMA captures  : NEW after final skew register; no software skew reapplied
+raw_A pointer          : 0x2FF940
+cal_A pointer          : 0x564980
+raw_B pointer          : 0x32E740
+cal_B pointer          : 0x566980
+
+Measurement status      : VALID
+Performance measurement: VALID
+
+=========================================
+       ADC CALIBRATION COMPLETE
+=========================================
+Channel                 : Channel A
+Timing correlation    : 0.998815
+Canonical phase         : ODD
+Analysis samples        : 800
+
+Offset correction     : 2.750830 codes
+Offset verification   : -0.505053 codes
+
+Gain correction       : 1.024804
+Normalized final gain : 0.998859
+Gain verification error: -0.001141
+
+Relative skew B-A     : -0.001992 samples
+Relative skew B-A     : -1.532627 ps
+Skew measurement       : MARGINAL
+Measurement reason     : valid marginal skew measurement
+Skew estimator validity: VALID
+Skew stability         : MARGINAL
+Skew within tolerance  : YES
+Correction actuator    : AVAILABLE
+Skew correction applied: YES
+Closed-loop correction : NOT ATTEMPTED
+Correction reason      : NOT_ATTEMPTED
+
+Performance frames      : 30
+Mean residual offset  : +0.538096 codes
+Mean RMSE             : 27.253189 codes
+Mean correlation      : 0.998297
+Parallel-average SNDR : 33.90 dB
+Parallel-average ENOB : 5.34 bits
+
+Timing                  : PASS
+Offset                  : CONVERGED
+Gain                    : CONVERGED
+Skew measurement        : PASS WITH WARNING - MARGINAL
+Performance             : VALID
+Overall calibration     : PASS
+Output usable           : YES
+=========================================
