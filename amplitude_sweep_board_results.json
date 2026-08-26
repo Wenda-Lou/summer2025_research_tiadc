@@ -1,9 +1,9 @@
 {
-  "created": "2026-08-24",
+  "created": "2026-08-25",
   "source_dir": "test_platform/thesis_v3_500mhz_appl/adc_data/calibration_exports/amplitude pulse",
   "runs": [
     {
-      "run": "calibration_run_20260824_150450",
+      "label": "a250",
       "amplitude_lsb": 250,
       "timing_correlation_mean": 0.9999305,
       "tone_rmse_codes_mean": 4.8255426,
@@ -17,7 +17,7 @@
       "dither_skew_valid_rate": 0.005263157894736842
     },
     {
-      "run": "calibration_run_20260824_153550",
+      "label": "a500",
       "amplitude_lsb": 500,
       "timing_correlation_mean": 0.9998873,
       "tone_rmse_codes_mean": 6.1737553,
@@ -31,22 +31,21 @@
       "dither_skew_valid_rate": 0.0
     },
     {
-      "run": "calibration_run_20260824_161914",
+      "label": "a750",
       "amplitude_lsb": 750,
-      "timing_correlation_mean": 0.9997791,
-      "tone_rmse_codes_mean": 8.2102302,
-      "offset_final_correction_codes": 3.920432,
-      "gain_final_correction": 1.005642,
-      "raw_skew_baseline_mean_ps": -63.4161462,
-      "final_skew_ps": null,
-      "performance_valid": null,
-      "dither_A_valid_rate": 0.9777777777777777,
-      "dither_B_valid_rate": 0.9777777777777777,
-      "dither_skew_valid_rate": 0.011111111111111112,
-      "note": "run incomplete: no calibration_performance.csv"
+      "timing_correlation_mean": 0.9997884,
+      "tone_rmse_codes_mean": 8.5259096,
+      "offset_final_correction_codes": 5.350791,
+      "gain_final_correction": 1.011055,
+      "raw_skew_baseline_mean_ps": -101.5346498,
+      "final_skew_ps": 0.020908,
+      "performance_valid": "1",
+      "dither_A_valid_rate": 0.9947368421052631,
+      "dither_B_valid_rate": 0.9947368421052631,
+      "dither_skew_valid_rate": 0.005263157894736842
     },
     {
-      "run": "calibration_run_20260824_164839",
+      "label": "a1000",
       "amplitude_lsb": 1000,
       "timing_correlation_mean": 0.9996504,
       "tone_rmse_codes_mean": 10.7420372,
@@ -60,7 +59,7 @@
       "dither_skew_valid_rate": 0.007692307692307693
     },
     {
-      "run": "calibration_run_20260824_174932",
+      "label": "a2000",
       "amplitude_lsb": 2000,
       "timing_correlation_mean": 0.9988146,
       "tone_rmse_codes_mean": 18.713177,

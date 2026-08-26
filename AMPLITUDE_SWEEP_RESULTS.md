@@ -4,7 +4,7 @@
 参考波形在不同 dither 幅度下的系统行为。
 
 - 模拟器：`D:\TIADC\FPGA_simulator`
-- 板级数据：`test_platform/thesis_v3_500mhz_appl/adc_data/calibration_exports/amplitude pulse/`
+- 板级数据：`test_platform/thesis_v3_500mhz_appl/adc_data/calibration_exports/amplitude pulse/`（子目录 `a250` ... `a2000`）
 
 ## 配置
 
@@ -34,22 +34,20 @@
 Run 映射：
 
 ```text
-calibration_run_20260824_150450 = 250 LSB
-calibration_run_20260824_153550 = 500 LSB
-calibration_run_20260824_161914 = 750 LSB（未跑完，无 performance）
-calibration_run_20260824_164839 = 1000 LSB
-calibration_run_20260824_174932 = 2000 LSB
+amplitude pulse/a250  = 250 LSB
+amplitude pulse/a500  = 500 LSB
+amplitude pulse/a750  = 750 LSB
+amplitude pulse/a1000 = 1000 LSB
+amplitude pulse/a2000 = 2000 LSB
 ```
 
 | Amplitude (LSB) | Timing Corr | Tone RMSE (codes) | Offset Corr (codes) | Gain Corr | Final Skew (ps) | Dither A/B Valid | Dither Skew Valid | Perf Valid |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 250 | 0.99993 | 4.83 | -9.72 | 1.0041 | -4.06 | 98.4% | 0.5% | 1 |
 | 500 | 0.99989 | 6.17 | -10.82 | 1.0131 | -6.86 | 96.4% | 0% | 1 |
-| 750 | 0.99978 | 8.21 | +3.92 | 1.0056 | **N/A** | 97.8% | 1.1% | 未完成 |
+| 750 | 0.99979 | 8.53 | +5.35 | 1.0111 | +0.02 | 99.5% | 0.5% | 1 |
 | 1000 | 0.99965 | 10.74 | -10.57 | 0.9857 | -7.99 | 96.9% | 0.8% | 1 |
 | 2000 | 0.99881 | 18.71 | +2.75 | 1.0248 | -1.53 | 99.4% | 3.3% | 1 |
-
-> 注：750 LSB run 只跑到 gain 阶段，缺少 `calibration_performance.csv`，因此 `final_skew_ps` 和 `Perf Valid` 为空。
 
 ---
 
@@ -59,7 +57,7 @@ calibration_run_20260824_174932 = 2000 LSB
 |---:|---:|---:|---:|
 | 250 | 0.9995 / 0.99993 | 10.15 / 4.83 | 98.5% / 98.4% |
 | 500 | 0.9994 / 0.99989 | 10.65 / 6.17 | 100% / 96.4% |
-| 750 | 0.9994 / 0.99978 | 11.40 / 8.21 | 83.8% / 97.8% |
+| 750 | 0.9994 / 0.99979 | 11.40 / 8.53 | 83.8% / 99.5% |
 | 1000 | 0.9992 / 0.99965 | 12.33 / 10.74 | 81.3% / 96.9% |
 | 2000 | 0.9984 / 0.99881 | 16.92 / 18.71 | 70% / 99.4% |
 
@@ -98,6 +96,5 @@ calibration_run_20260824_174932 = 2000 LSB
 
 ## 6. 下一步
 
-- 补齐 750 LSB run（如果可能），获得 performance 数据；
-- 上板 pulse/duty sweep；
+- 板级 pulse/duty sweep 结果也已整理（见 `PULSE_SWEEP_RESULTS.md`）；
 - 根据板级结果更新模拟器模型（尤其是事件检测对幅度的敏感性）。
