@@ -1,0 +1,77 @@
+{
+  "created": "2026-08-24",
+  "source_dir": "test_platform/thesis_v3_500mhz_appl/adc_data/calibration_exports/amplitude pulse",
+  "runs": [
+    {
+      "run": "calibration_run_20260824_150450",
+      "amplitude_lsb": 250,
+      "timing_correlation_mean": 0.9999305,
+      "tone_rmse_codes_mean": 4.8255426,
+      "offset_final_correction_codes": -9.716521,
+      "gain_final_correction": 1.004061,
+      "raw_skew_baseline_mean_ps": -47.1980798,
+      "final_skew_ps": -4.064823,
+      "performance_valid": "1",
+      "dither_A_valid_rate": 0.9842105263157894,
+      "dither_B_valid_rate": 0.9842105263157894,
+      "dither_skew_valid_rate": 0.005263157894736842
+    },
+    {
+      "run": "calibration_run_20260824_153550",
+      "amplitude_lsb": 500,
+      "timing_correlation_mean": 0.9998873,
+      "tone_rmse_codes_mean": 6.1737553,
+      "offset_final_correction_codes": -10.822922,
+      "gain_final_correction": 1.01313,
+      "raw_skew_baseline_mean_ps": -51.8489968,
+      "final_skew_ps": -6.85925,
+      "performance_valid": "1",
+      "dither_A_valid_rate": 0.9642857142857143,
+      "dither_B_valid_rate": 0.9642857142857143,
+      "dither_skew_valid_rate": 0.0
+    },
+    {
+      "run": "calibration_run_20260824_161914",
+      "amplitude_lsb": 750,
+      "timing_correlation_mean": 0.9997791,
+      "tone_rmse_codes_mean": 8.2102302,
+      "offset_final_correction_codes": 3.920432,
+      "gain_final_correction": 1.005642,
+      "raw_skew_baseline_mean_ps": -63.4161462,
+      "final_skew_ps": null,
+      "performance_valid": null,
+      "dither_A_valid_rate": 0.9777777777777777,
+      "dither_B_valid_rate": 0.9777777777777777,
+      "dither_skew_valid_rate": 0.011111111111111112,
+      "note": "run incomplete: no calibration_performance.csv"
+    },
+    {
+      "run": "calibration_run_20260824_164839",
+      "amplitude_lsb": 1000,
+      "timing_correlation_mean": 0.9996504,
+      "tone_rmse_codes_mean": 10.7420372,
+      "offset_final_correction_codes": -10.566683,
+      "gain_final_correction": 0.985681,
+      "raw_skew_baseline_mean_ps": -72.4126672,
+      "final_skew_ps": -7.99469,
+      "performance_valid": "1",
+      "dither_A_valid_rate": 0.9692307692307692,
+      "dither_B_valid_rate": 0.9692307692307692,
+      "dither_skew_valid_rate": 0.007692307692307693
+    },
+    {
+      "run": "calibration_run_20260824_174932",
+      "amplitude_lsb": 2000,
+      "timing_correlation_mean": 0.9988146,
+      "tone_rmse_codes_mean": 18.713177,
+      "offset_final_correction_codes": 2.75083,
+      "gain_final_correction": 1.024804,
+      "raw_skew_baseline_mean_ps": -97.1503834,
+      "final_skew_ps": -1.532627,
+      "performance_valid": "1",
+      "dither_A_valid_rate": 0.9944444444444445,
+      "dither_B_valid_rate": 0.9944444444444445,
+      "dither_skew_valid_rate": 0.03333333333333333
+    }
+  ]
+}
