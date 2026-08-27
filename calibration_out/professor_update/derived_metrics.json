@@ -1,0 +1,58 @@
+{
+  "definitions": {
+    "dither_ab_valid_rate_pct": "100 times the arithmetic mean of all dither_A_valid and dither_B_valid flags in calibration_skew_captures.csv. A and B rates are equal in every included run.",
+    "duty_cycle_pct": "100 times pulse_len_dac / period_dac; a temporal occupancy derived from waveform geometry.",
+    "stage5_means": "Arithmetic means across each available calibration_performance.csv of cal_parallel_avg_sndr_db, cal_parallel_avg_sfdr_db, and cal_parallel_avg_enob."
+  },
+  "amplitude_sweep": {
+    "validity_range_pct": [
+      96.42857142857143,
+      99.47368421052632
+    ],
+    "validity_span_percentage_points": 3.0451127819548844,
+    "timing_correlation_range": [
+      0.9988146,
+      0.9999305
+    ],
+    "timing_correlation_span": 0.0011159000000000585,
+    "rmse_250_to_2000_increase_codes": 13.887634400000001,
+    "rmse_250_to_2000_ratio": 3.877942555102508,
+    "rmse_250_to_2000_increase_pct": 287.7942555102508
+  },
+  "pulse_sweep": {
+    "standard_period_validity_range_pct": [
+      98.0,
+      99.41176470588235
+    ],
+    "long_period_validity_range_pct": [
+      75.26315789473685,
+      88.23529411764706
+    ],
+    "e8t8_period_doubling_validity_drop_percentage_points": 22.736842105263154,
+    "e16t32_period_doubling_validity_drop_percentage_points": 11.139705882352946
+  },
+  "stage5_complete_runs": {
+    "count": 9,
+    "missing": [
+      "p520_e16t32"
+    ],
+    "mean_cal_parallel_sndr_db_range": [
+      33.9011087,
+      45.58020966666667
+    ],
+    "mean_cal_parallel_sfdr_db_range": [
+      32.8002705,
+      53.96454453333333
+    ],
+    "mean_cal_parallel_enob_bits_range": [
+      5.3390548,
+      7.279104833333333
+    ]
+  },
+  "provenance": {
+    "amplitude_summary": "amplitude_sweep_board_results.json",
+    "pulse_summary": "pulse_sweep_board_results.json",
+    "new_board_tests_run": false,
+    "injected_energy_metric": "Not computed: the committed artifacts provide waveform geometry and nominal DAC amplitude, but no calibrated ADC-domain injected-energy measurement for these runs."
+  }
+}
