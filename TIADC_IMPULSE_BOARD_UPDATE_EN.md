@@ -4,7 +4,7 @@ Research update for Professor Liu | 27 August 2026
 
 ## Key Takeaway
 
-Board-level sweeps show that sparse, low-amplitude impulse excitation can remain reliably detectable while introducing limited disturbance to the tone signal. Very narrow pulses are viable, but excessively sparse repetition reduces detection reliability. These results strengthen the practical impulse-injection selling point, while the previously identified gain and fine-skew limitations remain unchanged.
+Board-level sweeps show that sparse, low-amplitude impulse excitation remains reliably detectable with limited disturbance over a practical operating region. Very narrow pulses are viable, but excessively sparse repetition reduces detection reliability. These results strengthen the practical impulse-injection selling point, while the previously identified gain and fine-skew limitations remain unchanged.
 
 ## 1. Board-Level Amplitude Sweep
 

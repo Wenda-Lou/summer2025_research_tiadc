@@ -500,7 +500,7 @@ def _footer(canvas, doc) -> None:
     canvas.restoreState()
 
 
-def _generate_pdf(metrics: dict) -> None:
+def _generate_pdf() -> None:
     styles = _report_styles()
     doc = SimpleDocTemplate(
         str(PDF_PATH), pagesize=letter,
@@ -516,10 +516,11 @@ def _generate_pdf(metrics: dict) -> None:
     takeaway = Table(
         [[Paragraph(
             "<b>Key takeaway.</b> Board sweeps show that sparse, low-amplitude impulse "
-            "excitation remains reliably detectable while introducing limited tone-path "
-            "disturbance. Very narrow pulses are viable; excessively sparse repetition "
-            "reduces detection. This strengthens the practical injection operating-region "
-            "case, while the known gain and fine-skew limitations remain unchanged.",
+            "excitation remains reliably detectable with limited disturbance over a "
+            "practical operating region. Very narrow pulses are viable; excessively sparse "
+            "repetition reduces detection. This strengthens the practical injection "
+            "operating-region case, while the known gain and fine-skew limitations remain "
+            "unchanged.",
             styles["takeaway"],
         )]],
         colWidths=[7.2 * inch],
@@ -597,17 +598,9 @@ def _generate_pdf(metrics: dict) -> None:
     ):
         story.append(Paragraph(f"{index}. {question}", styles["question"]))
     story.append(Spacer(1, 2))
-    stage5 = metrics["stage5_complete_runs"]
     story.append(Paragraph(
         "Data note. All ten summary rows were independently recomputed from committed "
-        "CSV captures. Stage 5 exists for nine runs; its per-run calibrated parallel-average "
-        f"means span {stage5['mean_cal_parallel_sndr_db_range'][0]:.2f}-"
-        f"{stage5['mean_cal_parallel_sndr_db_range'][1]:.2f} dB SNDR, "
-        f"{stage5['mean_cal_parallel_sfdr_db_range'][0]:.2f}-"
-        f"{stage5['mean_cal_parallel_sfdr_db_range'][1]:.2f} dB SFDR, and "
-        f"{stage5['mean_cal_parallel_enob_bits_range'][0]:.2f}-"
-        f"{stage5['mean_cal_parallel_enob_bits_range'][1]:.2f} bits ENOB. These ranges "
-        "are reported for provenance, not as evidence of dither-based calibration.", styles["small"]))
+        "board CSV captures. No new board tests were run.", styles["small"]))
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
 
@@ -621,7 +614,7 @@ def main() -> None:
     _write_plot_data(amp, pulse)
     metrics = _write_derived_metrics(amp, pulse)
     _generate_figures(amp, pulse)
-    _generate_pdf(metrics)
+    _generate_pdf()
     print("Verified all 10 summary rows against committed raw CSV files.")
     print(f"Wrote figures/data to {OUT}")
     print(f"Wrote report PDF to {PDF_PATH}")
