@@ -41,8 +41,12 @@ DEFAULT_OUT_DIR = (
     / "adc_data"
 )
 
-# dither_replay.load_capture() expects exactly this many byte values.
+# Upper bound for the reassembled stream: the UDP path collects 8 x 512-byte datagrams,
+# while the board's DMA capture is 4095 bytes (the firmware prints "Starting DMA capture
+# of 4095 bytes"), so the last datagram is one byte short and this bound only truncates.
+# Requiring exactly 4096 here rejected every real frame.
 FRAME_BYTES = 4096
+MIN_FRAME_BYTES = 255 * 8 * 2      # 4080: 255 complete groups = 1020 samples/channel
 
 
 def capture_one_frame(rx: UdpFrameReceiver, console: UartConsole,
@@ -76,9 +80,9 @@ def save_frame(frame: bytes | None, index: int, total: int, prefix: str,
                out_dir: Path, ok_so_far: int) -> int:
     """Persist one frame as adc_capture_<prefix><timestamp>.csv; returns
     the updated success count."""
-    if frame is None or len(frame) != FRAME_BYTES:
+    if frame is None or len(frame) < MIN_FRAME_BYTES:
         print(f"frame {index}/{total}: FAILED (timeout/short frame, "
-              f"{0 if frame is None else len(frame)} bytes)")
+              f"{0 if frame is None else len(frame)} bytes, need >= {MIN_FRAME_BYTES})")
         return ok_so_far
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     name = f"adc_capture_{prefix}{stamp}.csv"

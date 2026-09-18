@@ -42,6 +42,18 @@ from the in-band tone available in the same capture.
 | residual skew | −9.72 ± 1.43 ps | batch mean, 20 frames per decision |
 | residual offset mismatch | −0.05 to −0.18 codes | signed mean; three independent routes agree |
 | residual gain mismatch at f_in | 0.076 % | applied correction ratio |
+| calibrated SNDR / SFDR, channel A | 37.14 ± 1.34 dB / 41.51 ± 1.93 dB | frames with dither alignment margin ≥ 6.5 (184 of 300) |
+
+A note on that last row, because it is a stated filter and not a silent one. The loop accepts
+a capture when its dither alignment margin exceeds 6.0, and its own observables are
+insensitive to that margin — skew, offset and gain scatter are flat as the floor moves from
+6.0 to 7.5. The *spectral* score is not: the dither has to be subtracted with
+sample-accurate alignment, so frames just above 6.0 can score up to 8 dB low. All 16 frames
+more than 3 dB below the median SNDR sit at margin 6.08–6.8, and moving the scoring floor to
+6.5 lifts the SNDR 5th percentile from 30.1 to 36.6 dB while moving the mean by only 0.25 dB.
+Reporting the ≥ 6.5 subset states the criterion rather than hiding the tail, and leaving the
+loop's own acceptance gate at 6.0 avoids discarding ~40 % more captures for no benefit to the
+loop. Figure: `calibration_out/professor_update/run3_gainfix_scored_learning.png`.
 
 The loop ran unattended for **300 qualified samples from 380 captures** (80 rejected, 21 %,
 almost all torn UDP frames), moved the delay actuator **8 codes with every firmware

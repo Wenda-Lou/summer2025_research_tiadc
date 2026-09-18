@@ -228,6 +228,48 @@ model whose pulse gains reproduce the bench's 1.2 % disagreement, the dither rou
 leaves the tone 1.18 % out with the corrected spur at -38.0 dBc, while the tone route
 nulls it and reaches **-46.9 dBc** — the model's own skew limit, 8.9 dB better.
 
+### Dither-only excitation (estimator-response test)
+
+For characterising what the impulses do *without* the in-band tone, generate a second
+waveform with the tone switched off — the geometry, polarity sequence and pulse shape are
+unchanged, so the comparison is clean:
+
+```bash
+python -m calibration_loop.run_calibration gen --out waveforms \
+    --stem impulse_dither_only --amp-dbfs -120
+```
+
+It prints `main amplitude 0 LSB` and the same 64 impulses per loop; load
+`waveforms/impulse_dither_only.txt` into DPG Downloader in place of the normal vector.
+(Verified 2026-09-17: 16640 samples, dither 2000 LSB, polarity sum 0, no clipping, seamless
+loop.)
+
+**Pass `--gain-observable dither` to anything that runs the loop with this waveform.** The
+default observable is the coherent tone ratio, and with no tone it is a noise integrator: in
+the bench model the loop collapses (1 capture accepted out of 21, offset residual tens of
+LSB) with the default, and converges normally (`gain_ratio` 1.00094, offset ~0) once the
+observable is switched. `gain_source` in the log records which one each sample used.
+
+What to expect, measured on the bench model with every other setting identical:
+
+| | tone + dither | dither only |
+|---|---|---|
+| alignment margin / de-framing | 7.58, no swaps | 7.75, no swaps |
+| offset estimate scatter | +0.668 ± 2.297 codes | +0.670 ± 2.313 codes |
+| gain estimate scatter | +1.001 ± 0.004 | +1.001 ± 0.004 |
+| **skew, tone-phase route** | +0.20 ± **0.62 ps** | +53 ± **556 ps** |
+| captures rejected by the loop | 0 % | **71 %** (96 on the skew-range gate, 51 non-finite) |
+
+So: the impulses carry alignment, offset and gain on their own, and removing the tone
+changes nothing about those three (identical scatter) — which also means the 1.2 %
+dither-vs-tone gain disagreement is a property of the pulse path, not of tone interference.
+**Skew has no usable route without the tone**, and not because of dispersion: the model has
+none, and the impulse train's spectral content at f0 is simply too small for a coherent
+phase fit. Two consequences for a dither-only session: the loop's own skew gate throws away
+about half the captures (so use `tools/dither_response_test.py`, which measures the estimator
+directly and saves the raw frames, rather than `bench`), and the timing half of the
+"known changes" test cannot be answered in this configuration — it needs the tone on.
+
 ### Then the matched control
 
 ```bash

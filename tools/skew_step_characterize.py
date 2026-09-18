@@ -143,8 +143,15 @@ def self_test(args) -> int:
     cfg = DitherConfig()
     cfg.validate()
     pop = None
-    saved = sorted(_glob.glob(os.path.join(REPO, "calibration_out", "frames100",
-                                           "frame_*.bin")))
+    # A real measured population beats a synthetic one for this verdict test, and the
+    # neutral-state captures are the documented ones (they are also the "before" half of
+    # the professor data package); frames100 was the older pre-initialization set.
+    saved = []
+    for name in ("frames_neutral", "frames100"):
+        saved = sorted(_glob.glob(os.path.join(REPO, "calibration_out", name,
+                                              "frame_*.bin")))
+        if saved:
+            break
     if saved:
         recs = []
         for path in saved:

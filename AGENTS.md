@@ -326,6 +326,23 @@ manual hardware procedures; do not attempt them without the bench.
   sign before calling a loop stalled.  Per-frame offset scatter is ~0.9-1.5 codes
   against a 3.9-code native mismatch, and `mu_offset = 0.35` settles it in ~10
   samples, so this axis needs no observable change.
+- **Dither-only excitation (what the impulses do without the tone)**: `gen --amp-dbfs -120`
+  gives a waveform with the tone at 0 LSB and the identical pulse train
+  (`waveforms/impulse_dither_only.txt`).  Anything running the loop with it **must** pass
+  `--gain-observable dither`: the default tone observable becomes a noise integrator and the
+  loop collapses (bench model: 1 of 21 captures accepted, offset residual tens of LSB),
+  whereas with the dither observable it converges (`gain_ratio` 1.00094, offset ~0).  With
+  that set, alignment, offset and gain behave **identically** to the tone+dither case
+  (offset scatter +0.670 ± 2.313 against +0.668 ± 2.297 codes; gain +1.001 ± 0.004 both) —
+  so the impulses carry those three on their own and are not disturbed by tone interference,
+  which in turn means the 1.2 % dither-vs-tone gain disagreement is a property of the pulse
+  path rather than of the tone.  **Skew has no usable route without the tone** and not
+  because of dispersion: even in the dispersion-free model the impulse train's content at f0
+  is too small for a coherent phase fit (+53 ± 556 ps against +0.20 ± 0.62 ps with the tone),
+  and the loop's own skew-range gate then rejects ~71 % of captures — use
+  `tools/dither_response_test.py`, which measures the estimator directly and saves the raw
+  frames, for a dither-only session.
+
 - **Sample accounting in the loop**: `CalibrationLoop.run(N)` collects N *qualified*
   samples.  A capture the acceptance filter rejects is logged with its reason and
   retried, so it never consumes a slot; `plot()` draws qualified rows only, so a
