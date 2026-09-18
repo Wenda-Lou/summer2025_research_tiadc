@@ -1696,7 +1696,15 @@ static void handle_adc_skew_calibration_cmd(
     bool diagnose_mode, bool closed_loop_requested);
 static void handle_adc_skew_preparation_diagnostic(
     adc_cal_skew_prep_diag_mode_t mode);
-static void handle_adc_skew_step_cmd(int requested_steps);
+static void handle_adc_skew_transaction_cmd(int requested_steps);
+/* Defined in the butils_calibration.c fragment; declared here so the command
+ * dispatcher above the include can drive the actuator transaction. */
+static int  adc_skew_actuator_verify_ready(void);
+static int  adc_skew_actuator_initialize_neutral(void);
+static bool adc_skew_actuator_available(void);
+static int  adc_skew_actuator_read_value(int *value);
+static bool adc_apply_skew_step(int adjustable_channel, int requested_steps,
+                                int *applied_steps, bool *saturated);
 static int adc_run_timing_calibration(uint32_t frame_count);
 static int adc_run_timing_calibration_conditioned(
     uint32_t frame_count,
@@ -2428,6 +2436,12 @@ void handle_dma_cmd(char* line) {
             return;
         }
         Xil_DCacheFlushRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+        /*
+         * The buffer is no longer trusted until this transfer completes: if it
+         * times out below, RxBufferPtr still holds the *previous* frame and the
+         * "udp" command would otherwise ship it as if it were new data.
+         */
+        dma_capture_invalidate();
         int res =XAxiDma_SimpleTransfer(&dma_inst, (UINTPTR) RxBufferPtr,
                         DMA_CMD_BUF_SIZE, XAXIDMA_DEVICE_TO_DMA);
 
@@ -2440,10 +2454,17 @@ void handle_dma_cmd(char* line) {
             timeout --;
             usleep(1);
         }while(timeout > 0);
-        if (busy) { xil_printf("DMA was still busy and timed out.\r\n"); }
+        if (busy) {
+            xil_printf("DMA was still busy and timed out.\r\n");
+            xil_printf("Capture INVALID: RxBuffer holds the previous frame; "
+                       "\"udp\" will refuse to send it.\r\n");
+        }
         else { 
             xil_printf("DMA Finished Successfully.\r\n"); 
             Xil_DCacheInvalidateRange((UINTPTR)RxBufferPtr, DMA_CMD_BUF_SIZE);
+            dma_capture_publish();
+            xil_printf("Capture valid, generation %lu.\r\n",
+                       (unsigned long)dma_capture_generation());
         }
         xil_printf("dma -w complete.\r\n");
     } else if (strcmp(option, "-r") == 0) {
@@ -2857,7 +2878,7 @@ void handle_adc_cmd(char* line)
                     ERR("Use adc -cal skew step +/-N.");
                     return;
                 }
-                handle_adc_skew_step_cmd((int)parsed);
+                handle_adc_skew_transaction_cmd((int)parsed);
                 return;
             }
             ERR("Use adc -cal skew [open|diagnose|closed-loop [diagnose]] or adc -cal skew step +/-N.");
@@ -3258,6 +3279,9 @@ int adc_capture_frame(void)
         DMA_CMD_BUF_SIZE
     );
 
+    /* From here until the transfer completes, the buffer is not trusted. */
+    dma_capture_invalidate();
+
     if (!g_quiet_calibration_capture)
         xil_printf("Starting DMA capture of %d bytes...\r\n",
                    DMA_CMD_BUF_SIZE);
@@ -3312,9 +3336,110 @@ int adc_capture_frame(void)
         DMA_CMD_BUF_SIZE
     );
 
+    /* Transfer completed and the cache is coherent: the buffer is fresh. */
+    dma_capture_publish();
+
     if (!g_quiet_calibration_capture) xil_printf("DMA capture complete.\r\n");
 
     return XST_SUCCESS;
+}
+
+/*
+ * Skew actuator transaction: the only supported way to move the AD9695 sample
+ * clock delay from the host.
+ *
+ * "adc -cal skew step +/-N" is routed here instead of being handled separately.
+ * The sequence:
+ *
+ *   1. The actuator must be in the verified neutral state (mode 0x04,
+ *      0x0114 = 0x60 on both channels, complementary 0x0112 pair with
+ *      raw_a + raw_b == 0xC0).  If it is not, initialize it once and re-verify.
+ *      Without 0x0114 the AD9695 capture stream stops -- the firmware says so
+ *      where the neutral code is programmed.
+ *   2. One write through the complementary 0x0112 pair with readback
+ *      verification, a single JESD reset inside the writer and clamping to the
+ *      control-code range 0..48.  That is adc_apply_skew_step(), reused rather
+ *      than reimplemented here.
+ *   3. A delay change disrupts JESD framing, so the first frame afterwards is
+ *      warm-up: capture one, discard it, and require the capture generation to
+ *      advance.  It only advances after a transfer completed and the cache was
+ *      invalidated (ethernet.c), so this is a real freshness check, not a sleep.
+ *
+ * Every outcome prints a machine-checkable "SKEW-TXN <id> result=..." line, so
+ * the host never has to infer success from a sensor reading.  Values are
+ * integers because xil_printf has no floating point; the nominal 13.8 ps per
+ * control code (4 raw steps per channel, opposite directions) is reported in
+ * tenths of a picosecond and stays nominal until bench characterization
+ * confirms it.
+ */
+static void handle_adc_skew_transaction_cmd(int requested_steps)
+{
+    static uint32_t transaction_id = 0U;
+    int applied_steps = 0;
+    int code_before = -1;
+    int code_after = -1;
+    bool saturated = false;
+    bool neutral_initialized = false;
+    uint32_t generation_before;
+    uint32_t generation_after;
+    const unsigned long txn = (unsigned long)(++transaction_id);
+
+    generation_before = dma_capture_generation();
+    xil_printf("\r\nSKEW-TXN %lu requested_steps=%ld\r\n", txn, (long)requested_steps);
+
+    if ((requested_steps > 1) || (requested_steps < -1))
+    {
+        /* Not refused -- bench characterization needs larger moves later -- but
+         * flagged, because the closed loop may only move one code at a time
+         * until the step response has been measured. */
+        xil_printf("SKEW-TXN %lu note=multi-code update\r\n", txn);
+    }
+
+    if (adc_skew_actuator_verify_ready() != 0 || !adc_skew_actuator_available())
+    {
+        if (adc_skew_actuator_initialize_neutral() != 0 ||
+            adc_skew_actuator_verify_ready() != 0)
+        {
+            xil_printf("SKEW-TXN %lu result=RECOVERY_REQUIRED stage=neutral-init\r\n",
+                       txn);
+            return;
+        }
+        neutral_initialized = true;
+    }
+
+    if (adc_skew_actuator_read_value(&code_before) != 0 ||
+        !adc_apply_skew_step(1, requested_steps, &applied_steps, &saturated) ||
+        adc_skew_actuator_read_value(&code_after) != 0)
+    {
+        xil_printf("SKEW-TXN %lu result=RECOVERY_REQUIRED stage=write "
+                   "code_before=%d\r\n", txn, code_before);
+        return;
+    }
+
+    if (adc_capture_frame() != XST_SUCCESS)
+    {
+        xil_printf("SKEW-TXN %lu result=RECOVERY_REQUIRED stage=warmup-capture "
+                   "code_after=%d\r\n", txn, code_after);
+        return;
+    }
+
+    generation_after = dma_capture_generation();
+    if (generation_after == generation_before)
+    {
+        xil_printf("SKEW-TXN %lu result=RECOVERY_REQUIRED stage=fresh-frame "
+                   "generation=%lu\r\n", txn, (unsigned long)generation_after);
+        return;
+    }
+
+    xil_printf("SKEW-TXN %lu code_before=%d code_after=%d applied_steps=%d\r\n",
+               txn, code_before, code_after, applied_steps);
+    xil_printf("SKEW-TXN %lu nominal_differential_ps_x10=%ld saturated=%s "
+               "neutral_initialized=%s\r\n",
+               txn, (long)(138 * applied_steps), saturated ? "YES" : "NO",
+               neutral_initialized ? "YES" : "NO");
+    xil_printf("SKEW-TXN %lu capture_generation=%lu previous_generation=%lu\r\n",
+               txn, (unsigned long)generation_after, (unsigned long)generation_before);
+    xil_printf("SKEW-TXN %lu result=OK\r\n", txn);
 }
 
 static void adc_ifc_sweep(void)

@@ -36,7 +36,7 @@ from .capture import UartConsole, UdpFrameReceiver
 
 DEFAULT_OUT_DIR = (
     Path(__file__).resolve().parent.parent
-    / "test_platform"
+    / "firmware"
     / "thesis_v3_500mhz_appl"
     / "adc_data"
 )

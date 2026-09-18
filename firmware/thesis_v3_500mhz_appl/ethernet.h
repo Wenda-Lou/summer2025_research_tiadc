@@ -62,6 +62,27 @@ int udp_send_calibration_csv_dataset(
 void udp_update(void);
 void udp_service_calibration(void);
 
+/* ---- DMA capture freshness ------------------------------------------------
+ * RxBufferPtr keeps its previous contents when a transfer fails, times out, or
+ * is never armed, and udp_send_mem() cannot tell the difference -- a 296
+ * iteration host run once "converged" on one frozen frame that way (every metric
+ * repeating exactly) while its skew integrator walked the delay actuator to the
+ * rail.  These calls are the whole protocol:
+ *
+ *   dma_capture_invalidate()  before arming a transfer (buffer no longer trusted)
+ *   dma_capture_publish()     after the transfer completed AND the cache was
+ *                             invalidated (buffer is fresh; generation bumps)
+ *   dma_capture_is_valid()    checked by udp_send_mem(), which refuses to send
+ *                             anything that is not from a completed transfer
+ *
+ * The generation counter lets the host notice a repeated frame (console ACK
+ * today; per-packet tags would need a matching host change).
+ */
+void dma_capture_invalidate(void);
+void dma_capture_publish(void);
+int  dma_capture_is_valid(void);
+uint32_t dma_capture_generation(void);
+
 
 
 #endif

@@ -15,6 +15,7 @@ of that curve is ``iteration * samples_per_channel`` ADC cycles.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -27,7 +28,9 @@ from .estimator import (
     CalibrationState,
     estimate_block,
     interleave,
+    polarity_anchor,
     prepare_capture,
+    skew_batch,
     synthesize_dither,
 )
 from .metrics import analyse, channel_difference_dbc, mismatch_spurs
@@ -52,6 +55,17 @@ class LoopOptions:
 
     max_capture_retries: int = 3
 
+    max_consecutive_rejects: int = 20
+    """Stop after this many captures in a row are rejected.
+
+    A rejected capture is logged for forensics and then retried, because it must not
+    consume a sample slot: ``run(N)`` owes the caller N qualified samples.  Rejections
+    are routine (~20 % measured on the bench, almost all ``align_margin`` on torn
+    UDP frames), but a *streak* this long is not a bad frame, it is a bench that
+    stopped producing usable data — a half-synced JESD link, or the wrong waveform
+    loaded — and the honest response is to stop rather than spend the rest of the
+    session on it.  At the measured 20 % rate, 20 in a row is about 1e-14."""
+
     min_align_margin: float = 6.0
     """Reject a capture whose dither correlation peak is this many sigma or less
     above the rest of the lag profile.  On hardware a dropped UDP datagram or a
@@ -65,6 +79,65 @@ class LoopOptions:
 
     max_gain_deviation: float = 0.20
     """Reject a block whose measured gain ratio is further than this from 1."""
+
+    gain_observable: str = "tone"
+    """Which measurement the gain correction integrates: ``"tone"`` or ``"dither"``.
+
+    Two estimates of the same channel gain mismatch, and on this bench they disagree
+    by ~1.2 %: the dither route reads the narrow pulse replicas (dispersed
+    differently by the two channels), the tone route reads the 199 MHz tone that the
+    A-B difference spur is actually made of.  The tone route is also ~10x quieter
+    (0.25 % per-frame scatter against 2.3 %), so the old dither-only loop both
+    random-walked on that noise — residual 2-3 % over a whole run against 0.04 % in
+    the model — and seated its correction 1.1-2.05 % away from the point that nulls
+    the tone, which is what capped the corrected A-B spur at -35 dBc while the raw
+    one reached -38.6 dBc.
+
+    ``"dither"`` restores the old behaviour for a comparison run.  Either way the log
+    records both ratios, so the seating stays auditable.  The choice is a statement
+    about *which* mismatch to null: at f_in (the tone route) or broadband (the dither
+    route)."""
+
+    skew_batch_frames: int = 20
+    """Accepted frames per skew decision.
+
+    Skew actuation is a *batch* decision, never per frame.  The measured step is
+    ~7.4 ps of differential skew per control code, which is larger than the
+    residual error once the loop is anywhere near its target, so a per-frame
+    integrator would move a code every couple of frames and chase its own
+    measurement noise.  With 20 frames the batch mean has a standard error of
+    ~0.7 ps, so the deadband below is ~14 sigma wide and a move means something."""
+
+    skew_deadband_ps: float = 10.0
+    """Do not move the actuator for an error inside this band.
+
+    Measured residual wobble at the converged point is a few ps over minutes, and
+    the per-frame scatter is 3.1 ps RMS, so this band separates signal from noise
+    without leaving a visible offset (it is ~1.3 % of a sample period)."""
+
+    skew_direction_tol_ps: float = 8.0
+    """Give up on skew actuation if the error moves the wrong way after a move.
+
+    A corrective move of ``steps`` codes must shift the measured error by
+    ``+HOST_STEP_PS * steps``: that sign is a bench measurement, not a
+    convention.  If the error instead moves the other way, the hardware no longer
+    agrees with the calibration -- a stale code belief, a swapped channel, a
+    reloaded DPG -- and one more code per batch would walk the actuator away from
+    the target instead of towards it.  The tolerance absorbs the batch noise on a
+    single 7.4 ps move: the 20-frame mean has ~0.7 ps of standard error, so 8 ps
+    is more than ten sigma and only a real wrong-direction move trips it."""
+
+    skew_min_yield: float = 0.4
+    """Fraction of a batch that must survive the acceptance filter to be acted on.
+
+    The batch decision is only as good as the number of frames behind it: a mean
+    taken from 2 of 20 frames has a standard error of several ps, against a 10 ps
+    deadband, so it must not be allowed to move the actuator.  Below this yield the
+    batch is logged and nothing else happens -- the same floor
+    ``tools/skew_close_loop.py`` uses.  Measured batches on the bench yield
+    0.75-1.0, so this only fires on a genuinely broken capture run (a half-synced
+    JESD link, dropped datagrams), which is exactly when one bad mean would
+    otherwise walk the actuator."""
 
 
 class CalibrationLoop:
@@ -80,7 +153,109 @@ class CalibrationLoop:
         self.state = state or CalibrationState()
         self.opt = options or LoopOptions()
         self.log: list[dict] = []
+        self.captures = 0
+        """Captures attempted by the last :meth:`run` (qualified + rejected)."""
+        self.qualified = 0
+        """Samples that passed the acceptance filter in the last :meth:`run`."""
+        self.rejected = 0
+        """Captures the acceptance filter threw away in the last :meth:`run`."""
         self._signature: dict | None = None
+        self._polarity: float | None = None
+        self._skew_frames: list[dict] = []
+        """Accepted frames of the skew batch in progress (see LoopOptions)."""
+        self._skew_prev_error: float | None = None
+        """Batch error at the previous decision, for the direction check."""
+        self._skew_expected_shift = 0.0
+        """Error shift the last commanded move should have produced, in ps."""
+        self._skew_abort: str | None = None
+        """Latched reason skew actuation stopped; None while it is still trusted."""
+
+    # -- skew actuation ------------------------------------------------------
+    def _skew_decision(self, est: BlockEstimate, row: dict) -> None:
+        """Collect one frame, and act only when a whole batch has accumulated.
+
+        The order matters and is the one validated on the bench: measure a batch,
+        take its arithmetic mean through the acceptance filter, compare against
+        the deadband, and only then request at most one control code through the
+        firmware transaction -- whose ACK is the only thing that updates the local
+        actuator state.  Nothing is retried: a failed transaction ends the move,
+        it does not trigger another write.
+
+        A move also has to be confirmed, not assumed.  The next batch's error must
+        have shifted the way the calibrated step size predicts
+        (``skew_direction_tol_ps``); a disagreement, or a transaction whose ACK
+        never arrived, latches skew actuation off for the rest of the run.  The
+        digital loop keeps running when that happens, because it is host-side and
+        has no hardware state to corrupt.
+        """
+        self._skew_frames.append({
+            "phase_ps": est.skew_phase_ps,
+            "diff_route_ps": est.skew_diff_route_ps,
+            "centroid_ps": est.skew_centroid_ps,
+            "source": est.skew_source,
+            "tone": est.ch_a.tone_amplitude,
+            "resid": est.ch_a.residual_rms,
+            "margin": row.get("align_margin", float("nan")),
+        })
+        row["skew_batch_n"] = len(self._skew_frames)
+        if len(self._skew_frames) < self.opt.skew_batch_frames:
+            return
+
+        batch = skew_batch(self._skew_frames)
+        self._skew_frames = []
+        row["skew_batch_used"] = batch.n_used
+        row["skew_batch_mean_ps"] = batch.mean_ps
+        row["skew_batch_se_ps"] = batch.se_ps
+        error = batch.mean_ps - self.state.skew_target_ps
+        row["skew_batch_error_ps"] = error
+
+        actuator = getattr(self.bench, "actuator", None)
+        if not self.opt.close_skew_loop or actuator is None:
+            row["skew_action"] = "measure-only"
+            return
+        if self._skew_abort is not None:
+            # Latched: the actuator already answered badly, and writing it again
+            # is not a recovery strategy (see capture.SkewActuator).
+            row["skew_action"] = "aborted"
+            row["skew_error"] = self._skew_abort
+            return
+        if batch.n_used == 0:
+            row["skew_action"] = "no-usable-frames"
+            return
+        if batch.n_total and batch.n_used / batch.n_total < self.opt.skew_min_yield:
+            # Too few frames to justify a write; see LoopOptions.skew_min_yield.
+            row["skew_action"] = f"low-yield:{batch.n_used}/{batch.n_total}"
+            return
+
+        # Direction check, before this batch may write anything: the previous move
+        # should have shifted the error by +HOST_STEP_PS * steps.
+        if self._skew_prev_error is not None and self._skew_expected_shift != 0.0:
+            moved = error - self._skew_prev_error
+            if (abs(moved - self._skew_expected_shift) > self.opt.skew_direction_tol_ps
+                    and np.sign(moved) != np.sign(self._skew_expected_shift)):
+                self._skew_abort = (
+                    f"direction: error moved {moved:+.2f} ps after a "
+                    f"{self._skew_expected_shift:+.1f} ps expected move")
+                row["skew_action"] = "abort:direction"
+                row["skew_error"] = self._skew_abort
+                return
+
+        steps = actuator.error_to_steps(error)
+        if steps == 0:
+            row["skew_action"] = "inside-deadband" if abs(error) <= actuator.deadband_ps \
+                else "at-range-limit"
+            return
+        ack = actuator.request_steps(steps)
+        row["skew_action"] = f"move{steps:+d}:{ack.get('result')}"
+        row["skew_step_codes"] = steps
+        row["skew_code"] = ack.get("code_after")
+        if not ack.get("ok"):
+            # No retry, no second write: report it and stop driving the actuator.
+            self._skew_abort = f"{ack.get('result')} stage={ack.get('stage')}"
+            row["skew_error"] = self._skew_abort
+            return
+        self._skew_prev_error = error
+        self._skew_expected_shift = steps * getattr(actuator, "HOST_STEP_PS", 7.4)
 
     # -- one iteration ------------------------------------------------------
     def step(self) -> dict | None:
@@ -91,6 +266,11 @@ class CalibrationLoop:
         prep = prepare_capture(raw, self.cfg, signature=self._signature)
         if self._signature is None:
             self._signature = prep["signature"]
+        if self._polarity is None:
+            # The dither polarity of the bench path is a session constant, not a
+            # per-frame quantity: measure it once from channel A and hold it, so
+            # a noisy frame cannot flip the gain signs mid-run.
+            self._polarity = polarity_anchor(prep)
         ch_a, ch_b = prep["ch_a"], prep["ch_b"]
 
         cal_a, cal_b = self.state.apply(ch_a, ch_b)
@@ -99,12 +279,17 @@ class CalibrationLoop:
             cancel_signal=self.opt.cancel_signal,
             n0=prep["n0"],
             skew_prior_samples=self.state.skew_target_ps * 1e-12 * self.cfg.fs_adc,
+            polarity_sign=self._polarity,
+            pin_polarity=True,
         )
         est.rotation = prep["rotation"]
 
         row = self._measure(ch_a, ch_b, cal_a, cal_b, est, prep["n0"])
         row["swapped"] = prep["swapped"]
         row["align_margin"] = prep["align_margin"]
+        # Frame identity: with the firmware's capture generation this is what
+        # makes a re-sent or stale buffer detectable from the log alone.
+        row["frame_sha1"] = hashlib.sha1(raw).hexdigest()[:16]
 
         reject = self._reject_reason(prep, est)
         row["rejected"] = reject or ""
@@ -112,11 +297,21 @@ class CalibrationLoop:
             self.log.append(row)
             return row
 
-        errors = self.state.update(est)
-        row.update(errors)
-
-        if self.opt.close_skew_loop and hasattr(self.bench, "command_skew"):
-            self.bench.command_skew(self.state.skew_cmd_ps)
+        if getattr(self.bench, "actuator", None) is not None:
+            # Hardware: skew is a batch decision, gain/offset stay per-frame
+            # (digital corrections applied on the host, no hardware side effect).
+            errors = self.state.update(est, integrate_skew=False,
+                                       gain_observable=self.opt.gain_observable)
+            row.update(errors)
+            self._skew_decision(est, row)
+        else:
+            # Bench model: no registers to disturb and no measurement noise worth
+            # batching, so the original per-frame integrator stays.
+            errors = self.state.update(est, integrate_skew=self.opt.close_skew_loop,
+                                       gain_observable=self.opt.gain_observable)
+            row.update(errors)
+            if self.opt.close_skew_loop and hasattr(self.bench, "command_skew"):
+                self.bench.command_skew(self.state.skew_cmd_ps)
 
         row.update(
             {
@@ -153,9 +348,14 @@ class CalibrationLoop:
         fs = self.cfg.fs_adc
         f_in = self.cfg.f_sig
 
-        # Strip the injected dither before scoring; see synthesize_dither().
-        d_a = synthesize_dither(cal_a.size, n0, self.cfg, est.ch_a.gain_codes)
-        d_b = synthesize_dither(cal_b.size, n0, self.cfg, est.ch_b.gain_codes)
+        # Strip the injected dither before scoring; see synthesize_dither().  The
+        # gains were fitted with the session polarity sign, so the synthesised
+        # dither must use it too or the subtraction would become an addition.
+        pol = self._polarity or 1.0
+        d_a = synthesize_dither(cal_a.size, n0, self.cfg, est.ch_a.gain_codes,
+                                polarity_sign=pol)
+        d_b = synthesize_dither(cal_b.size, n0, self.cfg, est.ch_b.gain_codes,
+                                polarity_sign=pol)
         cal_a, cal_b = cal_a - d_a, cal_b - d_b
         # The raw records have not been through the gain correction, so the
         # dither sits there at a proportionally different amplitude.
@@ -174,9 +374,16 @@ class CalibrationLoop:
             "gain_a_codes": est.ch_a.gain_codes,
             "gain_b_codes": est.ch_b.gain_codes,
             "gain_ratio": est.gain_ratio,
+            "tone_ratio": est.tone_ratio,
             "skew_a_ps": est.ch_a.skew_ps,
             "skew_b_ps": est.ch_b.skew_ps,
             "skew_mismatch_ps": est.skew_mismatch_ps,
+            # the two independent routes to that number, plus the centroid that
+            # must never veto it (see SkewBatch)
+            "skew_phase_ps": est.skew_phase_ps,
+            "skew_diff_route_ps": est.skew_diff_route_ps,
+            "skew_centroid_ps": est.skew_centroid_ps,
+            "skew_source": est.skew_source,
         }
 
         # Per-channel dynamic performance, always meaningful.
@@ -234,9 +441,29 @@ class CalibrationLoop:
 
     # -- driver -------------------------------------------------------------
     def run(self, iterations: int, verbose: bool = True) -> list[dict]:
+        """Collect ``iterations`` *qualified* samples.
+
+        ``iterations`` counts samples that pass the acceptance filter, not captures.
+        A rejected frame is logged — its reason is the diagnostic — and then retried,
+        so a run of N ends with N points on the learning curve and the log's accepted
+        rows are exactly those N.  Rejected rows stay in the CSV (marked) for
+        forensics but are excluded from :meth:`plot` and from every sample count.  A
+        300-sample run therefore takes roughly 370 captures at the measured ~20 %
+        rejection rate.
+
+        Two things still stop a run early, and both mean the bench rather than the
+        frame is the problem: ``max_capture_retries`` consecutive captures that
+        returned nothing, and ``max_consecutive_rejects`` captures in a row that the
+        filter refused.
+        """
+        qualified = 0
+        captures = 0
+        rejected = 0
         failures = 0
-        for _ in range(iterations):
+        streak = 0
+        while qualified < iterations:
             row = self.step()
+            captures += 1
             if row is None:
                 failures += 1
                 if verbose:
@@ -247,18 +474,35 @@ class CalibrationLoop:
                 continue
             failures = 0
             if row.get("rejected"):
+                rejected += 1
+                streak += 1
                 if verbose:
-                    print(f"  it {row['iteration']:4d}  rejected: {row['rejected']}")
+                    print(f"  rejected #{rejected} ({streak} in a row): "
+                          f"{row['rejected']}")
+                if streak >= self.opt.max_consecutive_rejects:
+                    print(f"  {streak} captures rejected in a row -- the bench is not "
+                          f"producing usable data, stopping")
+                    break
                 continue
+            streak = 0
+            qualified += 1
             if verbose:
                 print(
                     f"  it {row['iteration']:4d}  "
                     f"g_B/g_A={row['gain_ratio']:+.5f}  "
+                    f"tone={row['tone_ratio']:+.5f}  "
                     f"dOffset={row['offset_b_codes'] - row['offset_a_codes']:+8.3f} LSB  "
                     f"dSkew={row['skew_mismatch_ps']:+7.3f} ps  "
                     f"SNDR={row['cal_sndr_db']:5.2f} dB  "
                     f"image={row['cal_image_spur_dbc']:6.1f} dBc"
                 )
+        self.qualified = qualified
+        self.captures = captures
+        self.rejected = rejected
+        if verbose:
+            rate = 100.0 * rejected / captures if captures else 0.0
+            print(f"  {qualified}/{iterations} qualified samples from {captures} "
+                  f"captures ({rejected} rejected, {rate:.0f} %)")
         return self.log
 
     # -- output -------------------------------------------------------------
@@ -268,8 +512,19 @@ class CalibrationLoop:
 
         csv_path = out_dir / f"{stem}.csv"
         if self.log:
+            # Accepted and rejected rows do not carry the same keys: a rejection
+            # returns before the state update, so it has no offset_error_*/gain_*
+            # /skew_cmd_ps/state columns.  Taking the header from log[0] alone
+            # therefore crashes the whole save whenever the first iteration is
+            # rejected -- losing the entire run after the bench time was spent.
+            # Use the union of every row's keys, in first-seen order.
+            fieldnames: list[str] = []
+            for entry in self.log:
+                for key in entry:
+                    if key not in fieldnames:
+                        fieldnames.append(key)
             with csv_path.open("w", newline="", encoding="utf-8") as fh:
-                writer = csv.DictWriter(fh, fieldnames=list(self.log[0].keys()))
+                writer = csv.DictWriter(fh, fieldnames=fieldnames, restval="")
                 writer.writeheader()
                 writer.writerows(self.log)
 
@@ -281,6 +536,14 @@ class CalibrationLoop:
                     "options": asdict(self.opt),
                     "final_state": asdict(self.state),
                     "channel_signature": self._signature,
+                    "polarity_sign": self._polarity,
+                    "skew_abort": self._skew_abort,
+                    # Sample accounting: the CSV holds every capture, qualified and
+                    # rejected, so the run's real sample count has to be recorded
+                    # rather than inferred from the row count.
+                    "samples_qualified": self.qualified,
+                    "captures_attempted": self.captures,
+                    "captures_rejected": self.rejected,
                 },
                 indent=2,
             ),
@@ -289,47 +552,68 @@ class CalibrationLoop:
         return {"csv": csv_path, "meta": json_path}
 
     def plot(self, out_dir: str | Path, stem: str = "calibration_run"):
-        """Learning curves: the figures a TCAS submission needs."""
+        """Learning curves: the figures a TCAS submission needs.
+
+        Only qualified samples are drawn.  A rejected capture stays in the CSV for
+        forensics, but its metrics come from a frame the loop explicitly refused to
+        trust and drive the state with — putting those on the learning curve would
+        show the acceptance filter's rejects as loop behaviour, which is precisely
+        what a reader of this figure is meant to be able to believe.
+        """
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        if not self.log:
+        rows = [r for r in self.log if not r.get("rejected")]
+        if not rows:
             return None
 
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        it = np.array([r["iteration"] for r in self.log])
+        it = np.array([r["iteration"] for r in rows])
         fig, ax = plt.subplots(2, 2, figsize=(12, 8))
 
-        ax[0, 0].plot(it, [r["gain_ratio"] for r in self.log])
+        # Gain: the controlled observable leads.  With the tone route the dither
+        # ratio is no longer what is being nulled -- it settles at the dither-vs-tone
+        # disagreement (~1.2 % on this bench) -- so both are drawn instead of letting
+        # one masquerade as the loop's error signal.
+        tone = np.array([r.get("tone_ratio", np.nan) for r in rows], dtype=float)
+        if np.isfinite(tone).any():
+            ax[0, 0].plot(it, tone, label="tone route (controlled)")
+        ax[0, 0].plot(it, [r["gain_ratio"] for r in rows], ls=":", lw=1,
+                      label="dither route (pulse windows)")
         ax[0, 0].axhline(1.0, ls="--", lw=1, color="k")
+        ax[0, 0].legend(fontsize=8)
         ax[0, 0].set_title("Gain ratio $g_B/g_A$ (residual)")
 
         ax[0, 1].plot(
-            it, [r["offset_b_codes"] - r["offset_a_codes"] for r in self.log]
+            it, [r["offset_b_codes"] - r["offset_a_codes"] for r in rows]
         )
         ax[0, 1].axhline(0.0, ls="--", lw=1, color="k")
         ax[0, 1].set_title("Offset mismatch [LSB] (residual)")
 
-        ax[1, 0].plot(it, [r["skew_mismatch_ps"] for r in self.log])
+        ax[1, 0].plot(it, [r["skew_mismatch_ps"] for r in rows])
         ax[1, 0].axhline(0.0, ls="--", lw=1, color="k")
         ax[1, 0].set_title("Timing skew mismatch [ps] (residual)")
 
-        ax[1, 1].plot(it, [r["cal_sndr_db"] for r in self.log], label="SNDR calibrated")
-        ax[1, 1].plot(it, [r["cal_sfdr_db"] for r in self.log], label="SFDR calibrated")
+        ax[1, 1].plot(it, [r["cal_sndr_db"] for r in rows], label="SNDR calibrated")
+        ax[1, 1].plot(it, [r["cal_sfdr_db"] for r in rows], label="SFDR calibrated")
         ax[1, 1].plot(
-            it, [r["raw_sndr_db"] for r in self.log], ls=":", label="SNDR raw"
+            it, [r["raw_sndr_db"] for r in rows], ls=":", label="SNDR raw"
         )
         ax[1, 1].legend()
         ax[1, 1].set_title("Dynamic performance [dB]")
 
         for a in ax.ravel():
-            a.set_xlabel("iteration")
+            a.set_xlabel("qualified sample")
             a.grid(True, alpha=0.3)
 
+        excluded = len(self.log) - len(rows)
+        if excluded:
+            fig.suptitle(f"{len(rows)} qualified samples "
+                         f"({excluded} rejected captures excluded)", fontsize=10)
         fig.tight_layout()
         path = out_dir / f"{stem}_learning.png"
         fig.savefig(path, dpi=140)

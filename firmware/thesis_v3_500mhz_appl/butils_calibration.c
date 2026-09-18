@@ -10598,6 +10598,12 @@ restore_selection:
                                                                         adc_sweep_active = 0;
                                                                         calibration_print_skew_summary(&batch, diagnose_mode);
                                                                     }
+                                                                    /* Superseded: manual actuator steps now go through
+                                                                     * handle_adc_skew_transaction_cmd() in butils.c, which wraps the
+                                                                     * same verified write with a neutral-state check, an ACK block and a
+                                                                     * post-write capture-freshness check.  Kept #if 0'd so the old
+                                                                     * behaviour stays readable in the diff. */
+                                                                    #if 0
                                                                     static void handle_adc_skew_step_cmd(int requested_steps) {
                                                                         int applied_steps = 0;
                                                                         bool saturated = false;
@@ -10618,6 +10624,7 @@ restore_selection:
                                                                         xil_printf("Applied steps           : %ld\r\n", (long)applied_steps);
                                                                         xil_printf("Saturated               : %s\r\n", saturated ? "YES" : "NO");
                                                                     }
+                                                                    #endif
                                                                     static int calibration_offset_model_residual(     const calibration_aligned_frame_t *frame,     float nominal_system_gain,     float *samplewise_mean,     float *mean_identity) {
                                                                         double residual_sum = 0.0;
                                                                         const size_t count = frame != NULL ?         frame->valid_analysis_sample_count : 0U;

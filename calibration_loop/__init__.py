@@ -32,7 +32,10 @@ from .estimator import (
     estimate_channel,
     fit_tone,
     interleave,
+    polarity_anchor,
     prepare_capture,
+    SkewBatch,
+    skew_batch,
     unpack_words,
 )
 from .metrics import analyse, channel_difference_dbc, mismatch_spurs, spectrum
@@ -59,7 +62,10 @@ __all__ = [
     "estimate_channel",
     "fit_tone",
     "interleave",
+    "polarity_anchor",
     "prepare_capture",
+    "SkewBatch",
+    "skew_batch",
     "unpack_words",
     "analyse",
     "channel_difference_dbc",

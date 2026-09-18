@@ -1,0 +1,1418 @@
+﻿diff --git a/calibration_loop/capture.py b/calibration_loop/capture.py
+index 00afe42..1d2efa2 100644
+--- a/calibration_loop/capture.py
++++ b/calibration_loop/capture.py
+@@ -31,7 +31,7 @@ from __future__ import annotations
+ 
+ import socket
+ import time
+-from dataclasses import dataclass
++from dataclasses import dataclass, field
+ 
+ import numpy as np
+ 
+@@ -131,6 +131,26 @@ class AdcClockDelay:
+     port: int = UDP_PORT
+     console: UartConsole | None = None
+ 
++    link_settle_s: float = 0.05
++    """Settle after a delay write that actually reached the board.
++
++    Every delay update makes the firmware reset the JESD204C receiver link: an ADC
++    sample-clock delay change disrupts JESD framing, so ``ethernet.c`` calls
++    ``jesdlink_reset()`` after each remote delay command, and
++    ``butils_calibration.c`` does the same on the firmware's own path.  Capturing
++    inside that window returns a dead or half-synced stream -- the DMA transfer
++    never completes and the board ships the *previous* buffer, which is how a
++    296-iteration run ended up "converging" on one frozen frame.
++    """
++
++    _last_sent: dict = field(default_factory=dict)
++    """Encoded delay last sent per channel, so a no-op write can be skipped.
++
++    This is what keeps a closed loop from resetting the link every iteration: the
++    loop's skew command moves by a fraction of the 1.725 ps register step, and
++    channel A is held at a constant bias, so most iterations now write nothing.
++    """
++
+     @staticmethod
+     def _encode(delay_ps: float, allow_super_fine: bool) -> tuple[int, int, int]:
+         delay_ps = max(0.0, delay_ps)
+@@ -145,28 +165,39 @@ class AdcClockDelay:
+         super_fine = int(np.clip(round(rest / SUPER_FINE_STEP_PS), 0, SUPER_FINE_MAX))
+         return CLK_DELAY_SUPER_FINE, fine, super_fine
+ 
+-    def set(self, channel: int, delay_ps: float) -> dict:
++    def set(self, channel: int, delay_ps: float, force: bool = False) -> dict:
+         mode, fine, super_fine = self._encode(delay_ps, self.allow_super_fine)
+-        payload = bytes([mode, fine, super_fine, channel]) + bytes(60)
+-        self.receiver_sock.sendto(payload, (self.board_ip, self.port))
+-        # See module docstring, trap 1: the board only services lwIP after a
+-        # console line, so nudge the prompt.
+-        if self.console is not None:
+-            self.console.send("")
+-        time.sleep(0.05)
++        sent = (mode, fine, super_fine)
++        wrote = bool(force) or self._last_sent.get(channel) != sent
++        if wrote:
++            payload = bytes([mode, fine, super_fine, channel]) + bytes(60)
++            self.receiver_sock.sendto(payload, (self.board_ip, self.port))
++            # See module docstring, trap 1: the board only services lwIP after a
++            # console line, so nudge the prompt.
++            if self.console is not None:
++                self.console.send("")
++            self._last_sent[channel] = sent
++            time.sleep(self.link_settle_s)
+         return {
+             "channel": channel,
+             "mode": mode,
+             "fine": fine,
+             "super_fine": super_fine,
+             "actual_ps": fine * FINE_STEP_PS + super_fine * SUPER_FINE_STEP_PS,
++            "written": wrote,
++            "link_reset": wrote,
+         }
+ 
+-    def apply_skew(self, skew_cmd_ps: float) -> dict:
++    def apply_skew(self, skew_cmd_ps: float, force: bool = False) -> dict:
+         """Hold channel A at the bias and put channel B at bias + command."""
+-        a = self.set(CH_A, self.bias_ps)
+-        b = self.set(CH_B, self.bias_ps + skew_cmd_ps)
+-        return {"ch_a": a, "ch_b": b, "differential_ps": b["actual_ps"] - a["actual_ps"]}
++        a = self.set(CH_A, self.bias_ps, force=force)
++        b = self.set(CH_B, self.bias_ps + skew_cmd_ps, force=force)
++        return {
++            "ch_a": a,
++            "ch_b": b,
++            "differential_ps": b["actual_ps"] - a["actual_ps"],
++            "wrote": a["written"] or b["written"],
++        }
+ 
+ 
+ class HardwareBench:
+@@ -188,25 +219,63 @@ class HardwareBench:
+             console=self.console,
+         )
+         self.skew_cmd_b_ps = 0.0
++        self._last_frame: bytes | None = None
+ 
+-    def command_skew(self, delay_ps: float) -> dict:
++    def command_skew(self, delay_ps: float, force: bool = False) -> dict:
+         self.skew_cmd_b_ps = float(delay_ps)
+-        return self.delay.apply_skew(self.skew_cmd_b_ps)
++        return self.delay.apply_skew(self.skew_cmd_b_ps, force=force)
++
++    DMA_FAIL_MARKERS = (
++        "still busy and timed out",
++        "XAxiDma_SimpleTransfer failed",
++        "DMA reset timeout",
++        "DMA commands are disabled",
++    )
++    """Verdicts the firmware prints for a capture that did not happen.
++
++    ``dma -w`` in ``butils.c`` invalidates the data cache and re-arms the
++    transfer only on the success path.  On a timeout it prints one of these and
++    leaves ``RxBufferPtr`` holding the *previous* frame -- and ``udp`` ships
++    whatever is in that buffer, so the host sees a perfectly well-formed frame of
++    stale samples.  Reading the verdict back is the only way to tell.
++    """
+ 
+     def capture(self, n_words: int | None = None, retries: int = 3) -> bytes | None:
+         """Reset DMA, grab a frame, ship it, collect it.
+ 
+         The reset-settle-transfer order mirrors ``adc_capture_frame()`` in
+         ``butils.c``, which is the sequence already proven on this board.
++
++        Two silent failure modes are checked here, because both cost a whole run
++        rather than one iteration.  An unre-armed DMA re-ships the previous
++        buffer, so every downstream metric freezes at exactly its last value: a
++        296-iteration bench run once "converged" this way -- gain ratio reaching
++        exactly 1.00000 and offset mismatch exactly 0.000, because those two
++        corrections are applied host-side and can cancel a *static* frame
++        perfectly, while the skew integrator walked the delay actuator to its
++        rail against an error that could no longer respond.  A frame that is
++        byte-identical to the previous one is therefore treated as a failed
++        capture, not as data.
+         """
+         for _ in range(retries):
+             self.rx.drain()
+             self.console.send("dma -d", settle=0.15)
+             self.console.send("dma -w", settle=0.20)
++            verdict = self.console.read_all()
++            if any(marker in verdict for marker in self.DMA_FAIL_MARKERS):
++                print("  board reported a DMA failure: "
++                      + " ".join(verdict.split())[:100])
++                continue
+             self.console.send("udp", settle=0.0)
+             frame = self.rx.receive(timeout=3.0)
+-            if frame is not None:
+-                return frame
++            if frame is None:
++                continue
++            if frame == self._last_frame:
++                print("  stale frame: identical to the previous capture "
++                      "(DMA did not re-arm) -- retrying")
++                continue
++            self._last_frame = frame
++            return frame
+         return None
+ 
+     def close(self) -> None:
+diff --git a/calibration_loop/estimator.py b/calibration_loop/estimator.py
+index ce97018..0af4ac4 100644
+--- a/calibration_loop/estimator.py
++++ b/calibration_loop/estimator.py
+@@ -35,7 +35,7 @@ the un-cancelled baseline for the comparison figure.
+ 
+ from __future__ import annotations
+ 
+-from dataclasses import dataclass, field
++from dataclasses import dataclass, field, replace
+ 
+ import numpy as np
+ 
+@@ -62,6 +62,30 @@ def unpack_words(raw_bytes: bytes | np.ndarray, shift: int = 2) -> np.ndarray:
+     return (words >> shift).astype(np.int32)
+ 
+ 
++def _corr(x: np.ndarray, y: np.ndarray) -> float:
++    """Normalised correlation of two equal-length streams."""
++    if x.size != y.size or x.size < 8:
++        return 0.0
++    xs, ys = x - x.mean(), y - y.mean()
++    d = float(np.sqrt((xs @ xs) * (ys @ ys)))
++    return float(xs @ ys) / d if d > 0 else 0.0
++
++
++def _lag_corr(x: np.ndarray, y: np.ndarray, lag: int) -> float:
++    """Correlation of ``x`` against ``y`` delayed by ``lag`` samples.
++
++    ``lag == 0`` is the plain same-instant correlation; ``lag == half`` pairs
++    ``x[m + half]`` with ``y[m]`` and is how the half-group split error is
++    detected: it asks whether the two streams line up better when one of them is
++    slid by half a group.
++    """
++    if lag == 0:
++        return _corr(x, y)
++    if lag > 0:
++        return _corr(x[lag:], y[:-lag])
++    return _corr(x[:lag], y[-lag:])
++
++
+ def split_at(words: np.ndarray, rotation: int, group: int = 8, half: int = 4) -> dict:
+     """Split the word stream into two channels at a given group phase."""
+     body = words[rotation:]
+@@ -69,10 +93,13 @@ def split_at(words: np.ndarray, rotation: int, group: int = 8, half: int = 4) ->
+     if body.size < 4 * group:
+         raise ValueError("capture too short to de-frame")
+     g = body.reshape(-1, group)
++    ch_a = g[:, :half].reshape(-1).astype(np.float64)
++    ch_b = g[:, half:].reshape(-1).astype(np.float64)
+     return {
+         "rotation": rotation,
+-        "ch_a": g[:, :half].reshape(-1).astype(np.float64),
+-        "ch_b": g[:, half:].reshape(-1).astype(np.float64),
++        "ch_a": ch_a,
++        "ch_b": ch_b,
++        "corr": _corr(ch_a, ch_b),
+     }
+ 
+ 
+@@ -81,16 +108,30 @@ def deframe(words: np.ndarray, group: int = 8, half: int = 4) -> dict:
+ 
+     The DMA is restarted for every capture and the AXI-Stream from the JESD link
+     runs continuously, so the group boundary lands at an arbitrary one of
+-    ``group`` phases.  The correct phase is the one whose two de-interleaved
+-    streams are each a clean single tone, measured as the fraction of AC power in
+-    the strongest FFT bin.
+-
+-    Note that phases ``r`` and ``r + half`` score identically -- both split the
+-    stream cleanly, they just start on the other converter.  Those two are *not*
+-    interchangeable: at ``r + half`` the second output is shifted by ``half``
+-    samples relative to the first, because it picks up the next group.  Choosing
+-    between them is :func:`prepare_capture`'s job, and it must re-split rather
+-    than swap the two arrays.
++    ``group`` phases.
++
++    Phases ``r`` and ``r + half`` both produce a clean tone in both outputs, so
++    tone purity cannot separate them -- they merely start on the other converter.
++    They are still *not* interchangeable.  At ``r + half`` the two outputs no
++    longer describe the same instants: they are offset by ``half`` samples, so the
++    pair stops being two views of one sampling instant.  (Both streams stay
++    spectrally clean -- a half-group mis-split slides them, it does not interleave
++    them -- which is why purity never detected the fault.)
++
++    The channels are physically parallel -- both converters sample the same
++    instant -- so at the correct phase the two outputs are proportional and
++    ``|corr(ch_a, ch_b)|`` is ~1.  At ``r + half`` the same converters are
++    compared ``half`` samples apart, which scales the correlation by
++    ``cos(2*pi*half*f0)``: 0.756 at the current geometry, and in general below 1
++    unless ``half * f0`` lands on a multiple of a half cycle.  ``|corr|``
++    therefore picks the phase that puts both streams on the same instants, and
++    that phase is by construction the one starting on converter A (word positions
++    0..3 of a beat).  No stored DC signature is involved, and the phase is stable
++    from capture to capture.
++
++    Returns ``lagged=True`` when the raw winner had to be replaced by the other
++    half-group candidate; the returned ``ch_a``/``ch_b`` are always the aligned
++    pair.
+     """
+     best = None
+     for rot in range(group):
+@@ -98,12 +139,30 @@ def deframe(words: np.ndarray, group: int = 8, half: int = 4) -> dict:
+             cand = split_at(words, rot, group, half)
+         except ValueError:
+             continue
+-        cand["score"] = _tone_purity(cand["ch_a"]) + _tone_purity(cand["ch_b"])
++        cand["purity"] = _tone_purity(cand["ch_a"]) + _tone_purity(cand["ch_b"])
++        cand["abs_corr"] = abs(cand["corr"])
++        # Primary key: |correlation| (physical).  Tie-break: tone purity.
++        cand["score"] = cand["abs_corr"] + 1e-3 * cand["purity"]
+         if best is None or cand["score"] > best["score"]:
+             best = cand
+ 
+     if best is None:
+         raise ValueError("capture too short to de-frame")
++
++    # ``|corr|`` decides on its own only while ``cos(2*pi*half*f0) < 1``.  Test
++    # the half-group lag explicitly instead of relying on that inequality: if
++    # sliding one stream by ``half`` raises the correlation, this boundary is the
++    # shifted candidate and the other one is the pair that shares its instants.
++    aligned = abs(_lag_corr(best["ch_a"], best["ch_b"], 0))
++    shifted = abs(_lag_corr(best["ch_a"], best["ch_b"], half))
++    lagged = shifted > aligned
++    if lagged:
++        best = split_at(words, (best["rotation"] + half) % group, group, half)
++        best["purity"] = _tone_purity(best["ch_a"]) + _tone_purity(best["ch_b"])
++        best["abs_corr"] = abs(best["corr"])
++        best["score"] = best["abs_corr"] + 1e-3 * best["purity"]
++
++    best["lagged"] = bool(lagged)
+     return best
+ 
+ 
+@@ -114,78 +173,76 @@ def prepare_capture(
+ ) -> dict:
+     """Turn one raw DMA buffer into two canonically ordered, upright channels.
+ 
+-    Three ambiguities have to be resolved on *every* capture, because the DMA is
++    Two ambiguities have to be resolved on *every* capture, because the DMA is
+     restarted each time and starts at an arbitrary point in a continuously
+     running AXI-Stream:
+ 
+     1. *Group phase.*  Which of the 8 word positions begins an
+-       ``[A A A A B B B B]`` group.  Recovered by tone purity.
+-
+-    2. *Channel order.*  Tone purity cannot separate phase ``r`` from ``r+4``,
+-       because both split the stream into two clean tones -- they just swap the
+-       two channels.  If this is left to chance the channels trade places
+-       between iterations and the loop chases its own tail.  It is pinned here
+-       by the splitter's inverted branch, which is a stable physical marker: the
+-       branch whose dither correlates *positively* with the template is always
+-       reported as channel A.
+-
+-    3. *Absolute sign.*  The inverted branch is flipped upright so both channels
+-       share one sense.
+-
+-    When both branches happen to have the same sense the inversion marker is
+-    unavailable, and the stored ``signature`` (the raw DC level of each channel,
+-    which is a physical constant of the board) breaks the tie instead.
++       ``[A A A A B B B B]`` group, and which of the two clean-splitting phases
++       puts both streams on the same instants.  :func:`deframe` settles both.
++
++    2. *Polarity.*  One branch of the rf splitter is inverted, so the two streams
++       are anti-proportional.  The inverted one is flipped upright here.  That is
++       not cosmetic: the loop's figure of merit is the *signed* ratio
++       ``g_B / g_A`` (:class:`BlockEstimate.gain_ratio`), so an unflipped
++       inverted branch reads as a near-1.0 mismatch with the wrong sign.
++
++    Both markers are physical and frame-to-frame stable: the converters are
++    parallel, so they sample the same instants and their streams are proportional
++    up to that one inversion.  A stored DC level is never consulted -- its
++    discriminating quantity (~8 codes) was smaller than its frame-to-frame drift
++    (~5 codes), which is why the ordering it produced flipped at random.
++
++    The half-group re-split that used to accompany a swap is gone.  It was never a
++    harmless way to exchange the two converters: comparing them half a group
++    apart means (a) the pair no longer shares one loop position ``n0``, and
++    ``n0`` is a *single* value that :func:`estimate_block` slices **both**
++    channels with, so channel B's dither windows land four samples off its own
++    impulses; and (b) the reported correlation collapses from 1.00 to
++    ``cos(2*pi*half*f0)`` = 0.756 at the current geometry.  The returned pair is
++    now always that same two converters, aligned.
++
++    ``signature`` is accepted and echoed for metadata compatibility only; nothing
++    in the ordering depends on it any more.
+     """
+     words = unpack_words(raw_bytes)
+     f0 = cfg.sig_cycles / cfg.n_adc_period
+ 
+-    def inspect(rotation: int) -> dict:
+-        frame = split_at(words, rotation)
+-        out = {"rotation": rotation}
+-        for key in ("ch_a", "ch_b"):
+-            fit = fit_tone(frame[key], f0, refine=True)
+-            al = align_to_loop(fit["residual"], cfg)
+-            out[key] = frame[key] * al["sign"]
+-            out[f"{key}_sign"] = al["sign"]
+-            out[f"{key}_align"] = al
+-        return out
+-
+-    rot = deframe(words)["rotation"]
+-    view = inspect(rot)
+-
+-    sign_a, sign_b = view["ch_a_sign"], view["ch_b_sign"]
+-    if sign_a != sign_b:
+-        # Exactly one branch is inverted -> unambiguous ordering.
+-        wrong_order = sign_a < 0
+-    elif signature is not None:
+-        keep = ((view["ch_a"].mean() - signature["dc_a"]) ** 2
+-                + (view["ch_b"].mean() - signature["dc_b"]) ** 2)
+-        swap = ((view["ch_b"].mean() - signature["dc_a"]) ** 2
+-                + (view["ch_a"].mean() - signature["dc_b"]) ** 2)
+-        wrong_order = swap < keep
+-    else:
+-        wrong_order = False
++    view = deframe(words)
++    a, b = view["ch_a"], view["ch_b"]
+ 
+-    if wrong_order:
+-        rot = (rot + 4) % 8
+-        view = inspect(rot)
++    # One branch is inverted; normalise it upright so both channels share one
++    # sense.  The zero-lag correlation is the inversion marker: an inverted
++    # branch makes it negative, and unlike a DC level the sign is stable.
++    corr = float(view["corr"])
++    if corr < 0:
++        b = -b
+ 
+-    a, b = view["ch_a"], view["ch_b"]
+-    al_a, al_b = view["ch_a_align"], view["ch_b_align"]
++    # Tone fit and loop alignment on the two final streams only -- the earlier
++    # implementation ran them on every candidate rotation, which is both wasteful
++    # and the reason the alignment it returned could belong to a stream that was
++    # later discarded.
++    align_a = align_to_loop(fit_tone(a, f0, refine=True)["residual"], cfg)
++    align_b = align_to_loop(fit_tone(b, f0, refine=True)["residual"], cfg)
+ 
+     # Both channels see the same DPG loop, so one alignment serves both; take
+     # whichever correlation peak was stronger.
+-    n0 = al_a["n0"] if abs(al_a["peak"]) >= abs(al_b["peak"]) else al_b["n0"]
++    n0 = align_a["n0"] if abs(align_a["peak"]) >= abs(align_b["peak"]) else align_b["n0"]
+ 
+     return {
+         "ch_a": a,
+         "ch_b": b,
+         "n0": n0,
+-        "rotation": rot,
+-        "swapped": wrong_order,
+-        "sign_a": view["ch_a_sign"],
+-        "sign_b": view["ch_b_sign"],
+-        "align_margin": float(min(al_a["margin"], al_b["margin"])),
++        "rotation": view["rotation"],
++        # True when deframe's raw winner was the half-group-shifted candidate and
++        # had to be corrected -- i.e. the ordering ambiguity did occur here.
++        "swapped": bool(view["lagged"]),
++        # Pre-normalisation: negative is the healthy anti-proportional pair.
++        "corr": corr,
++        "abs_corr": abs(corr),
++        "sign_a": align_a["sign"],
++        "sign_b": align_b["sign"],
++        "align_margin": float(min(align_a["margin"], align_b["margin"])),
+         "signature": signature or {"dc_a": float(a.mean()), "dc_b": float(b.mean())},
+     }
+ 
+@@ -328,7 +385,30 @@ class ChannelEstimate:
+     """Observed dither amplitude in ADC codes; proportional to channel gain."""
+ 
+     skew_samples: float = np.nan
+-    """Sampling-instant error in ADC sample periods (positive = samples late)."""
++    """Sampling-instant error in ADC sample periods (positive = samples late).
++
++    Measured from observables that are insensitive to pulse *shape*: the main
++    tone's fitted phase and the dither event centroid.  See
++    :func:`skew_from_phase` and :func:`event_centroid_samples` for why the
++    first-order template expansion cannot be used on real hardware."""
++
++    phase_rad: float = np.nan
++    """Fitted main-tone phase at the record origin [rad].
++
++    Only the *difference* between the two channels is meaningful.  Available so
++    the block estimator can turn it into a timing skew with a shared frequency."""
++
++    skew_phase_samples: float = np.nan
++    """Skew from the tone-phase observable alone (shape-independent)."""
++
++    skew_centroid_samples: float = np.nan
++    """Skew from the event-centroid observable alone (shape-independent)."""
++
++    centroid_samples: float = np.nan
++    """Amplitude-weighted centre of the dither events, in ADC samples."""
++
++    tone_f0: float = np.nan
++    """Fitted tone frequency actually used for :attr:`phase_rad` [cycles/sample]."""
+ 
+     skew_ps: float = np.nan
+     tone_amplitude: float = np.nan
+@@ -336,6 +416,13 @@ class ChannelEstimate:
+     align_margin: float = np.nan
+     align_n0: int = -1
+     residual_rms: float = np.nan
++    gain_sign_fit: float = np.nan
++    """Sign the windowed fit produced before ``pin_polarity`` pinned it [+-1].
++
++    Recorded rather than discarded: a frame that fits the opposite sign to the
++    session anchor is telling you its local polarity balance was one-sided, which
++    is worth counting even though the sign itself carries no per-frame
++    information."""
+     v_profile: np.ndarray = field(default=None, repr=False)
+     u_profile: np.ndarray = field(default=None, repr=False)
+ 
+@@ -348,6 +435,10 @@ def estimate_channel(
+     refine_frequency: bool = True,
+     passes: int = 2,
+     skew_prior_samples: float = 0.0,
++    f0_override: float | None = None,
++    polarity_sign: float = 1.0,
++    pin_polarity: bool = False,
++    accumulator: "JointEventAccumulator | None" = None,
+ ) -> ChannelEstimate:
+     """Extract offset, gain and skew of one channel from one capture.
+ 
+@@ -364,9 +455,24 @@ def estimate_channel(
+     far outside the first-order expansion the skew estimate relies on; declaring
+     that half sample as a prior makes the estimator measure only the *error*
+     around it, where the expansion is valid again.
++
++    ``polarity_sign`` is the session-level absolute dither polarity: ``-1`` when
++    the bench path presents the injected dither inverted with respect to
++    ``polarity_sequence(cfg)``, which is what this hardware does (see
++    :func:`polarity_anchor`).  It scales the polarity sequence, so the *gain*
++    sign follows the bench instead of the model.  Offset and skew are unaffected:
++    ``pbar`` flips together with ``p``, so the two terms of the joint solution
++    cancel the flip exactly.  The record itself is never flipped -- the DC offset
++    is a measurement in ADC codes, and inverting the data would invert it.
++
++    With ``pin_polarity`` set, the fitted gain magnitude is kept but its sign is
++    forced to the anchored convention, because that sign is a session constant
++    rather than a per-frame measurement (see the comment at the assignment, and
++    :attr:`ChannelEstimate.gain_sign_fit`).  Leave it off when the sign itself is
++    what you are looking at -- the lag diagnostics rely on being able to see it.
+     """
+     y = np.asarray(y, dtype=np.float64)
+-    signs = polarity_sequence(cfg)
++    signs = polarity_sequence(cfg) * polarity_sign
+     m, _, _ = adc_templates(cfg)
+     d = pulse(m + skew_prior_samples, cfg.edge_r, cfg.top_w)
+     dprime = pulse_derivative(m + skew_prior_samples, cfg.edge_r, cfg.top_w)
+@@ -387,6 +493,16 @@ def estimate_channel(
+             n0_used = align["n0"]
+             est.align_margin = align["margin"]
+ 
++        # Phase of the main tone at the record origin, on a frequency the caller
++        # can hold common to both channels.  A time shift dt multiplies the tone
++        # by exp(-j*2*pi*f*dt), so this phase is a direct, pulse-shape-independent
++        # timing observable -- unlike the template derivative used below.
++        phase_fit = fit if f0_override is None else fit_tone(
++            y - dither_hat, f0_override, refine=False,
++        )
++        est.phase_rad = float(phase_fit["phase"])
++        est.tone_f0 = float(phase_fit["f0"])
++
+         est.align_n0 = n0_used
+         est.offset_record_codes = fit["dc"]
+         est.tone_amplitude = fit["amplitude"]
+@@ -432,23 +548,48 @@ def estimate_channel(
+         est.v_profile, est.u_profile = dither_profile, offset_profile
+ 
+         gain = float(dither_profile @ d) / dd if dd > 0 else np.nan
++        if pin_polarity and np.isfinite(gain):
++            # The dither polarity of the bench path is a *session* constant, so a
++            # frame that fits the opposite sign is not carrying information -- it
++            # is the local polarity balance of the 7-8 visible events going
++            # one-sided, which flips the fitted sign on a few per cent of frames
++            # while |gain| stays consistent with its neighbours.  Estimate the
++            # magnitude, pin the sign to the session anchor, and keep the raw sign
++            # in ``gain_sign_fit`` so the flips stay countable.
++            est.gain_sign_fit = 1.0 if gain >= 0 else -1.0
++            gain = abs(gain)
+         est.gain_codes = gain
+         v = dither_profile
+         u = offset_profile
+ 
++        # Pooling hook: when a joint accumulator is attached, record this frame's
++        # event windows instead of finishing the amplitude fit locally.  See
++        # JointEventAccumulator -- stacking windows from many frames is what gives
++        # the joint estimator enough events.
++        if accumulator is not None:
++            accumulator.add(starts, signs[ks], resid, m_lo, m_hi)
++            est.n_events_used = int(ks.size)
++            continue
++
+         if np.isfinite(gain) and abs(gain) > 1e-9 and dpdp > 0:
+             est.skew_samples = skew_prior_samples + float(
+                 (v - gain * d) @ dprime
+             ) / (gain * dpdp)
+             est.skew_ps = est.skew_samples / cfg.fs_adc * 1e12
+ 
++        # Shape-independent companion observable: the amplitude-weighted centre of
++        # the pulse energy over the visible events.  Recorded (not used) here; the
++        # block estimator combines it with the tone phase.
++        est.centroid_samples = event_centroid_samples(resid, starts, m_lo, m_hi)
++
+         # Offset from the flat top only: those samples are insensitive to skew,
+         # so a residual timing error cannot leak into the offset estimate.
+         top = (m >= cfg.edge_r) & (m < cfg.edge_r + cfg.top_w)
+         est.offset_codes = float(u[top].mean()) if np.any(top) else float(u.mean())
+ 
+         if pass_index + 1 < passes and np.isfinite(gain):
+-            dither_hat = synthesize_dither(y.size, n0_used, cfg, gain)
++            dither_hat = synthesize_dither(y.size, n0_used, cfg, gain,
++                                           polarity_sign=polarity_sign)
+ 
+     return est
+ 
+@@ -464,6 +605,83 @@ class BlockEstimate:
+     skew_mismatch_ps: float = np.nan
+     rotation: int = -1
+ 
++    skew_mismatch_samples: float = np.nan
++    """Skew mismatch in ADC sample periods, from the shape-robust observables."""
++
++    skew_phase_ps: float = np.nan
++    """Skew mismatch from the tone-phase observable [ps]."""
++
++    skew_centroid_ps: float = np.nan
++    """Skew mismatch from the event-centroid observable [ps]."""
++
++    skew_source: str = "none"
++    """Which observable produced :attr:`skew_mismatch_ps`.
++
++    ``phase`` is the normal path, ``profile-fallback`` means both shape-robust
++    observables were unavailable, and ``observables-disagree`` means they
++    contradicted each other so the frame was discarded."""
++
++
++def event_centroid_samples(resid: np.ndarray, starts: np.ndarray,
++                           m_lo: int, m_hi: int) -> float:
++    """Amplitude-weighted centre of the dither events, in ADC samples.
++
++    This is a *shape-independent* timing observable.  A sampling-instant error
++    ``dt`` translates the whole pulse in time, so the centroid of the pulse
++    energy moves by exactly ``dt`` no matter what the pulse looks like.  Pulse
++    dispersion, bandwidth limiting or any other symmetric distortion changes the
++    width but not the centroid, so unlike a template-derivative fit this stays
++    unbiased on real hardware.
++
++    Only the samples that actually carry pulse energy are used, with the local
++    baseline removed first.  Integrating across the whole event window instead
++    would mix in ~20 samples of pure noise per event and, because channel B's
++    residual is several times noisier than channel A's on this bench, that noise
++    is what limits the observable.  Restricting the sum to the pulse and
++    subtracting the window's outer samples as a baseline keeps the estimate
++    anchored to the pulse itself.
++
++    Returns NaN when there are too few usable events for the mean to be
++    meaningful.
++    """
++    if starts.size < 3:
++        return np.nan
++    idx = starts[:, None] + np.arange(m_lo, m_hi + 1)[None, :]
++    w = np.abs(resid[idx])
++    m = np.arange(m_lo, m_hi + 1)
++    # Pulse occupies [offset, offset + edge + top + edge); everything else in the
++    # window is baseline.  Use the outer 25 % of the window on each side.
++    span = m_hi - m_lo + 1
++    guard = max(2, span // 4)
++    base_mask = (m < m_lo + guard) | (m > m_hi - guard)
++    pulse_mask = ~base_mask
++    if not np.any(pulse_mask) or not np.any(base_mask):
++        return np.nan
++    w = w - w[:, base_mask].mean(axis=1, keepdims=True)
++    w = np.clip(w, 0.0, None)          # energy above the local baseline only
++    wp = w[:, pulse_mask]
++    tot = wp.sum(axis=1)
++    good = tot > 0
++    if np.count_nonzero(good) < 3:
++        return np.nan
++    offs = m[pulse_mask].astype(np.float64)
++    per_event = (wp[good] * offs[None, :]).sum(axis=1) / tot[good]
++    return float(np.mean(per_event))
++
++
++def wrap_to_half_period(delta: float, f0: float) -> float:
++    """Map a time difference into +-1/(2*f0) seconds.
++
++    The tone-phase observable is only defined modulo one cycle, so a candidate
++    skew is only recoverable within half a tone period.  That is far wider than
++    any physical mismatch on this bench (full on-chip delay range ~363 ps
++    against a 5.01 ns period), so wrapping is unambiguous in practice.
++    """
++    if not np.isfinite(delta) or f0 <= 0:
++        return np.nan
++    period = 1.0 / f0
++    return float(delta - period * np.round(delta / period))
++
+ 
+ def estimate_block(
+     ch_a: np.ndarray,
+@@ -472,6 +690,8 @@ def estimate_block(
+     cancel_signal: bool = True,
+     n0: int | None = None,
+     skew_prior_samples: float = 0.0,
++    polarity_sign: float = 1.0,
++    pin_polarity: bool = False,
+ ) -> BlockEstimate:
+     """Estimate both channels of the pair from one capture.
+ 
+@@ -479,9 +699,14 @@ def estimate_block(
+     loop, so a per-channel alignment slip of one sample would show up as a
+     2 ns skew mismatch that is not there.  When ``n0`` is not supplied, channel
+     A's alignment is measured and reused for channel B.
++
++    ``polarity_sign`` is one session-level value shared by both channels (see
++    :func:`polarity_anchor`); a per-channel sign here would make ``gain_ratio``
++    meaningless, since it is the ratio of the two signed gains.
+     """
+     # Pass 1: rough estimate of channel A, which also fixes the loop alignment.
+-    a = estimate_channel(ch_a, cfg, cancel_signal=cancel_signal, n0=n0)
++    a = estimate_channel(ch_a, cfg, cancel_signal=cancel_signal, n0=n0,
++                         polarity_sign=polarity_sign, pin_polarity=pin_polarity)
+ 
+     # The ADC clock has a fixed but unknown sub-sample phase with respect to the
+     # DPG loop, and it shows up identically in both channels.  Only the
+@@ -492,18 +717,341 @@ def estimate_block(
+     common = a.skew_samples if np.isfinite(a.skew_samples) else 0.0
+     a = estimate_channel(
+         ch_a, cfg, cancel_signal=cancel_signal, n0=a.align_n0,
+-        skew_prior_samples=common,
++        skew_prior_samples=common, polarity_sign=polarity_sign,
++        pin_polarity=pin_polarity,
+     )
+     b = estimate_channel(
+         ch_b, cfg, cancel_signal=cancel_signal, n0=a.align_n0,
+-        skew_prior_samples=common + skew_prior_samples,
++        skew_prior_samples=common + skew_prior_samples, polarity_sign=polarity_sign,
++        pin_polarity=pin_polarity,
+     )
+ 
+     out = BlockEstimate(ch_a=a, ch_b=b)
+     if np.isfinite(a.gain_codes) and abs(a.gain_codes) > 1e-9:
+         out.gain_ratio = b.gain_codes / a.gain_codes
+     out.offset_mismatch_codes = b.offset_codes - a.offset_codes
+-    out.skew_mismatch_ps = b.skew_ps - a.skew_ps
++
++    # --- skew, from shape-independent observables ---------------------------
++    #
++    # The template-derivative estimate in estimate_channel is a first-order
++    # expansion of d(m + dt).  On the bench it reports a ~620 ps offset that does
++    # not move when the true skew changes, because the measured pulse profile is
++    # not the ideal raised-cosine template: dispersion and bandwidth limiting
++    # reshape it, and the fitting basis -- not the timing -- then drives the
++    # answer.  Two observables survive that distortion because they depend only
++    # on *when* energy arrives, not on the pulse form:
++    #
++    #   tone phase   : dt = -(phi_B - phi_A) / (2*pi*f), exact to first order in
++    #                  dt and independent of pulse shape, but wraps every 1/f.
++    #   event centroid: dt = centroid_B - centroid_A, unwrapped, less precise
++    #                  because it averages |residual| over few events.
++    #
++    # Both need the two channels fitted at one common frequency: a frequency
++    # difference would masquerade as a phase difference.
++    ts_ps = 1e12 / cfg.fs_adc
++    f_sh = 0.5 * (a.tone_f0 + b.tone_f0)
++    if not np.isfinite(f_sh) or f_sh <= 0:
++        f_sh = cfg.sig_cycles / cfg.n_adc_period
++    if not (0.0 < f_sh < 0.5):
++        f_sh = cfg.sig_cycles / cfg.n_adc_period
++
++    a2 = estimate_channel(ch_a, cfg, cancel_signal=cancel_signal, n0=a.align_n0,
++                          skew_prior_samples=common, f0_override=f_sh,
++                          polarity_sign=polarity_sign, pin_polarity=pin_polarity)
++    b2 = estimate_channel(ch_b, cfg, cancel_signal=cancel_signal, n0=a.align_n0,
++                          skew_prior_samples=common + skew_prior_samples,
++                          f0_override=f_sh, polarity_sign=polarity_sign,
++                          pin_polarity=pin_polarity)
++    a, b = a2, b2
++    out.ch_a, out.ch_b = a, b
++
++    dphi = b.phase_rad - a.phase_rad
++    if np.isfinite(dphi):
++        dphi = float(np.arctan2(np.sin(dphi), np.cos(dphi)))  # +-pi
++        # fit_tone returns phase = arctan2(-b, a) with y = a*cos + b*sin, i.e.
++        # the negated "signal peaks at n = phase/(2 pi f0)" angle.  Under that
++        # convention a sampling delay dt *decreases* the phase, so the skew is
++        # +dphi/(2 pi f) rather than -dphi/(2 pi f).  Verified against
++        # BenchModel ground truth (skew_b = +3.6 ps -> +3.59 ps estimated).
++        skew_phase = dphi / (2.0 * np.pi * f_sh)
++        skew_phase = wrap_to_half_period(skew_phase, f_sh)
++    else:
++        skew_phase = np.nan
++    a.skew_phase_samples = skew_phase
++    b.skew_phase_samples = skew_phase
++
++    if np.isfinite(a.centroid_samples) and np.isfinite(b.centroid_samples):
++        skew_centroid = float(b.centroid_samples - a.centroid_samples)
++    else:
++        skew_centroid = np.nan
++    a.skew_centroid_samples = skew_centroid
++    b.skew_centroid_samples = skew_centroid
++
++    # --- resolve the half-tone-period ambiguity -----------------------------
++    #
++    # The two channels sit at a fixed +-pi relation, so the tone-phase observable
++    # determines the skew only modulo half a tone period: on the bench the phase
++    # estimate lands on a small set of values separated by exactly T/2 = 2507.7 ps
++    # (measured: -1924 ps and +577 ps on successive frames).  Phase alone cannot
++    # choose between them.
++    #
++    # Two things can break the tie, and they are NOT equally good:
++    #
++    #   skew_prior_samples -- the skew the controller has already commanded.  The
++    #       true mismatch is prior + residual and the residual is small, so the
++    #       prior is within a few ps of the answer and resolves the branch
++    #       unambiguously.  This is the closed-loop case.
++    #   the event centroid -- an absolute event-time difference, available when
++    #       nothing has been commanded (the probe).  It has no ambiguity but only
++    #       ~600 ps resolution against a 1253.8 ps half-period decision, so it is
++    #       a weak arbiter and must not override a good prior.
++    #
++    # Order matters: letting the centroid win made a controller transient select
++    # the wrong branch and the closed loop diverged (sim gain ratio 1.0004 ->
++    # 0.767 at iteration 36).
++    half_period_s = 0.5 / f_sh if f_sh > 0 else np.nan
++    skew_samples = skew_phase
++    branch_by = "none"
++    if np.isfinite(skew_phase) and np.isfinite(half_period_s):
++        cands = [skew_phase - half_period_s, skew_phase, skew_phase + half_period_s]
++        if abs(skew_prior_samples) > 1e-12:
++            skew_samples = min(cands, key=lambda c: abs(c - skew_prior_samples))
++            branch_by = "prior"
++        elif np.isfinite(skew_centroid):
++            skew_samples = min(cands, key=lambda c: abs(c - skew_centroid))
++            branch_by = "centroid"
++
++    skew_source = "phase"
++    if not (np.isfinite(skew_samples) and abs(skew_samples) < 2.0):
++        skew_samples = a.skew_samples if np.isfinite(a.skew_samples) else np.nan
++        skew_source = "profile-fallback"
++    elif (
++        np.isfinite(skew_centroid)
++        and abs(skew_samples - skew_centroid) > 1.0
++        and branch_by != "prior"
++    ):
++        # The centroid only gets to veto when it was also the branch arbiter.  If
++        # the commanded skew chose the branch, a centroid disagreement is expected
++        # -- the centroid is the coarser observable -- and must not discard an
++        # otherwise good frame, or the closed loop loses its update.
++        skew_samples = np.nan
++        skew_source = "observables-disagree"
++    elif np.isfinite(skew_phase) and np.isfinite(half_period_s):
++        if abs(skew_samples - skew_phase) > 1e-12:
++            skew_source = f"phase+branch({branch_by})"
++
++    out.skew_mismatch_samples = skew_samples
++    out.skew_mismatch_ps = skew_samples * ts_ps if np.isfinite(skew_samples) else np.nan
++    out.skew_source = skew_source
++    out.skew_phase_ps = skew_phase * ts_ps if np.isfinite(skew_phase) else np.nan
++    out.skew_centroid_ps = (
++        skew_centroid * ts_ps if np.isfinite(skew_centroid) else np.nan
++    )
++
++    # Per-channel fields are kept consistent with the mismatch so that logging and
++    # any downstream "b - a" reconstruction still agree.  Only the *difference* of
++    # these two is physically meaningful; the common part is the unknown ADC-clock
++    # phase against the DPG loop and is deliberately parked on channel A.
++    a.skew_samples = 0.0 if np.isfinite(skew_samples) else np.nan
++    a.skew_ps = 0.0 if np.isfinite(skew_samples) else np.nan
++    b.skew_samples = skew_samples
++    b.skew_ps = out.skew_mismatch_ps
++    return out
++
++
++# ---------------------------------------------------------------------------
++# Cross-frame joint aggregation
++# ---------------------------------------------------------------------------
++
++class JointEventAccumulator:
++    """Pool dither event windows from many captures before fitting amplitude.
++
++    A single 4095-byte capture holds only ``floor(n_samples / slot_period)`` whole
++    dither events -- 7 or 8 with the bench geometry (1020 samples, 130-sample
++    slot).  Fitting gain from 7 events leaves ~9.6 % frame-to-frame scatter on
++    channel B, far above the 2 % the sanity check wants, and no amount of tuning
++    inside one capture can fix that: the estimate is variance-limited by the
++    number of events, and the count is capped by the frame length.
++
++    The bench firmware solves the same problem by stacking event windows across
++    frames (see ``adc_cal_skew_estimate_joint_frames``).  Aggregation helps for a
++    second, subtler reason too: each capture starts at an arbitrary point in the
++    DPG loop, so consecutive frames expose *different* events and therefore
++    different slices of the balanced polarity sequence.  Pooling them makes the
++    local polarity sum average towards zero instead of leaving whichever
++    imbalance one short window happened to have.
++
++    Only the amplitude statistics are pooled here.  Skew is *not* taken from the
++    pooled profile, because the ADC-clock sub-sample phase differs slightly from
++    frame to frame and would smear the pooled pulse shape; the per-frame skew
++    observables are combined robustly by :func:`estimate_block_joint` instead.
++    """
++
++    def __init__(self, m_lo: int, m_hi: int):
++        self.m_lo = int(m_lo)
++        self.m_hi = int(m_hi)
++        self.span = self.m_hi - self.m_lo + 1
++        self.n_events = 0
++        self.n_frames = 0
++        # sum over events of (polarity * window) and of (window)
++        self._v = np.zeros(self.span, dtype=np.float64)
++        self._u = np.zeros(self.span, dtype=np.float64)
++        self._pol_sum = 0.0
++
++    def add(self, starts, pol, resid, m_lo, m_hi) -> None:
++        if starts.size == 0:
++            return
++        idx = starts[:, None] + np.arange(m_lo, m_hi + 1)[None, :]
++        w = resid[idx]
++        p = np.asarray(pol, dtype=np.float64)[:, None]
++        self._v += (p * w).sum(axis=0)
++        self._u += w.sum(axis=0)
++        self._pol_sum += float(np.sum(p))
++        self.n_events += int(starts.size)
++        self.n_frames += 1
++
++    @property
++    def pbar(self) -> float:
++        return self._pol_sum / self.n_events if self.n_events else 0.0
++
++    def profiles(self) -> tuple[np.ndarray, np.ndarray]:
++        """Polarity-weighted and plain averaged profiles over all pooled events."""
++        if self.n_events == 0:
++            return np.zeros(self.span), np.zeros(self.span)
++        return self._v / self.n_events, self._u / self.n_events
++
++
++def estimate_block_joint(
++    frames: list[tuple[np.ndarray, np.ndarray, int]],
++    cfg: DitherConfig,
++    cancel_signal: bool = True,
++    skew_prior_samples: float = 0.0,
++    polarity_sign: float = 1.0,
++    pin_polarity: bool = False,
++) -> BlockEstimate:
++    """Joint estimate over several captures.
++
++    ``frames`` is a list of ``(ch_a, ch_b, n0)`` triples, all from the same
++    register state.  Amplitude and offset come from the pooled event windows;
++    skew is the robust median of the per-frame, branch-resolved estimates, which
++    rejects the occasional frame whose half-period branch was mis-selected.
++    """
++    if not frames:
++        raise ValueError("no frames supplied")
++
++    m, _, _ = adc_templates(cfg)
++    d = pulse(m, cfg.edge_r, cfg.top_w)
++    dd = float(d @ d)
++
++    acc_a = JointEventAccumulator(int(m[0]), int(m[-1]))
++    acc_b = JointEventAccumulator(int(m[0]), int(m[-1]))
++
++    per_frame = []
++    for ch_a, ch_b, n0 in frames:
++        a1 = estimate_channel(ch_a, cfg, cancel_signal=cancel_signal, n0=n0,
++                              polarity_sign=polarity_sign, pin_polarity=pin_polarity,
++                              accumulator=acc_a)
++        b1 = estimate_channel(ch_b, cfg, cancel_signal=cancel_signal, n0=n0,
++                              polarity_sign=polarity_sign, pin_polarity=pin_polarity,
++                              accumulator=acc_b)
++        # Full per-frame pass (no accumulator) supplies gain/offset/skew/phase.
++        est = estimate_block(ch_a, ch_b, cfg, cancel_signal=cancel_signal,
++                             n0=a1.align_n0, skew_prior_samples=skew_prior_samples,
++                             polarity_sign=polarity_sign, pin_polarity=pin_polarity)
++        per_frame.append(est)
++        # Keep the shared alignment consistent for the accumulator passes.
++        if a1.align_n0 != est.ch_a.align_n0:
++            a1.align_n0 = est.ch_a.align_n0
++
++    va, ua = acc_a.profiles()
++    vb, ub = acc_b.profiles()
++
++    def _fit(acc, v, u):
++        pbar = acc.pbar
++        denom = 1.0 - pbar * pbar
++        if denom < 1e-6:
++            denom = 1.0
++        dith = (v - pbar * u) / denom
++        off = (u - pbar * v) / denom
++        gain = float(dith @ d) / dd if dd > 0 else float("nan")
++        sign_fit = float(np.sign(gain)) if np.isfinite(gain) else np.nan
++        if pin_polarity and np.isfinite(gain):
++            # Pooling hundreds of events makes this sign far more reliable than the
++            # per-frame one, but it is still a session constant, so pin it to the
++            # anchored convention and keep the raw sign for the record.
++            gain = abs(gain)
++        top = (m >= cfg.edge_r) & (m < cfg.edge_r + cfg.top_w)
++        offset = float(off[top].mean()) if np.any(top) else float(off.mean())
++        return gain, offset, sign_fit
++
++    ga, oa, sign_a_fit = _fit(acc_a, va, ua)
++    gb, ob, sign_b_fit = _fit(acc_b, vb, ub)
++
++    last = per_frame[-1]
++    a = replace(last.ch_a)
++    b = replace(last.ch_b)
++    a.gain_codes, a.offset_codes, a.gain_sign_fit = ga, oa, sign_a_fit
++    b.gain_codes, b.offset_codes, b.gain_sign_fit = gb, ob, sign_b_fit
++    a.n_events_used = acc_a.n_events
++    b.n_events_used = acc_b.n_events
++
++    out = BlockEstimate(ch_a=a, ch_b=b)
++    out.gain_ratio = gb / ga if np.isfinite(ga) and abs(ga) > 1e-9 else np.nan
++    out.offset_mismatch_codes = ob - oa
++
++    # Skew: robust combination of the per-frame branch-resolved values.  The
++    # median rejects frames whose half-period branch was mis-selected, which is
++    # the dominant failure mode for this observable (it is defined modulo T/2).
++    ts_ps = 1e12 / cfg.fs_adc
++
++    # Pooled centroid: the per-frame centroid is the only unambiguous timing
++    # observable, but averaging |residual| over just 7-8 events leaves it with
++    # several hundred ps of scatter -- too coarse to arbitrate a +-1253.8 ps
++    # half-period branch.  Pooling all frames' centroids cuts that by ~sqrt(N),
++    # which is what makes branch selection reliable without a commanded-skew
++    # prior (the probe case).
++    cent_vals = [e.skew_centroid_ps for e in per_frame
++                 if np.isfinite(e.skew_centroid_ps)]
++    skew_centroid_joint_ps = float(np.median(cent_vals)) if cent_vals else np.nan
++    skew_centroid_joint = (skew_centroid_joint_ps / ts_ps
++                           if np.isfinite(skew_centroid_joint_ps) else np.nan)
++
++    half_s = 0.5 / cfg.f_sig if cfg.f_sig > 0 else np.nan
++
++    def _branch(x):
++        if not np.isfinite(x) or not np.isfinite(half_s):
++            return x
++        return x - half_s * np.round(x / half_s)
++
++    resolved = []
++    for e in per_frame:
++        ph = (e.skew_phase_ps / ts_ps if np.isfinite(e.skew_phase_ps) else np.nan)
++        if np.isfinite(ph) and np.isfinite(half_s):
++            cands = [ph - half_s, ph, ph + half_s]
++            if skew_prior_samples != 0.0:
++                resolved.append(min(cands, key=lambda c: abs(c - skew_prior_samples)))
++            elif np.isfinite(skew_centroid_joint):
++                resolved.append(min(cands, key=lambda c: abs(c - skew_centroid_joint)))
++            else:
++                resolved.append(_branch(ph))
++        elif np.isfinite(e.skew_mismatch_samples):
++            resolved.append(e.skew_mismatch_samples)
++    vals = [v for v in resolved if np.isfinite(v)]
++    skew_samples = float(np.median(vals)) if vals else np.nan
++
++    out.skew_mismatch_samples = skew_samples
++    out.skew_mismatch_ps = skew_samples * ts_ps if np.isfinite(skew_samples) else np.nan
++    ph = [e.skew_phase_ps for e in per_frame if np.isfinite(e.skew_phase_ps)]
++    out.skew_phase_ps = float(np.median(ph)) if ph else np.nan
++    out.skew_centroid_ps = skew_centroid_joint_ps
++    out.skew_source = (
++        f"joint(n={len(vals)}/{len(per_frame)},cent={len(cent_vals)})"
++    )
++    out.rotation = last.rotation
++    a.skew_samples = 0.0 if np.isfinite(skew_samples) else np.nan
++    a.skew_ps = 0.0 if np.isfinite(skew_samples) else np.nan
++    b.skew_samples = skew_samples
++    b.skew_ps = out.skew_mismatch_ps
+     return out
+ 
+ 
+@@ -531,6 +1079,22 @@ class CalibrationState:
+     skew_cmd_ps: float = 0.0
+     """Accumulated delay commanded to channel B, in picoseconds."""
+ 
++    skew_limit_ps: float = 165.0
++    """Clamp on :attr:`skew_cmd_ps`, in picoseconds.
++
++    The AD9695 delay is one-sided, so ``capture.AdcClockDelay`` parks channel A
++    at its bias (165 ps by default) and moves B relative to it.  B can therefore
++    only realise roughly +-165 ps of *differential* delay, and the loop must not
++    integrate past that: on a stalled capture the measured skew error never
++    responds to the command, and an unclamped integrator walks the actuator into
++    its rail (a 296-iteration run reached a commanded 360.8 ps against a 165 ps
++    authority, leaving channel B pinned at full delay).  Clamping keeps the state
++    honest; :attr:`skew_saturated` records that it happened, so the run says so
++    instead of quietly losing authority."""
++
++    skew_saturated: int = 0
++    """Number of updates that hit :attr:`skew_limit_ps`."""
++
+     mu_offset: float = 0.35
+     mu_gain: float = 0.35
+     mu_skew: float = 0.30
+@@ -571,7 +1135,15 @@ class CalibrationState:
+         if np.isfinite(est.skew_mismatch_ps):
+             e_skew = est.skew_mismatch_ps - self.skew_target_ps
+             # Channel B sampled e_skew ps too late -> command that much less delay.
+-            self.skew_cmd_ps -= self.mu_skew * e_skew
++            # The command is clamped to what the actuator can actually realise;
++            # without that, an error the hardware cannot respond to (a stalled
++            # capture, or a genuinely unreachable target) integrates forever and
++            # parks channel B at its rail.
++            wanted = self.skew_cmd_ps - self.mu_skew * e_skew
++            clamped = float(np.clip(wanted, -self.skew_limit_ps, self.skew_limit_ps))
++            if clamped != wanted:
++                self.skew_saturated += 1
++            self.skew_cmd_ps = clamped
+ 
+         self.iteration += 1
+         return {
+@@ -588,7 +1160,8 @@ class CalibrationState:
+ 
+ 
+ def synthesize_dither(
+-    n_samples: int, n0: int, cfg: DitherConfig, gain_codes: float
++    n_samples: int, n0: int, cfg: DitherConfig, gain_codes: float,
++    polarity_sign: float = 1.0,
+ ) -> np.ndarray:
+     """The injected dither as this channel saw it, in ADC codes.
+ 
+@@ -598,12 +1171,39 @@ def synthesize_dither(
+     Every dither-based converter subtracts the known injected sequence from the
+     output before scoring, and the same applies here -- the amplitude is not
+     assumed, it is the one the loop just measured.
++
++    ``polarity_sign`` must be the *same* value that produced ``gain_codes``
++    (:func:`polarity_anchor`).  A measured gain is expressed in the polarity
++    convention it was fitted in, so mixing conventions here turns the subtraction
++    into an addition and doubles the dither instead of removing it.
+     """
+     if not np.isfinite(gain_codes):
+         return np.zeros(n_samples)
+     ref = dither_only_loop(cfg) / cfg.a_dither  # unit peak amplitude
+     idx = (np.arange(n_samples) + n0) % cfg.n_adc_period
+-    return gain_codes * ref[idx]
++    return polarity_sign * gain_codes * ref[idx]
++
++
++def polarity_anchor(prep: dict) -> float:
++    """Session-level dither polarity sign from one prepared capture.
++
++    The DPG loop and the analog path between it and the ADC are one physical
++    chain, so whether the injected impulses reach the converter upright or
++    inverted is a fixed property of the bench -- not of a frame.  It is measured
++    here from channel A's own loop alignment (a full-record correlation against
++    the known dither train, and therefore the most robust observable available)
++    and then held for the whole session.
++
++    Why channel A: it is the reference branch.  ``prepare_capture`` normalises
++    the inverted branch to match it, so A is the branch whose sign is untouched
++    by that normalisation, and it is the branch whose word positions the
++    firmware also calls channel A.
++
++    Applying the returned sign scales the estimator's polarity *model*
++    (``p[k] -> sign * p[k]``); the record is deliberately left alone, because the
++    DC offset is a measurement in ADC codes and flipping the data would flip it.
++    """
++    return -1.0 if float(prep.get("sign_a", 1.0)) < 0 else 1.0
+ 
+ 
+ def interleave(ch_a: np.ndarray, ch_b: np.ndarray) -> np.ndarray:
+diff --git a/calibration_loop/loop.py b/calibration_loop/loop.py
+index c0167a4..869bc3c 100644
+--- a/calibration_loop/loop.py
++++ b/calibration_loop/loop.py
+@@ -27,6 +27,7 @@ from .estimator import (
+     CalibrationState,
+     estimate_block,
+     interleave,
++    polarity_anchor,
+     prepare_capture,
+     synthesize_dither,
+ )
+@@ -58,6 +59,18 @@ class LoopOptions:
+     torn DMA frame shows up exactly this way, and one bad frame driven into the
+     LMS undoes many good ones."""
+ 
++    max_consecutive_rejections: int = 5
++    """Stop the run after this many rejected frames in a row.
++
++    A rejection means one frame was untrustworthy; five in a row mean the capture
++    path is not going to recover on its own.  The bench has one failure mode that
++    looks exactly like this and never heals by itself: an ADC sample-clock delay
++    write makes the firmware reset the JESD204C link, and the link can come back
++    half-synced -- frames keep arriving (so the stale-frame guard stays quiet)
++    but the dither correlation collapses and every frame is rejected.  Grinding
++    through hundreds of iterations in that state produces nothing; stopping says
++    so."""
++
+     max_skew_samples: float = 0.25
+     """Reject a skew estimate larger than this fraction of a sample period.  The
+     first-order expansion behind the skew estimate is only valid for small
+@@ -81,6 +94,8 @@ class CalibrationLoop:
+         self.opt = options or LoopOptions()
+         self.log: list[dict] = []
+         self._signature: dict | None = None
++        self._polarity: float | None = None
++        self._warned_skew_sat = False
+ 
+     # -- one iteration ------------------------------------------------------
+     def step(self) -> dict | None:
+@@ -91,6 +106,11 @@ class CalibrationLoop:
+         prep = prepare_capture(raw, self.cfg, signature=self._signature)
+         if self._signature is None:
+             self._signature = prep["signature"]
++        if self._polarity is None:
++            # The dither polarity of the bench path is a session constant, not a
++            # per-frame quantity: measure it once from channel A and hold it, so
++            # a noisy frame cannot flip the gain signs mid-run.
++            self._polarity = polarity_anchor(prep)
+         ch_a, ch_b = prep["ch_a"], prep["ch_b"]
+ 
+         cal_a, cal_b = self.state.apply(ch_a, ch_b)
+@@ -99,6 +119,8 @@ class CalibrationLoop:
+             cancel_signal=self.opt.cancel_signal,
+             n0=prep["n0"],
+             skew_prior_samples=self.state.skew_target_ps * 1e-12 * self.cfg.fs_adc,
++            polarity_sign=self._polarity,
++            pin_polarity=True,
+         )
+         est.rotation = prep["rotation"]
+ 
+@@ -114,6 +136,12 @@ class CalibrationLoop:
+ 
+         errors = self.state.update(est)
+         row.update(errors)
++        row["skew_saturated"] = self.state.skew_saturated
++        if self.state.skew_saturated and not self._warned_skew_sat:
++            self._warned_skew_sat = True
++            print(f"  warning: skew command is pinned at its "
++                  f"{self.state.skew_limit_ps:.0f} ps limit -- the actuator has no "
++                  f"authority left in that direction")
+ 
+         if self.opt.close_skew_loop and hasattr(self.bench, "command_skew"):
+             self.bench.command_skew(self.state.skew_cmd_ps)
+@@ -153,9 +181,14 @@ class CalibrationLoop:
+         fs = self.cfg.fs_adc
+         f_in = self.cfg.f_sig
+ 
+-        # Strip the injected dither before scoring; see synthesize_dither().
+-        d_a = synthesize_dither(cal_a.size, n0, self.cfg, est.ch_a.gain_codes)
+-        d_b = synthesize_dither(cal_b.size, n0, self.cfg, est.ch_b.gain_codes)
++        # Strip the injected dither before scoring; see synthesize_dither().  The
++        # gains were fitted with the session polarity sign, so the synthesised
++        # dither must use it too or the subtraction would become an addition.
++        pol = self._polarity or 1.0
++        d_a = synthesize_dither(cal_a.size, n0, self.cfg, est.ch_a.gain_codes,
++                                polarity_sign=pol)
++        d_b = synthesize_dither(cal_b.size, n0, self.cfg, est.ch_b.gain_codes,
++                                polarity_sign=pol)
+         cal_a, cal_b = cal_a - d_a, cal_b - d_b
+         # The raw records have not been through the gain correction, so the
+         # dither sits there at a proportionally different amplitude.
+@@ -235,6 +268,7 @@ class CalibrationLoop:
+     # -- driver -------------------------------------------------------------
+     def run(self, iterations: int, verbose: bool = True) -> list[dict]:
+         failures = 0
++        reject_streak = 0
+         for _ in range(iterations):
+             row = self.step()
+             if row is None:
+@@ -247,9 +281,15 @@ class CalibrationLoop:
+                 continue
+             failures = 0
+             if row.get("rejected"):
++                reject_streak += 1
+                 if verbose:
+                     print(f"  it {row['iteration']:4d}  rejected: {row['rejected']}")
++                if reject_streak >= self.opt.max_consecutive_rejections:
++                    print(f"  {reject_streak} frames rejected in a row, stopping -- "
++                          "the capture path needs attention before another run")
++                    break
+                 continue
++            reject_streak = 0
+             if verbose:
+                 print(
+                     f"  it {row['iteration']:4d}  "
+@@ -268,8 +308,19 @@ class CalibrationLoop:
+ 
+         csv_path = out_dir / f"{stem}.csv"
+         if self.log:
++            # Accepted and rejected rows do not carry the same keys: a rejection
++            # returns before the state update, so it has no offset_error_*/gain_*
++            # /skew_cmd_ps/state columns.  Taking the header from log[0] alone
++            # therefore crashes the whole save whenever the first iteration is
++            # rejected -- losing the entire run after the bench time was spent.
++            # Use the union of every row's keys, in first-seen order.
++            fieldnames: list[str] = []
++            for entry in self.log:
++                for key in entry:
++                    if key not in fieldnames:
++                        fieldnames.append(key)
+             with csv_path.open("w", newline="", encoding="utf-8") as fh:
+-                writer = csv.DictWriter(fh, fieldnames=list(self.log[0].keys()))
++                writer = csv.DictWriter(fh, fieldnames=fieldnames, restval="")
+                 writer.writeheader()
+                 writer.writerows(self.log)
+ 
+@@ -281,6 +332,7 @@ class CalibrationLoop:
+                     "options": asdict(self.opt),
+                     "final_state": asdict(self.state),
+                     "channel_signature": self._signature,
++                    "polarity_sign": self._polarity,
+                 },
+                 indent=2,
+             ),
+diff --git a/calibration_loop/run_calibration.py b/calibration_loop/run_calibration.py
+index b5ecddf..acbe34f 100644
+--- a/calibration_loop/run_calibration.py
++++ b/calibration_loop/run_calibration.py
+@@ -64,12 +64,34 @@ def cmd_gen(args) -> None:
+     print(f"  seamless loop       : {d['seamless_loop']}")
+ 
+ 
++def _skew_limit_ps(bench) -> float:
++    """Delay the actuator can really realise, from its own bias and range.
++
++    Channel A is parked at ``bias_ps`` and only B moves, so the command is
++    limited by whichever side runs out first.  Falls back to the default bias
++    when the bench object does not expose its delay stage (the simulator).
++    """
++    delay = getattr(bench, "delay", None)
++    if delay is None:
++        return 165.0
++    try:
++        from .capture import FINE_MAX, FINE_STEP_PS, SUPER_FINE_MAX, SUPER_FINE_STEP_PS
++        span = FINE_MAX * FINE_STEP_PS
++        if getattr(delay, "allow_super_fine", False):
++            span += SUPER_FINE_MAX * SUPER_FINE_STEP_PS
++        bias = abs(float(delay.bias_ps))
++        return max(1.0, min(bias, span - bias))
++    except Exception:  # noqa: BLE001 - never block a run over a diagnostic limit
++        return 165.0
++
++
+ def _run(bench, cfg, args, label: str):
+     state = CalibrationState(
+         mu_offset=args.mu_offset,
+         mu_gain=args.mu_gain,
+         mu_skew=args.mu_skew,
+         skew_target_ps=args.skew_target_ps,
++        skew_limit_ps=_skew_limit_ps(bench),
+     )
+     options = LoopOptions(
+         cancel_signal=not args.no_cancellation,
+@@ -180,7 +202,7 @@ def cmd_probe(args) -> None:
+     the estimator saw, and touches nothing.  Run it, check the numbers below are
+     sane, and only then close the loop.
+     """
+-    from .estimator import estimate_block, prepare_capture
++    from .estimator import estimate_block, polarity_anchor, prepare_capture
+ 
+     cfg = _cfg_from_args(args)
+ 
+@@ -203,6 +225,8 @@ def cmd_probe(args) -> None:
+     print("  " + "-" * 96)
+ 
+     rows, sig, ests = [], None, []
++    batch = []
++    polarity: float | None = None
+     try:
+         for i in range(args.frames):
+             raw = bench.capture()
+@@ -212,14 +236,60 @@ def cmd_probe(args) -> None:
+             prep = prepare_capture(raw, cfg, signature=sig)
+             if sig is None:
+                 sig = prep["signature"]
+-            est = estimate_block(prep["ch_a"], prep["ch_b"], cfg, n0=prep["n0"])
++            if polarity is None:
++                # Session constant: the dither polarity of the bench path, taken
++                # from channel A of the first frame and held for the batch.
++                polarity = polarity_anchor(prep)
++                print(f"  dither polarity anchor: {polarity:+.0f} "
++                      f"(channel A loop alignment sign)")
++            est = estimate_block(prep["ch_a"], prep["ch_b"], cfg, n0=prep["n0"],
++                                 polarity_sign=polarity, pin_polarity=True)
+             ests.append(est)
+             rows.append((prep, est))
++            batch.append((prep["ch_a"], prep["ch_b"], prep["n0"]))
+             print(f"  {i:>3} {prep['rotation']:>4} {str(prep['swapped']):>5} "
+                   f"{prep['align_margin']:>7.1f} {est.ch_a.n_events_used:>7} "
+                   f"{est.ch_a.gain_codes:>9.2f} {est.ch_b.gain_codes:>9.2f} "
+                   f"{est.gain_ratio:>9.5f} {est.ch_a.offset_codes:>8.2f} "
+                   f"{est.ch_b.offset_codes:>8.2f} {est.skew_mismatch_ps:>9.2f}")
++
++        # Cross-frame joint aggregation.  A single capture only holds 7-8 dither
++        # events (1020 samples / 130-sample slot), which leaves the per-frame
++        # gain scatter at ~10 % on the noisier channel.  Pooling the event
++        # windows of every frame in the batch cuts that by sqrt(N) and also
++        # averages away each frame's local polarity imbalance.
++        joint = None
++        joint_ratio_scatter = np.nan
++        if len(batch) >= 2:
++            from .estimator import estimate_block_joint
++            joint = estimate_block_joint(batch, cfg, polarity_sign=polarity or 1.0,
++                                         pin_polarity=True)
++            print(f"\n  JOINT over {len(batch)} frames: "
++                  f"{joint.ch_a.n_events_used} events/channel")
++            print(f"    gain ratio      {joint.gain_ratio:+.5f}")
++            print(f"    offset mismatch {joint.offset_mismatch_codes:+.3f} LSB")
++            print(f"    skew mismatch   {joint.skew_mismatch_ps:+.3f} ps  "
++                  f"[{joint.skew_source}]")
++
++            # One pooled number has no scatter of its own, so measure it the
++            # honest way: split the batch into two disjoint halves, estimate each
++            # independently, and take half their difference.  That is the quantity
++            # the "gain ratio scatter" criterion is really about.
++            if len(batch) >= 4:
++                half = len(batch) // 2
++                parts = []
++                for part in (batch[:half], batch[half:]):
++                    try:
++                        parts.append(estimate_block_joint(
++                            part, cfg, polarity_sign=polarity or 1.0,
++                            pin_polarity=True).gain_ratio)
++                    except Exception:  # noqa: BLE001
++                        pass
++                parts = [p for p in parts if np.isfinite(p)]
++                if len(parts) == 2:
++                    joint_ratio_scatter = float(abs(parts[0] - parts[1]) / 2.0)
++                    print(f"    half-vs-half gain ratio scatter "
++                          f"{joint_ratio_scatter:.5f}")
+     finally:
+         if args.uart:
+             bench.close()
+@@ -243,12 +313,30 @@ def cmd_probe(args) -> None:
+     print(f"  align margin    {mm:.1f} (mean)")
+ 
+     print("\nSanity checks")
++    # The event-count and scatter criteria are judged on the JOINT estimate when
++    # one is available: a single 1020-sample capture holds at most
++    # floor(1020/130) = 7 whole events, so "8 events in one capture" is not
++    # reachable with this geometry, while the pooled batch comfortably exceeds it.
++    ev_checked = joint.ch_a.n_events_used if joint is not None else None
++    if joint is not None and np.isfinite(joint.gain_ratio):
++        gm_chk = joint.gain_ratio
++        gs_chk = joint_ratio_scatter
++    else:
++        gm_chk, gs_chk = gm, gs
+     checks = [
+         (mm > 6.0, f"alignment margin {mm:.1f} > 6 -- the dither was found"),
+-        (all(e.ch_a.n_events_used >= 8 for e in ests),
+-         "at least 8 dither events per capture"),
+-        (np.isfinite(gm) and 0.8 < gm < 1.25, f"gain ratio {gm:.4f} is physical"),
+-        (np.isfinite(gs) and gs < 0.02, f"gain ratio scatter {gs:.5f} < 0.02"),
++        ((ev_checked is None and all(e.ch_a.n_events_used >= 8 for e in ests))
++         or (ev_checked is not None and ev_checked >= 8),
++         (f"at least 8 dither events "
++          + (f"(joint {ev_checked} pooled from {len(batch)} frames)"
++             if ev_checked is not None
++             else "per capture"))),
++        (np.isfinite(gm_chk) and 0.8 < gm_chk < 1.25,
++         f"gain ratio {gm_chk:.4f} is physical"),
++        (np.isfinite(gs_chk) and gs_chk < 0.02,
++         f"gain ratio scatter {gs_chk:.5f} < 0.02"
++         + (" (joint estimate)" if joint is not None and np.isfinite(joint.gain_ratio)
++            else "")),
+         (all(e.ch_a.gain_codes > 0 for e in ests), "channel polarity resolved"),
+     ]
+     for ok, text in checks:

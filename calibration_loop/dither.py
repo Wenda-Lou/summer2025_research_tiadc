@@ -70,41 +70,57 @@ class DitherConfig:
     100 MHz reference on J61.  Together with the 1.300 GSPS ADC clock this
     gives the required integer ratio of two."""
 
-    n_dac_points: int = 65536
-    """Samples in one DPG vector."""
+    n_dac_points: int = 16640
+    """Samples in one DPG vector.
+
+    This must divide evenly by ``dither_period_dac`` *and* match the geometry the
+    bench firmware expects.  The validated pair is 16640 / 260 = 64 impulses.
+    A 65536-point / 128-period vector (512 impulses, 64 ADC-sample spacing) is
+    NOT interchangeable: the board's reference and event detectors are built
+    around the 130 ADC-sample slot, so the probe reports an alignment margin of
+    ~3 and garbage gains.  The generator's own ``write_dac_files`` metadata is
+    what ``adc -ref`` compares against, so a mismatch here fails silently."""
 
     adc_ratio: int = 2
     """fs_dac / fs_adc.  Must be an integer -- see the class docstring."""
 
     # --- main tone ----------------------------------------------------------
-    sig_cycles: int = 5041
+    sig_cycles: int = 1276
     """Integer cycles of the main tone per vector, so the loop is seamless.
 
     The value is not free. What matters is how far the tone advances between one
     dither impulse and the next: that phase step is what makes the tone average
     away across events. A step close to a whole cycle means every impulse sees
     the same phase and the tone survives the averaging, inflating the offset and
-    gain estimates. 5041 gives 0.846 cycles per slot at the default geometry;
-    5120 would give exactly 10 cycles per slot and is a trap. :meth:`tone_phase_coherence` measures
-    this and :meth:`validate` rejects bad choices."""
+    gain estimates. At the default geometry 1276 gives a 0.9375-cycle step
+    (coherence 0.067) and lands the tone on 199.375 MHz, which is the value the
+    bench firmware's reference expects. 1280 (exactly 200.000 MHz) gives a
+    0.0000-cycle step and is rejected by :meth:`validate` -- that trap is why the
+    board-validated vectors are named ``..._199p375MHz_...`` and not
+    ``..._200MHz_...``."""
 
-    amp_dbfs: float = -6.0
-    """Main tone amplitude [dBFS]."""
+    amp_dbfs: float = -1.5
+    """Main tone amplitude [dBFS].
+
+    -1.5 dBFS is the bench-validated drive (peak 29570 of 32768).  A much lower
+    tone leaves the ADC capture far below full scale, where the alignment
+    correlation cannot reach the firmware's reference threshold."""
 
     # --- dither (all lengths in DAC samples) --------------------------------
-    dither_period_dac: int = 128
+    dither_period_dac: int = 260
     """Impulse repetition period [DAC samples].
 
-    At the authoritative 2:1 rate ratio this preserves the estimator's
-    established 64-sample ADC-domain event spacing."""
+    At the authoritative 2:1 rate ratio this gives a 130-sample ADC-domain event
+    spacing, which is the geometry the bench firmware was characterised with
+    (``adc_frame_samples`` 1016, 64 impulses per loop)."""
 
-    dither_position_dac: int = 48
+    dither_position_dac: int = 96
     """Impulse start inside its period [DAC samples]."""
 
-    dither_edge_dac: int = 8
+    dither_edge_dac: int = 16
     """Rise/fall length [DAC samples]."""
 
-    dither_top_dac: int = 16
+    dither_top_dac: int = 32
     """Flat-top length [DAC samples]."""
 
     dither_scale_lsb: float = 2000.0

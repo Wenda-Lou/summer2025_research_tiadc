@@ -113,6 +113,17 @@ Design characteristics:
 - The offset loop converges, but dither offset deviates 3–4 codes from tone DC;
 - This is a weak in-tolerance pass, not evidence that dither independently estimates offset accurately.
 
+> **Correction, 2026-09-17**: the 3–4 code figure is the *channel DC mismatch itself* —
+> the quantity the loop is in the middle of correcting — not a disagreement between
+> routes.  Measured on 40 archived bench frames (real hardware, converged state), the
+> pulse-window route that the loop integrates, the whole-record tone-fit DC and the
+> plain record mean all agree on that mismatch: **−3.907 / −3.975 / −3.977 codes**,
+> i.e. to 0.07 codes, with per-frame correlation +0.92.  After convergence the signed
+> residual mismatch is −0.05 to −0.18 codes, so this axis converges and needs no
+> observable change.  Reproduce with `calibration_out/_offset_routes_test.py`; see the
+> offset bullet in `AGENTS.md`.  The earlier reading conflated a per-frame |scatter|
+> with a bias.
+
 ### 3.4 Gain-Loop Errors
 
 #### (1) The production gain loop is self-normalising
@@ -127,6 +138,35 @@ Design characteristics:
 
 #### (3) Fit quality and event count
 - Dither-gain valid rate is about 2/3;
+
+> **Verified against the firmware exports, 2026-09-17** (`adc_data/calibration_exports/calibration_run_20260917_145113`,
+> a run that ends `valid=1`).  The two claims above hold, and the picture is now
+> stage-by-stage:
+> * **timing/alignment** -- dither works: `dither_valid` 10/10, peak 0.56-0.71.
+> * **offset** -- dither is not used at all: the offset stage's CSVs have no dither
+>   columns; it estimates from the aligned frame.
+> * **gain** -- the dither-only estimate is evaluated on 60 of 90 captures and carries
+>   a `FIT_QUALITY` warning on **59** of them; its value sits at **0.39-0.57** (never
+>   1.0).  The gain stage still reports `PASS` because it drives the loop from
+>   `measured_gain` / `batch_gain` (1.002-1.008), not from dither.
+> * **skew** -- the dither branch is rejected on **189 of 190** frames
+>   (`dither_skew_valid=0`; per-iteration `dither_valid_frames=0`), because
+>   `dither_edge_disagreement_ps` scatters **0.2-592 ps** against the 23 ps
+>   (`0.03` sample) gate.  `adc_calibration_skew.c:260` makes the dither branch
+>   conditional on `dither_valid`, so the skew loop that converged
+>   (mean skew -86.2 -> -38.7 -> -26.5 -> -13.0 -> +0.97 -> +1.25 ps, std shrinking
+>   10.7 -> 0.5 ps, register 29 -> 35) ran on the **tone-phase** route.
+>
+> So "dither does not work in the firmware" is really: **the firmware uses the
+> impulses for alignment only**, and takes gain from a waveform fit and skew from the
+> tone phase.  The host-side Python pipeline reached the same conclusion
+> independently (see the gain-loop and A-B-spur bullets in `AGENTS.md`): the
+> low-energy broadband pulse amplitude is too noisy to drive a gain loop (2.3 %
+> per-frame scatter, 1.2 % away from the tone) and the dispersion-rounded pulse shape
+> is useless for timing (the +-600 ps scatter appears in both implementations).
+> Note also that claim (1) here is **corroborated** by that export: the gain stage
+> passed with `final_gain_correction = 1.000000` while `cal_gain_ratio_b_over_a` was
+> still 0.9873, i.e. the loop self-normalised and left a 1.3 % AC gain mismatch.
 - Few events, template pollution, and poor fit quality lead to WARNING/INVALID.
 
 ### 3.5 Skew-Loop Errors

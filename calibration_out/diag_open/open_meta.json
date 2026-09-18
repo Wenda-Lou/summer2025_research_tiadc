@@ -1,0 +1,43 @@
+{
+  "dither": {
+    "fs_dac": 2600000000.0,
+    "n_dac_points": 16640,
+    "adc_ratio": 2,
+    "sig_cycles": 1276,
+    "amp_dbfs": -1.5,
+    "dither_period_dac": 260,
+    "dither_position_dac": 96,
+    "dither_edge_dac": 16,
+    "dither_top_dac": 32,
+    "dither_scale_lsb": 2000.0,
+    "seed": 20260725
+  },
+  "options": {
+    "cancel_signal": true,
+    "close_skew_loop": false,
+    "interleaved": false,
+    "max_capture_retries": 3,
+    "min_align_margin": 6.0,
+    "max_skew_samples": 0.25,
+    "max_gain_deviation": 0.2
+  },
+  "final_state": {
+    "offset_a": 0.0,
+    "offset_b": 0.0,
+    "gain_corr_a": 1.0,
+    "gain_corr_b": 1.0,
+    "skew_target_ps": 0.0,
+    "skew_cmd_ps": 0.0,
+    "skew_limit_ps": 165.0,
+    "skew_saturated": 0,
+    "mu_offset": 0.35,
+    "mu_gain": 0.35,
+    "mu_skew": 0.3,
+    "iteration": 0
+  },
+  "channel_signature": {
+    "dc_a": 14.60392156862745,
+    "dc_b": -405.0127450980392
+  },
+  "polarity_sign": -1.0
+}

@@ -8,7 +8,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-set(PROD_DIR "${CMAKE_CURRENT_LIST_DIR}/../test_platform/thesis_v3_500mhz_appl")
+set(PROD_DIR "${CMAKE_CURRENT_LIST_DIR}/../firmware/thesis_v3_500mhz_appl")
 
 add_executable(adc_cal_sim
     sim_main.c

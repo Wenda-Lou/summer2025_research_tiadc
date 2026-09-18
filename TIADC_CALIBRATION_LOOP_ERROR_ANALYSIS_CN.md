@@ -113,6 +113,13 @@ capture → de-frame → 应用当前 correction → estimate residual
 - offset 闭环能收敛，但 dither offset 与 tone DC 偏差 3–4 codes；
 - 属于容差内弱通过，不能作为 dither 独立精确估计 offset 的证据。
 
+> **更正，2026-09-17**：那个「3–4 codes」是**通道之间的 DC 失配本身**（环路正在校正的量），
+> 不是两条路线之间的分歧。在 40 帧归档实测帧（真实硬件、收敛态）上，环路积分的脉冲窗路线、
+> 全记录 tone 拟合 DC、朴素记录均值三者对该失配读数一致：**−3.907 / −3.975 / −3.977 codes**，
+> 即吻合到 0.07 codes，逐帧相关 +0.92。收敛后带符号残余失配为 −0.05…−0.18 codes，因此该轴
+> 是收敛的，无需更换可观测量。复现：`calibration_out/_offset_routes_test.py`；见 `AGENTS.md`
+> 的 offset 条目。此前读法把逐帧 |散布| 当成了偏差。
+
 ### 3.4 Gain 闭环误差
 
 #### （1）生产 gain 环是自归一的
@@ -128,6 +135,27 @@ capture → de-frame → 应用当前 correction → estimate residual
 #### （3）拟合质量与事件数
 - dither gain 有效帧比例约 2/3；
 - 事件少、模板污染、拟合质量差会导致 WARNING/INVALID。
+
+> **已用固件导出核实，2026-09-17**（`adc_data/calibration_exports/calibration_run_20260917_145113`，
+> 该次运行结尾 `valid=1`）。上面两条结论成立，且现在可以分阶段说清：
+> * **timing/对齐** —— dither 可用：`dither_valid` 10/10，peak 0.56–0.71。
+> * **offset** —— 完全不用 dither：offset 阶段的 CSV 里没有任何 dither 列，它从对齐帧估计。
+> * **gain** —— dither 单独估计在 90 帧中被评估 60 帧，其中 **59 帧**带 `FIT_QUALITY` 警告，
+>   数值停在 **0.39–0.57**（从未到 1.0）。增益阶段仍报 `PASS`，因为环路由
+>   `measured_gain` / `batch_gain`（1.002–1.008）驱动，不是 dither。
+> * **skew** —— dither 分支在 **190 帧里 189 帧被拒**（`dither_skew_valid=0`，逐迭代
+>   `dither_valid_frames=0`），因为 `dither_edge_disagreement_ps` 散布 **0.2–592 ps**，
+>   而门限是 23 ps（0.03 sample）。`adc_calibration_skew.c:260` 把 dither 分支写成
+>   `use_dither = config->dither_valid && ...` 的条件分支，因此那个收敛的 skew 环
+>   （−86.2 → −38.7 → −26.5 → −13.0 → +0.97 → +1.25 ps，std 从 10.7 缩到 0.5 ps，
+>   寄存器 29 → 35）走的是 **tone 相位** 路线。
+>
+> 所以"固件里 dither 不行"的准确含义是：**固件只用脉冲做对齐**，增益取自波形拟合、
+> skew 取自主音相位。主机侧 Python pipeline 独立得到了同一结论（见 `AGENTS.md` 的
+> gain-loop 与 A-B spur 条目）：低能量的宽带脉冲幅度不足以驱动增益环（逐帧散布 2.3%、
+> 与主音差 1.2%），而色散抹圆后的脉冲形状对定时无用（±600 ps 散布在两个实现里都出现）。
+> 另：上面第 (1) 条（增益环自归一）在该导出里**得到佐证** —— 增益阶段通过时
+> `final_gain_correction = 1.000000`，而 `cal_gain_ratio_b_over_a` 仍是 0.9873。
 
 ### 3.5 Skew 闭环误差
 

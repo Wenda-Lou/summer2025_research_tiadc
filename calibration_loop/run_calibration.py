@@ -64,6 +64,20 @@ def cmd_gen(args) -> None:
     print(f"  seamless loop       : {d['seamless_loop']}")
 
 
+def skew_writes_ok(bench, args) -> bool:
+    """May this run actuate the skew delay?
+
+    Hardware: only with the explicit ``--allow-skew-writes`` unlock.  That path
+    is now the firmware transaction (``capture.SkewActuator``): one command, one
+    answer, readback inside the ACK, and at most one control code of movement per
+    call.  The old raw UDP double-write is frozen regardless of this flag.  The
+    bench model has no registers, so it is unaffected.
+    """
+    if not hasattr(bench, "delay"):
+        return True
+    return bool(getattr(args, "allow_skew_writes", False))
+
+
 def _run(bench, cfg, args, label: str):
     state = CalibrationState(
         mu_offset=args.mu_offset,
@@ -73,12 +87,16 @@ def _run(bench, cfg, args, label: str):
     )
     options = LoopOptions(
         cancel_signal=not args.no_cancellation,
-        close_skew_loop=not args.open_skew,
+        # Skew actuation stays off unless the delay-write path is explicitly
+        # unlocked, so plain `bench` behaves like `--open-skew`.  The bench model
+        # has no registers to disturb, so it keeps driving the loop.
+        close_skew_loop=(not args.open_skew) and skew_writes_ok(bench, args),
         interleaved=args.interleaved,
+        gain_observable=args.gain_observable,
     )
     loop = CalibrationLoop(bench, cfg, state=state, options=options)
 
-    print(f"\nRunning {label} for {args.iterations} iterations")
+    print(f"\nRunning {label} for {args.iterations} qualified samples")
     print("-" * 100)
     loop.run(args.iterations)
 
@@ -123,6 +141,8 @@ def cmd_sim(args) -> None:
 
     print("\nResidual error after convergence (mean of last 20 % of iterations)")
     print(f"  gain ratio        : {avg('gain_ratio'):+.6f}   (target +1.000000)")
+    print(f"  tone ratio        : {avg('tone_ratio'):+.6f}   "
+          f"(target +1.000000; the controlled observable)")
     print(f"  offset mismatch   : "
           f"{avg('offset_b_codes') - avg('offset_a_codes'):+.4f} LSB   (target 0)")
     print(f"  skew mismatch     : {avg('skew_mismatch_ps'):+.4f} ps   "
@@ -180,7 +200,7 @@ def cmd_probe(args) -> None:
     the estimator saw, and touches nothing.  Run it, check the numbers below are
     sane, and only then close the loop.
     """
-    from .estimator import estimate_block, prepare_capture
+    from .estimator import estimate_block, polarity_anchor, prepare_capture
 
     cfg = _cfg_from_args(args)
 
@@ -203,6 +223,7 @@ def cmd_probe(args) -> None:
     print("  " + "-" * 96)
 
     rows, sig, ests = [], None, []
+    captured = []
     try:
         for i in range(args.frames):
             raw = bench.capture()
@@ -212,21 +233,86 @@ def cmd_probe(args) -> None:
             prep = prepare_capture(raw, cfg, signature=sig)
             if sig is None:
                 sig = prep["signature"]
-            est = estimate_block(prep["ch_a"], prep["ch_b"], cfg, n0=prep["n0"])
-            ests.append(est)
-            rows.append((prep, est))
-            print(f"  {i:>3} {prep['rotation']:>4} {str(prep['swapped']):>5} "
-                  f"{prep['align_margin']:>7.1f} {est.ch_a.n_events_used:>7} "
-                  f"{est.ch_a.gain_codes:>9.2f} {est.ch_b.gain_codes:>9.2f} "
-                  f"{est.gain_ratio:>9.5f} {est.ch_a.offset_codes:>8.2f} "
-                  f"{est.ch_b.offset_codes:>8.2f} {est.skew_mismatch_ps:>9.2f}")
+            captured.append((i, prep))
     finally:
         if args.uart:
             bench.close()
 
-    if not rows:
-        print("\nNo usable frames. See the troubleshooting table in README / BENCH_GUIDE_CN.")
+    if not captured:
+        print("\nNo usable frames. See the troubleshooting table in README / BENCH_GUIDE.md.")
         return
+
+    # Absolute polarity is a property of the analog path, not of an individual
+    # capture.  A single low-SNR frame occasionally votes for the opposite sign,
+    # so anchoring the whole session to frame zero made otherwise identical probe
+    # runs disagree.  Take the majority over the complete measurement-only batch;
+    # ties are broken by the better-aligned half of the votes.
+    polarity_votes = np.asarray([polarity_anchor(prep) for _, prep in captured])
+    vote_sum = float(polarity_votes.sum())
+    if vote_sum == 0.0:
+        weighted_vote = sum(
+            polarity_anchor(prep) * prep["align_margin"] for _, prep in captured
+        )
+        polarity = -1.0 if weighted_vote < 0.0 else 1.0
+    else:
+        polarity = -1.0 if vote_sum < 0.0 else 1.0
+    polarity_agreement = float(np.mean(polarity_votes == polarity))
+    n_agree = int(np.count_nonzero(polarity_votes == polarity))
+    print(f"  dither polarity anchor: {polarity:+.0f} "
+          f"(batch consensus {n_agree}/{len(captured)} frames)")
+
+    batch = []
+    for i, prep in captured:
+        est = estimate_block(prep["ch_a"], prep["ch_b"], cfg, n0=prep["n0"],
+                             polarity_sign=polarity, pin_polarity=True)
+        ests.append(est)
+        rows.append((prep, est))
+        batch.append((prep["ch_a"], prep["ch_b"], prep["n0"]))
+        print(f"  {i:>3} {prep['rotation']:>4} {str(prep['swapped']):>5} "
+              f"{prep['align_margin']:>7.1f} {est.ch_a.n_events_used:>7} "
+              f"{est.ch_a.gain_codes:>9.2f} {est.ch_b.gain_codes:>9.2f} "
+              f"{est.gain_ratio:>9.5f} {est.ch_a.offset_codes:>8.2f} "
+              f"{est.ch_b.offset_codes:>8.2f} {est.skew_mismatch_ps:>9.2f}")
+
+    # Cross-frame joint aggregation.  A single capture only holds 7-8 dither
+    # events (1020 samples / 130-sample slot), which leaves the per-frame gain
+    # estimate noisy.  Pooling every frame cuts that variance and averages away
+    # each frame's local polarity imbalance.
+    joint = None
+    joint_ratio_uncertainty = np.nan
+    if len(batch) >= 2:
+        from .estimator import estimate_block_joint
+        joint = estimate_block_joint(batch, cfg, polarity_sign=polarity,
+                                     pin_polarity=True)
+        print(f"\n  JOINT over {len(batch)} frames: "
+              f"{joint.ch_a.n_events_used} events/channel")
+        print(f"    gain ratio      {joint.gain_ratio:+.5f}")
+        print(f"    offset mismatch {joint.offset_mismatch_codes:+.3f} LSB")
+        print(f"    skew mismatch   {joint.skew_mismatch_ps:+.3f} ps  "
+              f"[{joint.skew_source}]")
+
+        # Estimate the uncertainty of the pooled result with a delete-one-frame
+        # jackknife.  The old check compared just two arbitrary five-frame halves;
+        # one unlucky half could fail at 0.03 while the next probe passed at 0.003.
+        # Every frame now contributes to a deterministic standard-error estimate.
+        if len(batch) >= 3:
+            leave_one_out = []
+            for omitted in range(len(batch)):
+                part = batch[:omitted] + batch[omitted + 1:]
+                ratio = estimate_block_joint(
+                    part, cfg, polarity_sign=polarity,
+                    pin_polarity=True,
+                ).gain_ratio
+                if np.isfinite(ratio):
+                    leave_one_out.append(ratio)
+            if len(leave_one_out) == len(batch):
+                loo = np.asarray(leave_one_out, dtype=np.float64)
+                joint_ratio_uncertainty = float(np.sqrt(
+                    (len(loo) - 1.0) / len(loo)
+                    * np.sum((loo - loo.mean()) ** 2)
+                ))
+                print(f"    jackknife gain-ratio uncertainty "
+                      f"{joint_ratio_uncertainty:.5f}")
 
     def stat(vals):
         vals = [v for v in vals if np.isfinite(v)]
@@ -243,13 +329,34 @@ def cmd_probe(args) -> None:
     print(f"  align margin    {mm:.1f} (mean)")
 
     print("\nSanity checks")
+    # The event-count and uncertainty criteria are judged on the JOINT estimate when
+    # one is available: a single 1020-sample capture holds at most
+    # floor(1020/130) = 7 whole events, so "8 events in one capture" is not
+    # reachable with this geometry, while the pooled batch comfortably exceeds it.
+    ev_checked = joint.ch_a.n_events_used if joint is not None else None
+    if joint is not None and np.isfinite(joint.gain_ratio):
+        gm_chk = joint.gain_ratio
+        gs_chk = joint_ratio_uncertainty
+    else:
+        gm_chk, gs_chk = gm, np.nan
     checks = [
         (mm > 6.0, f"alignment margin {mm:.1f} > 6 -- the dither was found"),
-        (all(e.ch_a.n_events_used >= 8 for e in ests),
-         "at least 8 dither events per capture"),
-        (np.isfinite(gm) and 0.8 < gm < 1.25, f"gain ratio {gm:.4f} is physical"),
-        (np.isfinite(gs) and gs < 0.02, f"gain ratio scatter {gs:.5f} < 0.02"),
-        (all(e.ch_a.gain_codes > 0 for e in ests), "channel polarity resolved"),
+        ((ev_checked is None and all(e.ch_a.n_events_used >= 8 for e in ests))
+         or (ev_checked is not None and ev_checked >= 8),
+         (f"at least 8 dither events "
+          + (f"(joint {ev_checked} pooled from {len(batch)} frames)"
+             if ev_checked is not None
+             else "per capture"))),
+        (np.isfinite(gm_chk) and 0.8 < gm_chk < 1.25,
+         f"gain ratio {gm_chk:.4f} is physical"),
+        (np.isfinite(gs_chk) and gs_chk < 0.02,
+         f"gain ratio uncertainty {gs_chk:.5f} < 0.02"
+         + (" (joint estimate)" if joint is not None and np.isfinite(joint.gain_ratio)
+            else "")),
+        (polarity_agreement >= 0.70
+         and (joint is None or (joint.ch_a.gain_sign_fit > 0
+                                and joint.ch_b.gain_sign_fit > 0)),
+         f"channel polarity resolved ({n_agree}/{len(captured)} frame consensus)"),
     ]
     for ok, text in checks:
         print(f"  [{'PASS' if ok else 'FAIL'}] {text}")
@@ -307,11 +414,22 @@ def cmd_bench(args) -> None:
     from .capture import HardwareBench  # imported late: needs pyserial
 
     cfg = _cfg_from_args(args)
+    writes = bool(getattr(args, "allow_skew_writes", False))
+    if writes:
+        print("!! --allow-skew-writes: the skew loop will drive the actuator through\n"
+              "   the firmware transaction (adc -cal skew step +/-N).  Skew is a\n"
+              "   batch decision, not a per-frame one: 20 accepted frames, then at\n"
+              "   most one control code, only outside the 10 ps deadband, and only\n"
+              "   after the previous move shifted the error the way the calibrated\n"
+              "   step predicts.  Measured step: 7.4 ps per code (the firmware's\n"
+              "   nominal 13.8 ps is ~1.9x larger).  The raw UDP delay path stays\n"
+              "   frozen.\n")
     bench = HardwareBench(
         uart_port=args.uart,
         bind_ip=args.bind_ip,
         skew_bias_ps=args.skew_bias_ps,
         allow_super_fine=args.super_fine,
+        allow_skew_writes=writes,
     )
     try:
         _run(bench, cfg, args, f"hardware loop on {args.uart}")
@@ -340,7 +458,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--seed", type=int)
 
     def add_loop(sp):
-        sp.add_argument("--iterations", type=int, default=60)
+        sp.add_argument("--iterations", type=int, default=60,
+                        help="qualified samples to collect.  A capture the "
+                             "acceptance filter rejects is logged and retried, so it "
+                             "does not consume a sample: at the measured ~20 %% "
+                             "rejection rate a 300-sample run takes ~370 captures")
         sp.add_argument("--mu-offset", dest="mu_offset", type=float, default=0.35)
         sp.add_argument("--mu-gain", dest="mu_gain", type=float, default=0.35)
         sp.add_argument("--mu-skew", dest="mu_skew", type=float, default=0.30)
@@ -348,6 +470,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="0 for parallel channels; Ts/2 for true 2x interleaving")
         sp.add_argument("--no-cancellation", action="store_true",
                         help="disable main-tone cancellation (slow baseline)")
+        sp.add_argument("--gain-observable", dest="gain_observable",
+                        choices=("tone", "dither"), default="tone",
+                        help="which measurement the gain correction integrates: the "
+                             "coherent main-tone amplitude ratio (default; what the "
+                             "A-B difference spur depends on, and ~10x quieter) or "
+                             "the dither pulse-window ratio (the older behaviour, "
+                             "kept for comparison runs)")
         sp.add_argument("--open-skew", action="store_true",
                         help="measure skew but do not drive the clock delay")
         sp.add_argument("--interleaved", action="store_true",
@@ -393,6 +522,10 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--skew-bias-ps", dest="skew_bias_ps", type=float, default=165.0)
     b.add_argument("--super-fine", action="store_true",
                    help="use the 0.25 ps super-fine field (needs the ad9695_api.c fix)")
+    b.add_argument("--allow-skew-writes", dest="allow_skew_writes", action="store_true",
+                   help="let the loop drive the actuator through the firmware "
+                        "transaction (frozen by default; the raw UDP delay path is "
+                        "frozen unconditionally)")
     b.set_defaults(func=cmd_bench)
 
     return p

@@ -1,0 +1,122 @@
+[
+  {
+    "i": 0,
+    "file": "frame_00.bin",
+    "bytes": 4095,
+    "sha1_12": "62e2d12b2d87"
+  },
+  {
+    "i": 1,
+    "file": "frame_01.bin",
+    "bytes": 4095,
+    "sha1_12": "575a0f1b5eff"
+  },
+  {
+    "i": 2,
+    "file": "frame_02.bin",
+    "bytes": 4095,
+    "sha1_12": "72eef7c4429b"
+  },
+  {
+    "i": 3,
+    "file": "frame_03.bin",
+    "bytes": 4095,
+    "sha1_12": "e0de802d0507"
+  },
+  {
+    "i": 4,
+    "file": "frame_04.bin",
+    "bytes": 4095,
+    "sha1_12": "781abf871e03"
+  },
+  {
+    "i": 5,
+    "file": "frame_05.bin",
+    "bytes": 4095,
+    "sha1_12": "aa17f1f09d8e"
+  },
+  {
+    "i": 6,
+    "file": "frame_06.bin",
+    "bytes": 4095,
+    "sha1_12": "c5e60f374874"
+  },
+  {
+    "i": 7,
+    "file": "frame_07.bin",
+    "bytes": 4095,
+    "sha1_12": "dc300ba8d0b9"
+  },
+  {
+    "i": 8,
+    "file": "frame_08.bin",
+    "bytes": 4095,
+    "sha1_12": "e914730fbf4f"
+  },
+  {
+    "i": 9,
+    "file": "frame_09.bin",
+    "bytes": 4095,
+    "sha1_12": "14eb1b63ab8f"
+  },
+  {
+    "i": 10,
+    "file": "frame_10.bin",
+    "bytes": 4095,
+    "sha1_12": "f4b0d00c5713"
+  },
+  {
+    "i": 11,
+    "file": "frame_11.bin",
+    "bytes": 4095,
+    "sha1_12": "18ef0f472733"
+  },
+  {
+    "i": 12,
+    "file": "frame_12.bin",
+    "bytes": 4095,
+    "sha1_12": "d2b0c3123553"
+  },
+  {
+    "i": 13,
+    "file": "frame_13.bin",
+    "bytes": 4095,
+    "sha1_12": "59a07c51e03e"
+  },
+  {
+    "i": 14,
+    "file": "frame_14.bin",
+    "bytes": 4095,
+    "sha1_12": "31a815a5db0f"
+  },
+  {
+    "i": 15,
+    "file": "frame_15.bin",
+    "bytes": 4095,
+    "sha1_12": "4f876faed56a"
+  },
+  {
+    "i": 16,
+    "file": "frame_16.bin",
+    "bytes": 4095,
+    "sha1_12": "0d11955b78d5"
+  },
+  {
+    "i": 17,
+    "file": "frame_17.bin",
+    "bytes": 4095,
+    "sha1_12": "aa1f4de0476c"
+  },
+  {
+    "i": 18,
+    "file": "frame_18.bin",
+    "bytes": 4095,
+    "sha1_12": "19af9db61c50"
+  },
+  {
+    "i": 19,
+    "file": "frame_19.bin",
+    "bytes": 4095,
+    "sha1_12": "aacef1c2f7fb"
+  }
+]

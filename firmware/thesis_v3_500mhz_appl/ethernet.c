@@ -36,6 +36,35 @@ extern uint8_t uart_send_flag; //Send flag enabled by the uart
 extern uint8_t* RxBufferPtr;
 extern volatile uint8_t adc_sweep_active;
 
+/* ---- DMA capture freshness state ----------------------------------------
+ * Kept here because this is where the decision to transmit is made; butils.c
+ * publishes/invalidates around each transfer through the accessors declared in
+ * ethernet.h.
+ */
+static volatile uint8_t  g_dma_capture_valid = 0U;
+static volatile uint32_t g_dma_capture_generation = 0U;
+
+void dma_capture_invalidate(void)
+{
+    g_dma_capture_valid = 0U;
+}
+
+void dma_capture_publish(void)
+{
+    g_dma_capture_valid = 1U;
+    ++g_dma_capture_generation;
+}
+
+int dma_capture_is_valid(void)
+{
+    return g_dma_capture_valid ? 1 : 0;
+}
+
+uint32_t dma_capture_generation(void)
+{
+    return g_dma_capture_generation;
+}
+
 #define REFERENCE_PACKET_HEADER_BYTES 8U
 #define REFERENCE_BEGIN_METADATA_BYTES 15U
 #define REFERENCE_PACKET_MAX_SAMPLES \
@@ -212,6 +241,19 @@ int lwIP_UDP_init(void)
 //Loading the payload with 1024 byte from the memory and send to the client 
 void udp_send_mem(void)
 {   
+    /*
+     * Never ship a buffer that is not from a completed DMA transfer.  Without
+     * this the host has no way to tell a fresh frame from the previous one:
+     * "dma -w" leaves RxBufferPtr untouched when it times out, and "udp" would
+     * transmit those stale samples as if they were new measurements.
+     */
+    if (!dma_capture_is_valid()) {
+        xil_printf("REFUSING to send: no valid DMA capture (generation %lu). "
+                   "The last transfer failed, timed out or was never armed.\r\n",
+                   (unsigned long)dma_capture_generation());
+        return;
+    }
+
     for (int i = 0; i < NUM_OF_TX; i++){
         //xil_printf("UDP sending Package #%d\r\n", i + 1);
          //Reallocate a new Packet buffer so that we do not accidentally change the data packet that is already inside the data frame
@@ -255,8 +297,16 @@ void udp_update(void)
 {
     xemacif_input(&server_netif);
     if(uart_send_flag){
-        xil_printf("UDP will start to send received DMA samples to the computer station\r\n");
         uart_send_flag = 0;
+        if (!dma_capture_is_valid()) {
+            xil_printf("UDP request ignored: no valid DMA capture "
+                       "(generation %lu) -- run \"dma -w\" first.\r\n",
+                       (unsigned long)dma_capture_generation());
+            return;
+        }
+        xil_printf("UDP will start to send received DMA samples to the computer "
+                   "station (capture generation %lu)\r\n",
+                   (unsigned long)dma_capture_generation());
         udp_send_mem();        
     }
 }

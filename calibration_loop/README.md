@@ -39,18 +39,41 @@ python -m calibration_loop.run_calibration sim --iterations 60
 Check the hardware without driving anything — run this before closing the loop:
 
 ```bash
-python -m calibration_loop.run_calibration probe --uart COM3 --frames 10 --plot
+python -m calibration_loop.run_calibration probe --uart COM5 --frames 10 --plot
 ```
 
-Close the loop on the board:
+It ends with five sanity checks, all of which must pass. The probe pools the
+complete event windows, reports a jackknife uncertainty for the joint gain ratio,
+and prints the batch-consensus dither polarity anchor (see `BENCH_GUIDE.md` §4).
+
+Close the loop on the board. `--allow-skew-writes` is required: without it the run
+measures skew but never drives the actuator, which is the open-loop case.
 
 ```bash
-python -m calibration_loop.run_calibration bench --uart COM3 --iterations 300
+python tools/skew_park.py --uart COM5 --code 24   # neutral start; also the required
+                                                  # initialization after a bring-up
+python -m calibration_loop.run_calibration bench --uart COM5 \
+    --allow-skew-writes --iterations 300
 ```
 
 Add `--interleaved --skew-target-ps <Ts/2>` once the clock path provides a
 half-period offset between the channels. `--help` lists the waveform and loop
 parameters, all of which can be overridden on the command line.
+
+The skew axis closes on hardware (`dSkew` to about -10 ps, the raw A-B difference
+spur from -24.6 to -38.6 dBc). The gain loop integrates the coherent **tone** ratio by
+default (`--gain-observable tone`): that is the mismatch the A-B difference spur at
+f_in is made of, and it is ~10x quieter than the dither pulse-window ratio the loop
+used to integrate. Because the dither ratio is no longer what gets nulled, `g_B/g_A`
+parks near 1.012 *by design* while `tone_ratio` goes to 1.0000; `--gain-observable
+dither` restores the old behaviour. Read the skew result from `raw_difference_dbc`;
+`BENCH_GUIDE.md` §6 has the measured numbers.
+
+`--iterations` counts **qualified samples**: a capture the acceptance filter rejects
+is logged with its reason and retried, so it neither shortens the learning curve nor
+appears on it. At the measured ~20 % rejection rate a 300-sample run takes about 370
+captures, and the meta JSON's `samples_qualified` / `captures_attempted` /
+`captures_rejected` record what actually happened.
 
 Each run writes a CSV log, a JSON metadata file and a learning-curve plot.
 
