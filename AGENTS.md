@@ -20,7 +20,7 @@ The target bench is:
 
 The repository mixes four kinds of code that support that bench:
 
-1. **Firmware** (`test_platform/thesis_v3_500mhz_appl/`) — bare-metal C on the
+1. **Firmware** (`firmware/thesis_v3_500mhz_appl/`) — bare-metal C on the
    Zynq PS, built with Vitis. Runs the five-stage calibration pipeline, UART
    command console, lwIP UDP data offload, AXI DMA capture, SPI register
    control of the AD9695.
@@ -40,9 +40,9 @@ The repository mixes four kinds of code that support that bench:
 
 | Path | Contents |
 |---|---|
-| `test_platform/thesis_v3_500mhz_appl/` | Main Vitis firmware application (production C code). See module list below. |
-| `test_platform/final_ver_1/` | Vitis platform project (FSBL, hw handoff). |
-| `test_platform/final_ver_1.0.xsa` | Exported hardware specification for Vitis. |
+| `firmware/thesis_v3_500mhz_appl/` | Main Vitis firmware application (production C code). See module list below. |
+| `firmware/final_ver_1/` | Vitis platform project (FSBL, hw handoff). |
+| `firmware/final_ver_1.0.xsa` | Exported hardware specification for Vitis. |
 | `calibration_sim/` | Host C simulator + test harness (CMake). Reuses production firmware sources. |
 | `calibration_loop/` | Python impulse-dither calibration package (`python -m calibration_loop.run_calibration`). `fix_skew_export.py` repairs pre-2026-08-16 skew CSV labels from recorded board data (does not invent truncated frames). |
 | `calibration_out/` | Example output of `calibration_loop` runs (CSV, JSON, plots). |
@@ -57,7 +57,7 @@ The repository mixes four kinds of code that support that bench:
 | `adc_calibration_output_example_log.log` | Example UART log of a full `adc -cal` run. |
 | `xelab.pb`, `xvlog.pb`, `xsim.dir/`, `.Xil/`, `_ide/` | Vivado xsim / IDE leftovers — generated, do not edit. |
 
-### Firmware modules (`test_platform/thesis_v3_500mhz_appl/`)
+### Firmware modules (`firmware/thesis_v3_500mhz_appl/`)
 
 - `main.c` — init UART/SPI/GPIO/DMA/lwIP, AD9695 bring-up, main loop.
 - `butils.c` / `butils_calibration.c` — UART command parser and board-side
@@ -138,7 +138,7 @@ end with gain ratio near 1.0000, offset mismatch under 0.1 LSB, skew under
 
 ### Firmware
 
-Built with **Xilinx Vitis** from `test_platform/final_ver_1.0.xsa` (import the
+Built with **Xilinx Vitis** from `firmware/final_ver_1.0.xsa` (import the
 XSA, build the platform + `thesis_v3_500mhz_appl` application). There is no
 command-line build checked in; the `src/CMakeLists.txt` is Vitis-generated.
 Do not hand-edit Vitis-generated files (`src/`, `_ide/`, `vitis-comp.json`,
@@ -436,7 +436,7 @@ manual hardware procedures; do not attempt them without the bench.
   default: DAC 2600 MS/s, ADC 1300 MS/s, ratio 2). Non-integer ratios smear the
   averaged pulse replica and bias the gain estimate.
 - First UDP transfer after boot often times out — retry before debugging.
-- The committed replay fixtures `test_platform/thesis_v3_500mhz_appl/adc_data/adc_capture_*.csv`
+- The committed replay fixtures `firmware/thesis_v3_500mhz_appl/adc_data/adc_capture_*.csv`
   are noise-dominated and were captured on an older geometry: their tone sits
   where the current `DitherConfig` does not look, so a tone fit reports residual
   RMS of 350–500 codes against a tone amplitude of 2–29. They are **not** a
