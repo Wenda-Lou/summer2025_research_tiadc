@@ -55,3 +55,6 @@ xvlog.pb
 *.a
 *.o
 *.d
+
+# Raw capture archives from bench sessions (frames are regenerable, and .bin is ignored anyway)
+calibration_out/response/

@@ -21,8 +21,16 @@ Read-only by default: no actuator writes unless ``--allow-skew-writes`` is given
 every move goes through the firmware transaction and requires its ACK.
 
     python tools/dither_response_test.py --uart COM5 --frames 40
-    python tools/dither_response_test.py --uart COM5 --frames 40 --steps -1,-2,+3 \
+    python tools/dither_response_test.py --uart COM5 --frames 40 --steps +3,+1,-2 \
         --allow-skew-writes
+
+The actuator only spans codes 0..48 (``SkewActuator.CODE_MIN/CODE_MAX``) and the firmware
+answers ``result=OK`` to a relative step it cannot take, so every target is bounds-checked
+before anything moves and a non-advancing transaction aborts the run.  From the neutral code 24
+the usable relative steps are therefore -24..+24.
+
+A step list that has to start with a minus must be written ``--steps=-1,-2,+3``: argparse
+reads a bare ``-1,-2,+3`` as an option name and rejects it.
 """
 
 from __future__ import annotations
@@ -40,16 +48,42 @@ sys.path.insert(0, REPO)
 ROUTES = ("phase_ps", "diff_route_ps", "centroid_ps", "margin", "dither_offset",
           "dither_gain", "tone_gain", "tone_amp", "resid")
 
+# A capture that fails costs ~10 s (three 3 s UDP timeouts inside ``capture``).  Without a
+# guard a state whose board has stopped producing frames turns a 1000-frame request into hours
+# of silent timeouts with no progress printed and no files written -- measured 2026-09-19, a
+# 1000-frame run sat at 402 frames for 42 minutes.  See also ``dither_raw_evidence.py``.
+MAX_CONSECUTIVE_FAILURES = 12
+PROGRESS_EVERY = 100
+
 
 def measure(bench, cfg, n_frames: int, frames_dir, tag: str, polarity):
-    """Capture n_frames, save the raw bytes, return (records, polarity)."""
+    """Capture n_frames, save the raw bytes, return (records, polarity).
+
+    Prints progress and aborts loudly on a run of failed captures, because a silent skip is
+    indistinguishable from a slow bench and costs hours.
+    """
     from calibration_loop.estimator import estimate_block, polarity_anchor, prepare_capture
 
     recs = []
+    fails = 0
     for i in range(n_frames):
         raw = bench.capture()
         if not raw:
+            fails += 1
+            if fails >= MAX_CONSECUTIVE_FAILURES:
+                print(f"\nABORT: {fails} consecutive capture failures at attempt {i + 1}"
+                      f"/{n_frames} of state {tag}.  The board has stopped producing frames "
+                      f"(each failed capture costs ~10 s of UDP timeouts, so waiting longer "
+                      f"buys nothing).")
+                print(f"  {len(recs)} frames were captured and are saved in {frames_dir}; "
+                      f"they remain usable.")
+                print("  Check the console and the capture path read-only "
+                      "(tools/console_cmd.py, tools/raw_frame_probe.py) before re-running.  "
+                      "Copy this state's directory aside first: a re-run numbers frames from "
+                      "000 and would overwrite them.")
+                raise SystemExit(2)
             continue
+        fails = 0
         if frames_dir:
             with open(os.path.join(frames_dir, f"{tag}_frame_{i:03d}.bin"), "wb") as fh:
                 fh.write(raw)
@@ -70,6 +104,8 @@ def measure(bench, cfg, n_frames: int, frames_dir, tag: str, polarity):
             "tone_amp": est.ch_a.tone_amplitude,
             "resid": est.ch_a.residual_rms,
         })
+        if len(recs) % PROGRESS_EVERY == 0:
+            print(f"    {len(recs)}/{n_frames} frames captured and saved", flush=True)
     return recs, polarity
 
 
@@ -130,8 +166,19 @@ def main(argv=None) -> int:
         base = int(bench.actuator.code)
 
         targets = [base] + [base + s for s in steps]
+        lo = int(getattr(bench.actuator, "CODE_MIN", 0))
+        hi = int(getattr(bench.actuator, "CODE_MAX", 48))
+        outside = [t for t in targets if not lo <= t <= hi]
+        if outside:
+            print(f"ABORT before moving anything: target(s) {outside} lie outside the "
+                  f"actuator's reachable range {lo}..{hi} (base {base}).  From base {base} the "
+                  f"usable relative steps are {lo - base}..{hi - base}.")
+            return 2
+
         for target in targets:
+            guard = 0
             while bench.actuator.code != target:
+                before = int(bench.actuator.code)
                 step = int(np.sign(target - bench.actuator.code))
                 ack = bench.actuator.request_steps(step)
                 print(f"  move {step:+d}: {ack.get('result')} "
@@ -139,6 +186,19 @@ def main(argv=None) -> int:
                 if not ack.get("ok"):
                     print(f"ABORT: transaction failed ({ack.get('result')} "
                           f"stage={ack.get('stage')}); nothing is retried")
+                    return 2
+                # A railed actuator answers OK and does not move.  Without this check the
+                # loop spins forever, and each iteration resets the JESD link -- measured
+                # 2026-09-19, when a +32 step from base 24 (top is 48) ran for hundreds of
+                # transactions.
+                if int(bench.actuator.code) == before:
+                    print(f"ABORT: the actuator did not move from code {before} toward "
+                          f"{target} (ACK result={ack.get('result')}); it is railed.  Nothing "
+                          f"is retried -- re-run with targets inside {lo}..{hi}.")
+                    return 2
+                guard += 1
+                if guard > (hi - lo) + 4:
+                    print(f"ABORT: {guard} moves without reaching target {target}")
                     return 2
             tag = f"code{bench.actuator.code:02d}"
             print(f"state {tag}: capturing {args.frames} frames")
