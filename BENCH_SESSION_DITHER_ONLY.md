@@ -1046,10 +1046,10 @@ host code only became able to do on 2026-09-20.
 
 | change | why |
 |---|---|
-| **Timing comes from the folded replicas**, on a selectable route: `dither_fold` projects the folded A-B difference onto the pulse slope, `dither_phase` fits each channel against the template at a *fractional* sampling phase and differences the two phases. | The phase route is the linear one — in the model it is unbiased to ±2 ps over ±400 ps where the projection reads 86.6 ps for a true 103.6 — but the bench's analog path reshapes the impulse, and a shape mismatch hurts the route that fits the whole template. Measured on the archived 2026-09-19 captures: **at `w06` 16000 LSB the fold route scatters 15.3 ps/frame against 26.0**, and at the 32-sample ladder pulse it is **145 ps/frame against 747 ps**. Both routes recover the right ps/code against the actuator's known codes, so the choice is about noise — and `--tone-free` therefore selects `dither_fold`. |
+| **Timing comes from the folded replicas**, on a selectable route: `dither_fold` projects the folded A-B difference onto the pulse slope, `dither_phase` fits each channel against the template at a *fractional* sampling phase and differences the two phases. | The phase route is the linear one — in the model it is unbiased to ±2 ps over ±400 ps where the projection reads 86.6 ps for a true 103.6 — but the bench's analog path reshapes the impulse, and a shape mismatch hurts the route that fits the whole template. **Measured live 2026-09-20** (`w06` 16000 LSB, 200 frames per state, margin 8.1 against the 8.06 reference): the 8-code step reads **+6.46 ps/code on the fold route at 3.1 ps per frame**, agreeing with the actuator's 7.4 ps single-step figure and with the register arithmetic (4 × 1.725 ps fine steps = 6.9), while the phase route reads **+18.19 ps/code** — ~3× high, a systematic scale error rather than noise (its own scatter is 4.8 ps). So `--tone-free` selects `dither_fold`; the phase route is a cross-check whose absolute scale must be re-verified per waveform. |
 | **The sign is the sampling-instant convention** (positive = channel B samples later), matching what `CalibrationState` integrates. | The first version measured the *index*-domain shift, which has the opposite sign. In the model that closed the loop backwards: the commanded delay ran 0 → +390 ps while the true residual grew to −371 ps, with 81 % of captures rejected on the way. `calibration_out/_tone_free_loop_test.py` now checks both routes against known delays, so a sign flip cannot come back silently. |
 | **The acceptance filter judges the route in use**, and the log records it (`skew_used_ps`, `skew_observable`, `gain_source`). | The old filter gated on the estimator's *tone* fields, which on a tone-free capture are a fit of noise — it would have refused 45 % of good frames in the model and 81 % in the first live run, while the loop's own route was fine. A gain-observable fallback is now itself a rejection: on a tone-free bench, falling back means falling back onto noise. |
-| **`--tone-free`** sets `--gain-observable dither_mag`, `--skew-observable dither_fold` and `--no-cancellation` together. | There is no tone to cancel, and the tone observable would integrate noise. The gain loop still controls the *broadband* (pulse) mismatch; it deliberately does not null f_in, and with no tone there is no f_in to null. |
+| **`--tone-free`** sets `--gain-observable dither_mag`, `--skew-observable dither_fold` and `--no-cancellation` together, and an explicitly passed route still wins. | There is no tone to cancel, and the tone observable would integrate noise. The gain loop still controls the *broadband* (pulse) mismatch; it deliberately does not null f_in, and with no tone there is no f_in to null. |
 
 Offline evidence, all green before the bench:
 
@@ -1088,24 +1088,37 @@ python tools/skew_park.py --uart COM5 --code 24 --verify-frames 0
    a tone-free capture it always reports `+nan`. The parking itself is ACK-verified and sound; only
    that line is meaningless.
 3. **Run the route check once per waveform, before the loop.** The two tone-free timing routes
-   trade places between the model and the bench, and which one is quieter depends on how much the
-   analog path reshaped *this* pulse — so measure it on the waveform you loaded (read-only, no
+   trade places between the model and the bench, and which one is trustworthy depends on how much
+   the analog path reshaped *this* pulse — so measure it on the waveform you loaded (read-only, no
    register writes):
 
    ```
    # from the two states of any known code pair, e.g. park 24, capture, step +8, capture
    python tools/timing_route_check.py \
-     --state 24=calibration_out/response/ladder/raw/code24_frame_*.bin \
-     --state 32=calibration_out/response/ladder/raw/code32_frame_*.bin \
+     --state 24=calibration_out/response/R24/raw \
+     --state 32=calibration_out/response/R32/raw \
      --waveform-json waveforms/pulse_ladder/<the file you loaded>.json
    ```
 
    It reports each route's ps/code against the actuator's characterized 4.8–4.9 (end-to-end) and
    7.4 (single step, near neutral) ps/code, plus the per-frame scatter and what a 20-frame batch
-   would leave against the 10 ps deadband. On the archived 2026-09-19 captures it reads: `w06`
-   16000 LSB → fold 15.3 ps/frame, phase 26.0; `w32` 2000 LSB → fold 145 ps/frame (+3.4 ps/code),
-   phase 747 ps/frame (+4.5 ps/code). If the phase route wins on your waveform, use
-   `--skew-observable dither_phase` — it is the one whose scale is linear.
+   would leave against the 10 ps deadband. **Live result, 2026-09-20, `w06` 16000 LSB:** the fold
+   route reads **+6.46 ps/code at 3.1 ps/frame** (→ a 20-frame batch has 0.7 ps of standard error),
+   consistent with 7.4 and with 4 × 1.725 ps register steps; the phase route reads **+18.19 ps/code**
+   at 4.8 ps/frame — ~3× high, which the tool flags as a FAIL. So that session ran on
+   `dither_fold`, which is also the `--tone-free` default. If a waveform ever makes the phase route
+   both quiet *and* correctly scaled, `--skew-observable dither_phase` is the one to use, because
+   its scale is the linear one.
+
+   **The frames must be healthy before any of this means anything.** The first attempt at this
+   session captured two states with **no dither in them at all** — folded replica 1–2 codes against
+   the ~391 expected, alignment margin **2.7** against the 8.1 healthy value, and a nonsense
+   `dither_gain` of 1.6–2.6 against ~1.0 — and its ps/code was meaningless however it was read. The
+   quick health check is the capture tool's own `response_states.csv` (margin ≈ 8, `dither_gain`
+   ≈ 1.0) or
+   `python tools/dither_raw_evidence.py --state ck=<dir> --waveform-json <that JSON>` (expect
+   `rep A ≈ 391` for amp16000), and if it fails, re-upload the TXT and re-probe before spending
+   time on the routes.
 
 ### The run
 

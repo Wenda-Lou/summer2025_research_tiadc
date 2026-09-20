@@ -276,7 +276,23 @@ def main(argv=None) -> int:
 
     out_dir = args.out
     os.makedirs(out_dir, exist_ok=True)
-    csv_path = os.path.join(out_dir, "dither_ladder.csv")
+    stem = "dither_ladder"
+    csv_path = os.path.join(out_dir, f"{stem}.csv")
+    # A single-state health check ("is the waveform I loaded the one I think it is?") and a
+    # multi-state ladder both want this tool, and they write the same file name: measured
+    # 2026-09-20, a one-state check silently replaced a recorded three-state ladder table.  When
+    # the state sets differ, keep both files.
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, newline="", encoding="utf-8") as fh:
+                previous = {row.get("state", "") for row in csv.DictReader(fh)}
+        except OSError:
+            previous = set()
+        if previous and previous != set(order):
+            stem = "dither_ladder_" + "_".join(order)
+            csv_path = os.path.join(out_dir, f"{stem}.csv")
+            print(f"note: dither_ladder.csv already holds the states {sorted(previous)} -- "
+                  f"writing this run to {os.path.basename(csv_path)} instead")
     keys = ["state", "amplitude_lsb", "pct_dac_fs", "json"] + [
         k for k in results[order[0]].keys() if k != "json"]
     with open(csv_path, "w", encoding="utf-8") as fh:
@@ -322,7 +338,7 @@ def main(argv=None) -> int:
             ax[1].grid(True, alpha=0.3, which="both")
 
             fig.tight_layout()
-            png = os.path.join(out_dir, "dither_ladder.png")
+            png = os.path.join(out_dir, f"{stem}.png")
             fig.savefig(png, dpi=140)
             plt.close(fig)
             print(f"figure : {png}")

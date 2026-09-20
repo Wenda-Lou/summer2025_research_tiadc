@@ -355,10 +355,18 @@ manual hardware procedures; do not attempt them without the bench.
 
   Which is quieter is a property of the waveform, so it is measured, not assumed:
   `tools/timing_route_check.py` reports both against known actuator codes (offline, read-only).
-  Archived 2026-09-19 captures: **`w06` 16000 LSB → fold 15.3 ps/frame against phase 26.0**;
-  `w32` 2000 LSB → fold 145 ps/frame (+3.4 ps/code) against phase 747 (+4.5 ps/code), i.e. the
-  template route falls over on the reshaped 32-sample pulse (15 % fit residual) while the
-  projection holds.  Two traps paid for on 2026-09-20:
+  **The first live run settled it (2026-09-20, `w06` 16000 LSB, 200 frames per state, alignment
+  margin 8.1 against the 8.06 reference): an 8-code step reads +6.46 ps/code on the fold route at
+  3.1 ps per frame -- agreeing with the actuator's 7.4 ps single-step figure and with the register
+  arithmetic (4 x 1.725 ps fine steps = 6.9) -- while the phase route reads +18.19 ps/code at
+  4.8 ps per frame, i.e. ~3x high as a *systematic* scale error, not noise.**  The phase route is
+  exact in the model but not on this bench: the replica is not the ideal raised cosine, so the
+  fitted phase is partly driven by its shape, and the actuator code moves the amplitude readout
+  (+0.21 %/code) for an ill-conditioned fit to convert into apparent timing.  The archived
+  2026-09-19 captures show the same ordering by noise alone (`w06` 16000 LSB: fold 15.3 against
+  phase 26.0 ps/frame; `w32` 2000 LSB: fold 145 against phase 747).  So `dither_fold` drives a
+  tone-free loop here, and the phase route's absolute scale must be re-verified per waveform
+  before it is trusted for anything.  Two traps paid for on 2026-09-20:
 
   **(a) the sign is the sampling-instant convention**, and the index-domain shift is the negative
   of it; a route written in the index convention closes the loop *backwards* — in the model the

@@ -90,11 +90,13 @@ after 20 consecutive rejects. What each route is, and why:
     phase and differences the phases. It is the linear route — unbiased to ±2 ps over ±400 ps in
     the bench model — but it needs the replica to resemble the template, and the bench's analog
     path reshapes the impulse.
-- Which is quieter is a property of the waveform, so measure it instead of assuming:
-  `python tools/timing_route_check.py --state 24=... --state 32=... --waveform-json <yours>.json`
+- Which is quieter *and* correctly scaled is a property of the waveform, so measure it rather than
+  assuming: `python tools/timing_route_check.py --state 24=<dir> --state 32=<dir> --waveform-json <yours>.json`
   reports both routes' ps/code against the actuator's known 4.8–4.9 (end-to-end) and 7.4 (single
-  step) ps/code, plus their per-frame scatter. Archived 2026-09-19 captures: `w06` 16000 LSB →
-  fold **15.3** ps/frame against phase 26.0; `w32` 2000 LSB → fold **145** against phase 747.
+  step) ps/code, plus their per-frame scatter. First live run (2026-09-20, `w06` 16000 LSB, 200
+  frames per state, alignment margin 8.1): fold **+6.46 ps/code at 3.1 ps/frame** — a 20-frame
+  batch then has 0.7 ps of standard error against the 10 ps deadband — while phase reads
+  **+18.19 ps/code**, ~3× high as a systematic scale error. Hence the fold default.
 - Because there is no tone, `tone_ratio`, the A−B difference spur and the SNDR/SFDR columns are
   scored at f_in and describe the noise floor. The tone-free stand-ins are `gain_mag_ratio`,
   `offset_*_codes`, `skew_used_ps`, `skew_fold_ps` / `skew_slope_ps`, `dbc_ab_coherent` and

@@ -134,20 +134,21 @@ class LoopOptions:
 
     Which to use is a hardware question, and it is answerable before closing the loop:
     ``tools/timing_route_check.py`` measures both against known actuator codes (read-only, offline
-    on archived or fresh captures).  Measured on the archived 2026-09-19 captures, and this is
-    what sets the ``--tone-free`` default:
+    on archived or fresh captures).  The first live run (2026-09-20, ``w06`` 16000 LSB, 200 frames
+    per state, a healthy bench: alignment margin 8.1 against the 8.06 reference) measured an
+    8-code step as
 
-    | waveform | fold | phase |
+    | route | ps/code | per-frame scatter |
     |---|---|---|
-    | ``w06`` 16000 LSB (the recommended excitation) | **15.3 ps/frame** | 26.0 ps/frame |
-    | ``w32`` 2000 LSB (the stage-C ladder pulse) | **145 ps/frame**, +3.4 ps/code | 747 ps/frame, +4.5 ps/code |
+    | ``dither_fold`` | **+6.46** -- agrees with the actuator's 7.4 ps single-step figure and with the register arithmetic (4 x 1.725 ps fine steps = 6.9) | 3.1 ps |
+    | ``dither_phase`` | +18.19 -- **~3x too high**, a systematic scale error rather than noise | 4.8 ps |
 
-    The 32-sample pulse is where the template route falls over: the analog path reshapes it hard
-    (measured FWHM 17.2 samples against an ideal 24), the fit residual reaches 15 % of the
-    replica, and the fitted phase is then driven by shape rather than timing.  Both routes do
-    recover the right ps/code against the known codes, so the choice is about noise, and on this
-    bench the projection wins -- at the cost of its compressed *scale*, which is why
-    ``dither_phase`` remains one flag away for a waveform whose replica matches the template.
+    The phase route is exact in the model but not on this bench: the replica is not the ideal
+    raised cosine, so the fitted phase is partly driven by its *shape*, and the actuator code moves
+    the amplitude readout (+0.21 %/code) for an ill-conditioned fit to convert into apparent
+    timing.  A 20-frame batch on the fold route then has 0.7 ps of standard error against the 10 ps
+    deadband.  Hence ``dither_fold`` is what ``--tone-free`` selects; ``dither_phase`` stays
+    available, and its absolute scale must be checked per waveform before it is trusted.
 
     A tone-free run must also set ``cancel_signal = False``: with no tone to remove, the
     least-squares tone fit subtracts structure from the record instead of a signal.  Both are set

@@ -22,6 +22,25 @@ Their trade-off is not the same in the model as on the bench, and the bench is w
     degrades to ~100 ps (a 15 % template residual drives the fit) where the fold route holds
     46 ps.
 
+**A first live run on 2026-09-20 settled it, and the answer was not the one the model predicted.**
+``w06`` 16000 LSB, 200 frames at code 24 and 200 at code 32, per-frame scatter 3.1 ps (fold) and
+4.8 ps (phase) -- both far quieter than the archived session, so the bench was in good shape:
+
+    fold  : +6.46 ps/code   (51.7 ps over the 8-code step)
+    phase : +18.19 ps/code  (145.5 ps over the same step)
+
+The fold route agrees with the actuator's single-step figure (7.4 ps/code) and with the register
+arithmetic (four 1.725 ps fine steps = 6.9 ps/code).  The phase route reads ~3x that, with a
+per-frame scatter of only 4.8 ps -- a *systematic* scale error, not noise, and it is the failure
+this check exists to catch.  The likely mechanism is the template mismatch: the bench's replica is
+not the ideal raised cosine, so the fitted phase is partly driven by the replica's *shape*, and
+the actuator code itself moves the amplitude readout (+0.21 %/code, documented) -- over 8 codes
+that is a 1.7 % amplitude change for an ill-conditioned fit to convert into apparent timing.  In
+the model both effects are absent, which is why the model cannot see this.
+
+So: **the fold route drives a tone-free loop on this bench**, and the phase route is a cross-check
+whose absolute scale must be verified per waveform before it is trusted for anything.
+
 So the choice is per-waveform and has to be measured, not assumed -- which is what this tool
 does.  It is read-only (no register writes) and runs offline on any archived or fresh pair of
 states whose actuator codes differ by a known amount.
@@ -68,6 +87,34 @@ SINGLE_STEP_PS_PER_CODE = 7.4
 """Single-step measurement near neutral.  The step is not uniform; both are reported."""
 
 
+def resolve_state(pattern: str) -> list[str]:
+    """Frames for one state, from a directory or a glob.
+
+    A directory is accepted because that is what `dither_response_test.py --out` names and what
+    people type; refusing it produced a bare ``PermissionError`` from ``open()`` on the directory
+    itself, which is a bad way to learn the calling convention.  A directory holding more than one
+    capture tag is refused rather than mixed: states must not be averaged together.
+    """
+    if os.path.isdir(pattern):
+        files = sorted(glob.glob(os.path.join(pattern, "*.bin")))
+        if not files:
+            raise SystemExit(f"no *.bin frames in directory {pattern!r} -- point at its raw/ "
+                             f"subdirectory, e.g. {pattern.rstrip('/')}/raw")
+        tags = sorted({os.path.basename(f).split("_frame_")[0] for f in files})
+        if len(tags) > 1:
+            raise SystemExit(
+                f"{pattern!r} holds {len(tags)} capture tags ({', '.join(tags)}) and they would "
+                f"be averaged together -- pass one state per code, e.g. "
+                f"--state 24={pattern}/{tags[0]}_frame_*.bin")
+        return files
+    files = [f for f in sorted(glob.glob(pattern)) if os.path.isfile(f)]
+    if not files:
+        raise SystemExit(f"no frames matched {pattern!r}"
+                         + (" (that is a directory -- pass it directly, or its raw/ "
+                            "subdirectory)" if os.path.isdir(pattern.rstrip("/*")) else ""))
+    return files
+
+
 def measure_state(files, cfg: DitherConfig, frames: int, min_margin: float):
     """Measure one state from frames spread across it, not from its head.
 
@@ -95,11 +142,12 @@ def measure_state(files, cfg: DitherConfig, frames: int, min_margin: float):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--state", action="append", required=True, metavar="CODE=GLOB",
-                    help="actuator control code and the frames captured at it")
+    ap.add_argument("--state", action="append", required=True, metavar="CODE=PATH",
+                    help="actuator control code and the frames captured at it: a directory of "
+                         "*_frame_*.bin files, or a glob")
     ap.add_argument("--waveform-json", required=True)
     ap.add_argument("--frames", type=int, default=200,
-                    help="frames per state (subsampled from the front of the glob)")
+                    help="frames per state, stride-sampled across the state")
     ap.add_argument("--min-margin", type=float, default=6.0)
     ap.add_argument("--step-ps", type=float, default=CHARACTERIZED_PS_PER_CODE,
                     help="expected ps per control code (default: the end-to-end figure)")
@@ -112,9 +160,7 @@ def main(argv=None) -> int:
     states = []
     for item in args.state:
         code_s, pattern = item.split("=", 1)
-        files = sorted(glob.glob(pattern))
-        if not files:
-            raise SystemExit(f"no frames for code {code_s!r} at {pattern!r}")
+        files = resolve_state(pattern)
         states.append((int(code_s), files))
     states.sort()
 
