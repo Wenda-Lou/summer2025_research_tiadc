@@ -657,6 +657,63 @@ class BlockEstimate:
     observables were unavailable, and ``observables-disagree`` means they
     contradicted each other so the frame was discarded."""
 
+    # --- tone-free routes, filled by calibration_loop.dither_raw when the loop runs
+    # --- without a reference tone.  Every route above needs a tone: the phase route fits
+    # --- the tone's phase, the difference route the tone's amplitude in A-B, and the
+    # --- centroid route is documented as unusable (+-600 ps).  These fields are NaN
+    # --- unless something explicitly measured them.
+    gain_mag_ratio: float = np.nan
+    """|B| / |A| from the sign-free per-event magnitudes.  See ``dither_raw``."""
+
+    mag_a: float = np.nan
+    mag_b: float = np.nan
+    """Mean peak-to-peak of the impulse windows, in ADC codes."""
+
+    skew_slope_ps: float = np.nan
+    """Timing from the tone-free phase route [ps].
+
+    Measured by :func:`dither_raw.measure` on the folded replicas, and it follows the *same*
+    convention as :attr:`skew_mismatch_ps`: positive means channel B's sampling instant is later.
+    That shared convention is what lets one replace the other in the loop; the alternative
+    (index-domain shift) has the opposite sign, and a route that mixes them closes the loop
+    backwards -- see the ``dither_raw`` module docstring.
+    """
+
+    skew_fold_ps: float = np.nan
+    """Cross-check timing from the folded A-B difference [ps]; same convention.
+
+    Recorded, never acted on: the projection is nonlinear beyond ~0.1 sample at this pulse
+    geometry (see ``dither_raw``)."""
+
+    phase_a: float = np.nan
+    phase_b: float = np.nan
+    """Fitted fractional sampling phase of each channel's replica, in ADC samples.
+
+    Only the difference is a channel mismatch; the common part is the ADC clock's phase against
+    the DPG loop."""
+
+    skew_used_ps: float = np.nan
+    """The skew number *this run* integrates, whichever route the options selected.
+
+    Named separately from :attr:`skew_mismatch_ps` on purpose.  That field is the estimator's own
+    tone-based answer and is meaningless on a capture with no tone (the fit latches onto a dither
+    comb line and the phase route then reports hundreds of ps of noise); a tone-free run has to
+    take its timing from :attr:`skew_slope_ps` instead.  Keeping both -- and gating, logging and
+    integrating this one -- is what stops a run whose observed route is dead from looking like a
+    converging loop."""
+
+    peak_a: float = np.nan
+    """One-sided peak of channel A's folded replica, in ADC codes.
+
+    The convention to quote an excitation in: one-sided peak against the 14-bit span, so a
+    296-code peak is 1.8 % of 16384."""
+
+    dbc_ab_coherent: float = np.nan
+    """Coherent dither power in A-B relative to channel A, dBc.  Tone-free."""
+
+    snr_dither_db: float = np.nan
+    """Coherent dither power over the residual after subtracting it, dB.  Tone-free."""
+
 
 def event_centroid_samples(resid: np.ndarray, starts: np.ndarray,
                            m_lo: int, m_hi: int) -> float:
@@ -1263,24 +1320,104 @@ def skew_batch(frames, tone_tol: float = 0.10, resid_lo: float = 0.5,
 # Block LMS state
 # ---------------------------------------------------------------------------
 
+def skew_batch_dither(frames, margin_min: float = 6.0, max_abs_ps: float = 2000.0,
+                      reject_k: float = 6.0, floor_ps: float = 1.5) -> SkewBatch:
+    """Arithmetic-mean skew over one batch, from a *tone-free* dither route.
+
+    The counterpart of :func:`skew_batch` for a loop with no reference tone.  That function's
+    acceptance test cannot be reused: it requires a finite tone-phase estimate, a tone amplitude
+    within 10 % of the batch median and a residual in a 0.5-2.0 band, and it explicitly rejects
+    the routes that work without a tone.  Run on dither-only captures it throws away good
+    frames rather than failing to measure -- measured 2026-09-19, a dither-only run of 1000
+    frames would have had almost every frame rejected by that filter.
+
+    ``frames`` is a sequence of mappings with ``used_ps`` -- the number this run integrates
+    (:attr:`BlockEstimate.skew_used_ps`, i.e. whichever tone-free route
+    ``LoopOptions.skew_observable`` selected; ``slope_ps`` is accepted as a fallback so the
+    older callers keep working) and ``margin``.  Acceptance is: a finite value, an alignment
+    margin at or above ``margin_min``, and then a robust outlier test against the batch's own
+    median (``reject_k`` robust sigmas plus ``floor_ps``), because the routes' per-frame scatter
+    is a few ps in the model and tens of ps on the bench, with an occasional torn frame far
+    outside it.
+
+    The values share :func:`skew_batch`'s convention -- positive means channel B samples later --
+    so the batch mean feeds the same deadband and direction check.
+    """
+    rows = list(frames)
+    out = SkewBatch(n_total=len(rows))
+    if not rows:
+        return out
+
+    def val(row, key):
+        try:
+            return float(row.get(key, np.nan))
+        except (TypeError, ValueError):
+            return np.nan
+
+    why: dict = {}
+    kept: list[float] = []
+    for row in rows:
+        v = val(row, "used_ps")
+        if not np.isfinite(v):
+            v = val(row, "slope_ps")
+        margin = val(row, "margin")
+        if not np.isfinite(v):
+            why["no estimate"] = why.get("no estimate", 0) + 1
+            continue
+        if not np.isfinite(margin) or margin < margin_min:
+            why["align_margin"] = why.get("align_margin", 0) + 1
+            continue
+        if abs(v) > max_abs_ps:
+            why["estimate out of range"] = why.get("estimate out of range", 0) + 1
+            continue
+        kept.append(v)
+
+    if kept:
+        arr = np.asarray(kept, dtype=float)
+        center = float(np.median(arr))
+        sigma = 1.4826 * float(np.median(np.abs(arr - center)))
+        bound = reject_k * sigma + floor_ps
+        final = [v for v in kept if abs(v - center) <= bound]
+        if len(final) < len(kept):
+            why["batch outlier"] = len(kept) - len(final)
+        kept = final
+        out.route_center_ps = float(np.median(kept))
+        out.route_bound_ps = bound
+
+    out.n_used = len(kept)
+    out.rejected = why
+    if kept:
+        out.mean_ps = float(np.mean(kept))
+        if len(kept) > 1:
+            out.se_ps = float(np.std(kept, ddof=1) / np.sqrt(len(kept)))
+    return out
+
+
 def gain_observable_pair(est: BlockEstimate, source: str = "tone"):
     """The (A, B) amplitudes whose ratio *is* the gain error, and which one was used.
 
-    ``"tone"`` reads :attr:`ChannelEstimate.tone_amplitude` (the coherent main-tone
-    fit), ``"dither"`` reads :attr:`ChannelEstimate.gain_codes` (the pulse-window
-    amplitudes).  A source whose amplitudes are unusable falls back to the other, and
-    the name actually used comes back with the pair so a run can be audited after the
-    fact — a silent fallback would look like a converged gain loop.
+    ``"tone"`` reads :attr:`ChannelEstimate.tone_amplitude` (the coherent main-tone fit),
+    ``"dither"`` reads :attr:`ChannelEstimate.gain_codes` (the pulse-window amplitudes), and
+    ``"dither_mag"`` reads :attr:`BlockEstimate.mag_a` / ``mag_b`` -- the sign-free per-event
+    magnitudes from ``dither_raw``, which is the route to quote when there is no tone.
+
+    A source whose amplitudes are unusable falls back to the next one, and the name actually used
+    comes back with the pair so a run can be audited after the fact -- a silent fallback would
+    look like a converged gain loop.
     """
-    candidates = (
-        ("tone", (abs(est.ch_a.tone_amplitude), abs(est.ch_b.tone_amplitude))),
-        ("dither", (est.ch_a.gain_codes, est.ch_b.gain_codes)),
-    )
-    if source != "tone":
-        candidates = (candidates[1], candidates[0])
-    for name, (x, y) in candidates:
+    candidates = {
+        "tone": ("tone", (abs(est.ch_a.tone_amplitude), abs(est.ch_b.tone_amplitude))),
+        "dither": ("dither", (est.ch_a.gain_codes, est.ch_b.gain_codes)),
+        "dither_mag": ("dither_mag", (est.mag_a, est.mag_b)),
+    }
+    order = [source] + [k for k in ("dither_mag", "tone", "dither") if k != source]
+    for name in order:
+        entry = candidates.get(name)
+        if entry is None:
+            continue
+        label, (x, y) = entry
         if np.isfinite(x) and np.isfinite(y) and abs(x) > 1e-9 and abs(y) > 1e-9:
-            return float(x), float(y), name
+            return float(x), float(y), label
     return np.nan, np.nan, "none"
 
 
@@ -1311,7 +1448,7 @@ class CalibrationState:
     iteration: int = 0
 
     def update(self, est: BlockEstimate, integrate_skew: bool = True,
-               gain_observable: str = "tone") -> dict:
+               gain_observable: str = "tone", skew_ps: float | None = None) -> dict:
         """One block-LMS step.
 
         ``est`` must have been computed on data that already went through
@@ -1325,6 +1462,12 @@ class CalibrationState:
         hardware, so integrating it only makes the log misleading: a 200-frame
         measurement-only run reached ``skew_cmd_ps = 5637 ps`` against a hardware
         authority of 165 ps while nothing was ever programmed.
+
+        ``skew_ps`` overrides which timing number is integrated, for the routes the
+        estimator itself cannot produce without a tone: the caller passes
+        :attr:`BlockEstimate.skew_used_ps`.  ``None`` means "use
+        :attr:`BlockEstimate.skew_mismatch_ps`", the estimator's own route.  The two share one
+        convention (positive = B samples later), so the sign of the update is the same.
         """
         e_off_a = est.ch_a.offset_codes
         e_off_b = est.ch_b.offset_codes
@@ -1350,8 +1493,9 @@ class CalibrationState:
             e_gain = gb / ga - 1.0
 
         e_skew = np.nan
-        if np.isfinite(est.skew_mismatch_ps):
-            e_skew = est.skew_mismatch_ps - self.skew_target_ps
+        measured = est.skew_mismatch_ps if skew_ps is None else float(skew_ps)
+        if np.isfinite(measured):
+            e_skew = measured - self.skew_target_ps
             # Channel B sampled e_skew ps too late -> command that much less delay.
             if integrate_skew:
                 self.skew_cmd_ps -= self.mu_skew * e_skew

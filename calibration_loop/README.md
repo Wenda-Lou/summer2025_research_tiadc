@@ -60,6 +60,53 @@ Add `--interleaved --skew-target-ps <Ts/2>` once the clock path provides a
 half-period offset between the channels. `--help` lists the waveform and loop
 parameters, all of which can be overridden on the command line.
 
+### Running with no reference tone
+
+A dither-only session has no tone to align to, no tone to cancel and no tone phase to time with,
+so the loop switches routes. `--tone-free` sets all three together
+(`--gain-observable dither_mag --skew-observable dither_fold --no-cancellation`):
+
+```bash
+python -m calibration_loop.run_calibration sim --tone-free \
+    --amp-dbfs -120 --dither-edge 4 --dither-top 4 --dither-scale 16000 --iterations 60
+python -m calibration_loop.run_calibration bench --uart COM5 --tone-free --allow-skew-writes \
+    --amp-dbfs -120 --dither-edge 4 --dither-top 4 --dither-scale 16000 --iterations 300
+```
+
+The flags must describe the waveform actually loaded on the DPG (the config comes from the CLI,
+not from the JSON); a mismatch shows up as a collapsing alignment margin and the run stopping
+after 20 consecutive rejects. What each route is, and why:
+
+- `dither_mag` averages each impulse's peak-to-peak per event and ratios the channels — sign-free,
+  so no session polarity convention enters, and it agrees with the polarity-corrected folded
+  replica ratio to 0.02 %.
+- Both timing routes take their answer from the folded impulse replicas and share the loop's
+  convention — **positive means channel B samples later**; the index-domain sign is the opposite
+  and closes the loop backwards.
+  - `dither_fold` (the default for `--tone-free`) projects the folded A-B difference onto the
+    pulse slope. It compresses beyond ~0.1 sample, so its *scale* runs low on a large residual
+    (the zero crossing stays honest), but it needs no template fit.
+  - `dither_phase` fits each channel's replica against the template at a **fractional** sampling
+    phase and differences the phases. It is the linear route — unbiased to ±2 ps over ±400 ps in
+    the bench model — but it needs the replica to resemble the template, and the bench's analog
+    path reshapes the impulse.
+- Which is quieter is a property of the waveform, so measure it instead of assuming:
+  `python tools/timing_route_check.py --state 24=... --state 32=... --waveform-json <yours>.json`
+  reports both routes' ps/code against the actuator's known 4.8–4.9 (end-to-end) and 7.4 (single
+  step) ps/code, plus their per-frame scatter. Archived 2026-09-19 captures: `w06` 16000 LSB →
+  fold **15.3** ps/frame against phase 26.0; `w32` 2000 LSB → fold **145** against phase 747.
+- Because there is no tone, `tone_ratio`, the A−B difference spur and the SNDR/SFDR columns are
+  scored at f_in and describe the noise floor. The tone-free stand-ins are `gain_mag_ratio`,
+  `offset_*_codes`, `skew_used_ps`, `skew_fold_ps` / `skew_slope_ps`, `dbc_ab_coherent` and
+  `snr_dither_db`.
+
+Offline proof of all of it (run before any bench session that uses these routes):
+
+```bash
+python calibration_out/_tone_free_loop_test.py   # routes against known delays + closed loop
+python tools/loop_direction_check.py             # batch decision and direction latch, both routes
+```
+
 The skew axis closes on hardware (`dSkew` to about -10 ps, the raw A-B difference
 spur from -24.6 to -38.6 dBc). The gain loop integrates the coherent **tone** ratio by
 default (`--gain-observable tone`): that is the mismatch the A-B difference spur at
@@ -96,6 +143,7 @@ Each run writes a CSV log, a JSON metadata file and a learning-curve plot.
 |---|---|
 | `dither.py` | DPG vector generation, ADC-rate pulse and derivative templates |
 | `estimator.py` | De-framing, loop alignment, joint estimate, block-LMS state |
+| `dither_raw.py` | Tone-free measurement of all three mismatches from the folded impulses |
 | `metrics.py` | SNDR, SFDR, ENOB, interleaving spurs, A−B residual |
 | `capture.py` | UART-triggered capture, UDP frame collection, clock-delay actuator |
 | `simulate.py` | Full-chain bench model with known ground truth |

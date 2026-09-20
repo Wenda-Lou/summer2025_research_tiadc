@@ -27,10 +27,12 @@ from .estimator import (
     BlockEstimate,
     CalibrationState,
     estimate_block,
+    gain_observable_pair,
     interleave,
     polarity_anchor,
     prepare_capture,
     skew_batch,
+    skew_batch_dither,
     synthesize_dither,
 )
 from .metrics import analyse, channel_difference_dbc, mismatch_spurs
@@ -77,26 +79,80 @@ class LoopOptions:
     first-order expansion behind the skew estimate is only valid for small
     errors, so a large value means the fit failed, not that the skew is large."""
 
+    max_skew_samples_dither: float = 0.5
+    """The same gate for the *tone-free* routes (:attr:`skew_observable` = ``dither_phase``
+    or ``dither_fold``).
+
+    A separate bound, because the two routes fail differently.  The tone-phase estimate wraps
+    every half tone period (1254 ps), so its gate has to be tight enough to catch a wrapped
+    branch; the fractional-phase route does not wrap, it only compresses, and it is linear to
+    better than 2 % out to +-0.25 samples (measured in the model 2026-09-20).  What the bound
+    has to catch here is a frame whose folded difference is dominated by noise, so it can sit
+    where a genuine acquisition-time mismatch still passes: the loop starts within a few hundred
+    ps of its target, and rejecting the frames that carry the error signal would leave the
+    actuator unable to acquire at all."""
+
     max_gain_deviation: float = 0.20
     """Reject a block whose measured gain ratio is further than this from 1."""
 
     gain_observable: str = "tone"
-    """Which measurement the gain correction integrates: ``"tone"`` or ``"dither"``.
+    """Which measurement the gain correction integrates: ``"tone"``, ``"dither"`` or
+    ``"dither_mag"``.
 
-    Two estimates of the same channel gain mismatch, and on this bench they disagree
-    by ~1.2 %: the dither route reads the narrow pulse replicas (dispersed
-    differently by the two channels), the tone route reads the 199 MHz tone that the
-    A-B difference spur is actually made of.  The tone route is also ~10x quieter
-    (0.25 % per-frame scatter against 2.3 %), so the old dither-only loop both
-    random-walked on that noise — residual 2-3 % over a whole run against 0.04 % in
-    the model — and seated its correction 1.1-2.05 % away from the point that nulls
-    the tone, which is what capped the corrected A-B spur at -35 dBc while the raw
-    one reached -38.6 dBc.
+    Three estimates of the same channel gain mismatch.  On this bench the tone route and the
+    pulse-window route disagree by ~1.2 %: the dither route reads the narrow pulse replicas
+    (dispersed differently by the two channels), the tone route reads the 199 MHz tone that the
+    A-B difference spur is actually made of.  The tone route is also ~10x quieter (0.25 %
+    per-frame scatter against 2.3 %), which is why it became the default.
 
-    ``"dither"`` restores the old behaviour for a comparison run.  Either way the log
-    records both ratios, so the seating stays auditable.  The choice is a statement
-    about *which* mismatch to null: at f_in (the tone route) or broadband (the dither
-    route)."""
+    Without a tone the choice narrows to the two dither routes, and they are not equivalent:
+    measured 2026-09-19, ``"dither"`` (the estimator's ``gain_ratio``) reads ~3 % high and does
+    not track the replica amplitude at all (correlation -0.055 across frames, against +0.90 for
+    the genuine common-mode movement of the two channels), while ``"dither_mag"`` -- the sign-free
+    per-event magnitude ratio from ``dither_raw`` -- agrees with the polarity-corrected folded
+    replica ratio to 0.02 %.  So a tone-free run wants ``"dither_mag"``.
+
+    The log records the ratio of every route, so the seating stays auditable."""
+
+    skew_observable: str = "phase"
+    """Which measurement the skew decision integrates: ``"phase"``, ``"dither_phase"`` or
+    ``"dither_fold"``.
+
+    ``"phase"`` is the tone-based route and needs a tone: it fits the phase of the main tone in
+    each channel.  The two dither routes are tone-free and take their timing from the folded
+    impulse replicas (:mod:`calibration_loop.dither_raw`):
+
+    * ``"dither_phase"`` fits each channel's replica against the known template **at a fractional
+      sampling phase** and differences the two phases.  It is the linear route: in the bench
+      *model* it is unbiased to +-2 ps over +-400 ps with 3-7 ps of per-frame scatter, against a
+      projection that reads 86.6 ps where the truth is 103.6.
+    * ``"dither_fold"`` projects the folded A-B difference onto the pulse's derivative.  It
+      compresses beyond ~0.1 sample (so its *scale* runs low on a large residual, while its zero
+      crossing stays honest) but it needs no template fit, which on real hardware is an
+      advantage: the bench's analog path reshapes the impulse, and a shape mismatch hurts the
+      template route much more than the projection.
+
+    Which to use is a hardware question, and it is answerable before closing the loop:
+    ``tools/timing_route_check.py`` measures both against known actuator codes (read-only, offline
+    on archived or fresh captures).  Measured on the archived 2026-09-19 captures, and this is
+    what sets the ``--tone-free`` default:
+
+    | waveform | fold | phase |
+    |---|---|---|
+    | ``w06`` 16000 LSB (the recommended excitation) | **15.3 ps/frame** | 26.0 ps/frame |
+    | ``w32`` 2000 LSB (the stage-C ladder pulse) | **145 ps/frame**, +3.4 ps/code | 747 ps/frame, +4.5 ps/code |
+
+    The 32-sample pulse is where the template route falls over: the analog path reshapes it hard
+    (measured FWHM 17.2 samples against an ideal 24), the fit residual reaches 15 % of the
+    replica, and the fitted phase is then driven by shape rather than timing.  Both routes do
+    recover the right ps/code against the known codes, so the choice is about noise, and on this
+    bench the projection wins -- at the cost of its compressed *scale*, which is why
+    ``dither_phase`` remains one flag away for a waveform whose replica matches the template.
+
+    A tone-free run must also set ``cancel_signal = False``: with no tone to remove, the
+    least-squares tone fit subtracts structure from the record instead of a signal.  Both are set
+    for you by ``--tone-free``.
+    """
 
     skew_batch_frames: int = 20
     """Accepted frames per skew decision.
@@ -162,6 +218,10 @@ class CalibrationLoop:
         self._signature: dict | None = None
         self._polarity: float | None = None
         self._skew_frames: list[dict] = []
+        self._raw_measure = None
+        """Tone-free measurement of the current frame's residual, when a tone-free route runs."""
+        self._raw_excitation = None
+        """Tone-free measurement of the raw capture: excitation peak, coherent A-B power, SNR."""
         """Accepted frames of the skew batch in progress (see LoopOptions)."""
         self._skew_prev_error: float | None = None
         """Batch error at the previous decision, for the direction check."""
@@ -189,19 +249,31 @@ class CalibrationLoop:
         has no hardware state to corrupt.
         """
         self._skew_frames.append({
-            "phase_ps": est.skew_phase_ps,
+            "phase_ps": (est.skew_slope_ps if self.opt.skew_observable.startswith("dither")
+                         else est.skew_phase_ps),
             "diff_route_ps": est.skew_diff_route_ps,
             "centroid_ps": est.skew_centroid_ps,
+            # The number this batch averages, whichever route the options selected, plus both
+            # tone-free routes for context (`skew_fold_ps` is the projection, `skew_slope_ps` the
+            # fractional-phase fit -- see LoopOptions.skew_observable).
+            "used_ps": est.skew_used_ps,
+            "slope_ps": est.skew_slope_ps,
+            "fold_ps": est.skew_fold_ps,
             "source": est.skew_source,
             "tone": est.ch_a.tone_amplitude,
             "resid": est.ch_a.residual_rms,
+            "gain_mag_ratio": est.gain_mag_ratio,
             "margin": row.get("align_margin", float("nan")),
         })
         row["skew_batch_n"] = len(self._skew_frames)
         if len(self._skew_frames) < self.opt.skew_batch_frames:
             return
 
-        batch = skew_batch(self._skew_frames)
+        if self.opt.skew_observable.startswith("dither"):
+            batch = skew_batch_dither(self._skew_frames,
+                                      margin_min=self.opt.min_align_margin)
+        else:
+            batch = skew_batch(self._skew_frames)
         self._skew_frames = []
         row["skew_batch_used"] = batch.n_used
         row["skew_batch_mean_ps"] = batch.mean_ps
@@ -284,6 +356,40 @@ class CalibrationLoop:
         )
         est.rotation = prep["rotation"]
 
+        # Tone-free routes, measured only when the run asks for them.  They are taken on the
+        # *corrected* streams (the loop integrates residual errors, not absolutes) while the
+        # excitation figures -- peak, coherent A-B power, dither SNR -- are taken on the raw
+        # capture, because those describe the bench rather than the residual.
+        if self.opt.skew_observable.startswith("dither") or self.opt.gain_observable == "dither_mag":
+            from .dither_raw import measure as measure_raw
+
+            res = measure_raw(cal_a, cal_b, self.cfg, min_margin=self.opt.min_align_margin)
+            exc = measure_raw(ch_a, ch_b, self.cfg, min_margin=self.opt.min_align_margin)
+            est.gain_mag_ratio = res.gain_mag_ratio
+            est.mag_a, est.mag_b = res.mag_a, res.mag_b
+            est.skew_slope_ps = res.skew_slope_ps
+            est.skew_fold_ps = res.skew_fold_ps
+            est.phase_a, est.phase_b = res.phase_a, res.phase_b
+            est.peak_a = exc.peak_a
+            est.dbc_ab_coherent = exc.dbc_ab_coherent
+            est.snr_dither_db = exc.snr_dither_db
+            self._raw_measure = res
+            self._raw_excitation = exc
+        else:
+            self._raw_measure = None
+            self._raw_excitation = None
+
+        # The number this iteration integrates, on whichever route the options selected.  Set
+        # *before* the row is written and before the acceptance filter runs, so the CSV column,
+        # the learning curve and the state update can never disagree about which observable was
+        # in use -- the failure mode that made a dead tone-based route look like a converging
+        # loop (see LoopOptions.skew_observable).
+        est.skew_used_ps = {
+            "phase": est.skew_mismatch_ps,
+            "dither_phase": est.skew_slope_ps,
+            "dither_fold": est.skew_fold_ps,
+        }.get(self.opt.skew_observable, est.skew_mismatch_ps)
+
         row = self._measure(ch_a, ch_b, cal_a, cal_b, est, prep["n0"])
         row["swapped"] = prep["swapped"]
         row["align_margin"] = prep["align_margin"]
@@ -306,9 +412,11 @@ class CalibrationLoop:
             self._skew_decision(est, row)
         else:
             # Bench model: no registers to disturb and no measurement noise worth
-            # batching, so the original per-frame integrator stays.
+            # batching, so the original per-frame integrator stays.  The observable choice
+            # still applies, which is what lets a tone-free run be exercised offline.
             errors = self.state.update(est, integrate_skew=self.opt.close_skew_loop,
-                                       gain_observable=self.opt.gain_observable)
+                                       gain_observable=self.opt.gain_observable,
+                                       skew_ps=est.skew_used_ps)
             row.update(errors)
             if self.opt.close_skew_loop and hasattr(self.bench, "command_skew"):
                 self.bench.command_skew(self.state.skew_cmd_ps)
@@ -327,21 +435,51 @@ class CalibrationLoop:
         return row
 
     def _reject_reason(self, prep: dict, est: BlockEstimate) -> str | None:
-        """Guard the LMS against frames the estimator could not trust."""
+        """Guard the LMS against frames the estimator could not trust.
+
+        Every gate judges the observable this run actually integrates, not the one the estimator
+        happens to compute.  On a tone-free capture the estimator's tone-based fields are noise
+        -- the fit latches onto a dither comb line and the phase route then reports hundreds of
+        ps -- so gating on them would reject the majority of good frames while the loop's own
+        route was fine (measured 2026-09-20: 81 % rejected that way), and gating the *gain* on
+        the estimator's pulse-window ratio would ignore a silent fallback away from the
+        requested one.
+        """
         if prep["align_margin"] < self.opt.min_align_margin:
             return f"align_margin={prep['align_margin']:.1f}"
         if est.ch_a.n_events_used < 2 or est.ch_b.n_events_used < 2:
             return "too few dither events in the capture"
-        for tag, ch in (("A", est.ch_a), ("B", est.ch_b)):
-            if not np.isfinite(ch.gain_codes) or not np.isfinite(ch.skew_samples):
-                return f"channel {tag} estimate not finite"
+
+        tone_free = self.opt.skew_observable.startswith("dither")
+        if tone_free:
+            # The tone-based per-channel fields are not part of this run's answer; what has to be
+            # finite is the route that is.  ``dither_raw`` returns NaN for it exactly when the
+            # replica was too flat or too corrupt to locate.
+            if not np.isfinite(est.skew_used_ps):
+                return "no tone-free skew estimate"
+            if not (np.isfinite(est.mag_a) and np.isfinite(est.mag_b)):
+                return "no tone-free gain estimate"
+        else:
+            for tag, ch in (("A", est.ch_a), ("B", est.ch_b)):
+                if not np.isfinite(ch.gain_codes) or not np.isfinite(ch.skew_samples):
+                    return f"channel {tag} estimate not finite"
+
         # Only the mismatch is a defect; the sub-sample phase both channels share
         # against the DPG loop is a property of the clock path, not an error.
-        residual = (est.skew_mismatch_ps - self.state.skew_target_ps) * 1e-12 * self.cfg.fs_adc
-        if abs(residual) > self.opt.max_skew_samples:
+        residual = (est.skew_used_ps - self.state.skew_target_ps) * 1e-12 * self.cfg.fs_adc
+        bound = self.opt.max_skew_samples_dither if tone_free else self.opt.max_skew_samples
+        if abs(residual) > bound:
             return f"skew mismatch residual={residual:.3f} samples out of range"
-        if abs(est.gain_ratio - 1.0) > self.opt.max_gain_deviation:
-            return f"gain ratio={est.gain_ratio:.3f} out of range"
+
+        # The gain gate follows the chosen observable, and a *fallback* is itself a rejection in
+        # a tone-free run: falling back there means falling back onto the tone.
+        ga, gb, source = gain_observable_pair(est, self.opt.gain_observable)
+        if tone_free and source != "dither_mag":
+            return f"gain observable fell back to {source}"
+        if np.isfinite(ga) and np.isfinite(gb) and abs(ga) > 1e-9:
+            ratio = gb / ga
+            if abs(ratio - 1.0) > self.opt.max_gain_deviation:
+                return f"gain ratio={ratio:.3f} out of range ({source})"
         return None
 
     def _measure(self, raw_a, raw_b, cal_a, cal_b, est: BlockEstimate, n0: int) -> dict:
@@ -384,6 +522,20 @@ class CalibrationLoop:
             "skew_diff_route_ps": est.skew_diff_route_ps,
             "skew_centroid_ps": est.skew_centroid_ps,
             "skew_source": est.skew_source,
+            # The number this run integrates, on whichever route the options selected, and the
+            # name of that route.  `skew_mismatch_ps` above stays the estimator's own answer, so
+            # a reader can always see both and tell which one moved the actuator.
+            "skew_used_ps": est.skew_used_ps,
+            "skew_observable": self.opt.skew_observable,
+            # tone-free routes (NaN unless a dither-based observable is in use)
+            "gain_mag_ratio": est.gain_mag_ratio,
+            "skew_slope_ps": est.skew_slope_ps,
+            "skew_fold_ps": est.skew_fold_ps,
+            "phase_a_samples": est.phase_a,
+            "phase_b_samples": est.phase_b,
+            "dither_peak_a_codes": est.peak_a,
+            "dbc_ab_coherent": est.dbc_ab_coherent,
+            "snr_dither_db": est.snr_dither_db,
         }
 
         # Per-channel dynamic performance, always meaningful.
@@ -492,7 +644,7 @@ class CalibrationLoop:
                     f"g_B/g_A={row['gain_ratio']:+.5f}  "
                     f"tone={row['tone_ratio']:+.5f}  "
                     f"dOffset={row['offset_b_codes'] - row['offset_a_codes']:+8.3f} LSB  "
-                    f"dSkew={row['skew_mismatch_ps']:+7.3f} ps  "
+                    f"dSkew={row['skew_used_ps']:+7.3f} ps  "
                     f"SNDR={row['cal_sndr_db']:5.2f} dB  "
                     f"image={row['cal_image_spur_dbc']:6.1f} dBc"
                 )
@@ -577,13 +729,24 @@ class CalibrationLoop:
 
         # Gain: the controlled observable leads.  With the tone route the dither
         # ratio is no longer what is being nulled -- it settles at the dither-vs-tone
-        # disagreement (~1.2 % on this bench) -- so both are drawn instead of letting
-        # one masquerade as the loop's error signal.
-        tone = np.array([r.get("tone_ratio", np.nan) for r in rows], dtype=float)
-        if np.isfinite(tone).any():
-            ax[0, 0].plot(it, tone, label="tone route (controlled)")
-        ax[0, 0].plot(it, [r["gain_ratio"] for r in rows], ls=":", lw=1,
-                      label="dither route (pulse windows)")
+        # disagreement (~1.2 % on this bench) -- so every route that was measured is
+        # drawn instead of letting one masquerade as the loop's error signal.  Which
+        # one was controlled comes from ``gain_source``, so a fallback cannot hide.
+        rows_last = rows[-1]
+        controlled = rows_last.get("gain_source", "tone")
+        routes = (
+            ("tone", "tone_ratio", "tone route"),
+            ("dither_mag", "gain_mag_ratio", "dither magnitude (sign-free)"),
+            ("dither", "gain_ratio", "dither route (pulse windows)"),
+        )
+        for name, key, label in routes:
+            vals = np.array([r.get(key, np.nan) for r in rows], dtype=float)
+            if not np.isfinite(vals).any():
+                continue
+            is_controlled = name == controlled
+            ax[0, 0].plot(it, vals, lw=2.0 if is_controlled else 1.0,
+                          ls="-" if is_controlled else ":",
+                          label=f"{label}{' (controlled)' if is_controlled else ''}")
         ax[0, 0].axhline(1.0, ls="--", lw=1, color="k")
         ax[0, 0].legend(fontsize=8)
         ax[0, 0].set_title("Gain ratio $g_B/g_A$ (residual)")
@@ -594,9 +757,10 @@ class CalibrationLoop:
         ax[0, 1].axhline(0.0, ls="--", lw=1, color="k")
         ax[0, 1].set_title("Offset mismatch [LSB] (residual)")
 
-        ax[1, 0].plot(it, [r["skew_mismatch_ps"] for r in rows])
+        ax[1, 0].plot(it, [r.get("skew_used_ps", r.get("skew_mismatch_ps")) for r in rows])
         ax[1, 0].axhline(0.0, ls="--", lw=1, color="k")
-        ax[1, 0].set_title("Timing skew mismatch [ps] (residual)")
+        ax[1, 0].set_title("Timing skew mismatch [ps] (residual, "
+                           f"{rows[-1].get('skew_observable', 'phase')} route)")
 
         ax[1, 1].plot(it, [r["cal_sndr_db"] for r in rows], label="SNDR calibrated")
         ax[1, 1].plot(it, [r["cal_sfdr_db"] for r in rows], label="SFDR calibrated")

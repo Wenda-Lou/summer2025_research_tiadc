@@ -85,18 +85,36 @@ def _run(bench, cfg, args, label: str):
         mu_skew=args.mu_skew,
         skew_target_ps=args.skew_target_ps,
     )
+    tone_free = bool(getattr(args, "tone_free", False))
+    # `--tone-free` supplies the *defaults* for a run with no tone; an explicitly chosen route
+    # still wins.  Silently discarding `--skew-observable dither_phase` because `--tone-free` was
+    # also passed would be the same class of fault as a silent gain fallback: the run would look
+    # fine and integrate something the caller did not ask for.
+    gain_observable = args.gain_observable
+    if tone_free and gain_observable == "tone":
+        gain_observable = "dither_mag"
+    skew_observable = args.skew_observable
+    if tone_free and skew_observable == "phase":
+        skew_observable = "dither_fold"
     options = LoopOptions(
-        cancel_signal=not args.no_cancellation,
+        # A tone-free run has no tone to cancel: leaving the least-squares tone fit on would
+        # subtract structure from the record instead of a signal.
+        cancel_signal=not (args.no_cancellation or tone_free),
         # Skew actuation stays off unless the delay-write path is explicitly
         # unlocked, so plain `bench` behaves like `--open-skew`.  The bench model
         # has no registers to disturb, so it keeps driving the loop.
         close_skew_loop=(not args.open_skew) and skew_writes_ok(bench, args),
         interleaved=args.interleaved,
-        gain_observable=args.gain_observable,
+        gain_observable=gain_observable,
+        skew_observable=skew_observable,
     )
     loop = CalibrationLoop(bench, cfg, state=state, options=options)
 
-    print(f"\nRunning {label} for {args.iterations} qualified samples")
+    print(f"\nRunning {label} for {args.iterations} qualified samples"
+          + ("  (tone-free)" if tone_free else ""))
+    print(f"routes: gain {gain_observable}, skew {skew_observable}"
+          + (", tone cancellation OFF" if not options.cancel_signal
+             else ", tone cancellation ON"))
     print("-" * 100)
     loop.run(args.iterations)
 
@@ -134,25 +152,50 @@ def cmd_sim(args) -> None:
     if not loop.log:
         return
     tail = loop.log[-max(1, len(loop.log) // 5):]
+    last = tail[-1]
+    controlled_gain = last.get("gain_source", "tone")
+    tone_free = controlled_gain == "dither_mag"
 
     def avg(key):
         vals = [r[key] for r in tail if np.isfinite(r[key])]
         return float(np.mean(vals)) if vals else float("nan")
 
     print("\nResidual error after convergence (mean of last 20 % of iterations)")
-    print(f"  gain ratio        : {avg('gain_ratio'):+.6f}   (target +1.000000)")
-    print(f"  tone ratio        : {avg('tone_ratio'):+.6f}   "
-          f"(target +1.000000; the controlled observable)")
+    print(f"  gain ratio        : {avg('gain_ratio'):+.6f}   "
+          f"(pulse windows; target +1.000000)")
+    if not tone_free:
+        print(f"  tone ratio        : {avg('tone_ratio'):+.6f}   "
+              f"(target +1.000000; the controlled observable)")
+    else:
+        # A tone-free run has no tone: `tone_ratio` is then a fit of noise, and quoting it as a
+        # controlled observable would be exactly the kind of silent nonsense the route log exists
+        # to prevent.  What the loop controls here is the sign-free magnitude ratio.
+        print(f"  magnitude ratio   : {avg('gain_mag_ratio'):+.6f}   "
+              f"(target +1.000000; the controlled observable)")
     print(f"  offset mismatch   : "
           f"{avg('offset_b_codes') - avg('offset_a_codes'):+.4f} LSB   (target 0)")
-    print(f"  skew mismatch     : {avg('skew_mismatch_ps'):+.4f} ps   "
-          f"(target {args.skew_target_ps:+.3f})")
-    print(f"  SNDR raw -> cal   : {avg('raw_sndr_db'):.2f} -> {avg('cal_sndr_db'):.2f} dB")
-    print(f"  SFDR raw -> cal   : {avg('raw_sfdr_db'):.2f} -> {avg('cal_sfdr_db'):.2f} dB")
-    print(f"  image spur        : {avg('raw_image_spur_dbc'):.1f} -> "
-          f"{avg('cal_image_spur_dbc'):.1f} dBc")
-    print(f"  offset spur       : {avg('raw_offset_spur_dbc'):.1f} -> "
-          f"{avg('cal_offset_spur_dbc'):.1f} dBc")
+    print(f"  skew mismatch     : {avg('skew_used_ps'):+.4f} ps   "
+          f"(target {args.skew_target_ps:+.3f}; {last.get('skew_observable', 'phase')} route)")
+    if not tone_free:
+        print(f"  SNDR raw -> cal   : {avg('raw_sndr_db'):.2f} -> {avg('cal_sndr_db'):.2f} dB")
+        print(f"  SFDR raw -> cal   : {avg('raw_sfdr_db'):.2f} -> {avg('cal_sfdr_db'):.2f} dB")
+        print(f"  image spur        : {avg('raw_image_spur_dbc'):.1f} -> "
+              f"{avg('cal_image_spur_dbc'):.1f} dBc")
+        print(f"  offset spur       : {avg('raw_offset_spur_dbc'):.1f} -> "
+              f"{avg('cal_offset_spur_dbc'):.1f} dBc")
+    else:
+        # The spectral columns are scored at the tone frequency, so with the tone at -120 dBFS
+        # they describe the noise floor and must not be read as performance.  The tone-free
+        # stand-ins are the injected dither's own SNR and the coherent A-B power.
+        print("  (no tone: the SNDR/SFDR/image columns are scored at f_in and describe the")
+        print("   noise floor -- read the tone-free pair below instead)")
+        print(f"  dither SNR (A)    : {avg('snr_dither_db'):.2f} dB   "
+              f"(coherent dither power over the residual)")
+        print(f"  coherent A-B      : {avg('dbc_ab_coherent'):.1f} dBc   "
+              f"(tone-free stand-in for the A-B difference spur)")
+        print(f"  skew routes       : fold {avg('skew_fold_ps'):+.2f} / "
+              f"phase {avg('skew_slope_ps'):+.2f} ps   "
+              f"(controlled: {last.get('skew_observable', 'phase')})")
 
 
 def cmd_check(args) -> None:
@@ -471,12 +514,32 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--no-cancellation", action="store_true",
                         help="disable main-tone cancellation (slow baseline)")
         sp.add_argument("--gain-observable", dest="gain_observable",
-                        choices=("tone", "dither"), default="tone",
+                        choices=("tone", "dither", "dither_mag"), default="tone",
                         help="which measurement the gain correction integrates: the "
                              "coherent main-tone amplitude ratio (default; what the "
-                             "A-B difference spur depends on, and ~10x quieter) or "
-                             "the dither pulse-window ratio (the older behaviour, "
-                             "kept for comparison runs)")
+                             "A-B difference spur depends on, and ~10x quieter), the "
+                             "dither pulse-window ratio (older behaviour), or "
+                             "dither_mag -- the sign-free per-event magnitude ratio, "
+                             "which is the route to use with no tone")
+        sp.add_argument("--skew-observable", dest="skew_observable",
+                        choices=("phase", "dither_phase", "dither_fold"), default="phase",
+                        help="which measurement the skew decision integrates: the "
+                             "tone-phase route (default; needs a tone), "
+                             "dither_phase -- tone-free, fits each channel's folded "
+                             "impulse replica against the template at a fractional "
+                             "sampling phase and differences the phases (linear, and "
+                             "the default for --tone-free), or dither_fold -- "
+                             "tone-free, projects the folded A-B difference onto the "
+                             "pulse slope (quieter on a reshaped bench pulse, but its "
+                             "scale compresses on a large residual).  Check both against "
+                             "known actuator codes with tools/timing_route_check.py")
+        sp.add_argument("--tone-free", dest="tone_free", action="store_true",
+                        help="shorthand for a run with no reference tone: sets "
+                             "--gain-observable dither_mag, --skew-observable "
+                             "dither_fold and --no-cancellation (there is no tone to "
+                             "cancel, and the least-squares tone fit would otherwise "
+                             "subtract structure from the record).  Load a waveform "
+                             "generated with `gen --amp-dbfs -120`")
         sp.add_argument("--open-skew", action="store_true",
                         help="measure skew but do not drive the clock delay")
         sp.add_argument("--interleaved", action="store_true",

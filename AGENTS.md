@@ -46,7 +46,7 @@ The repository mixes four kinds of code that support that bench:
 | `calibration_sim/` | Host C simulator + test harness (CMake). Reuses production firmware sources. |
 | `calibration_loop/` | Python impulse-dither calibration package (`python -m calibration_loop.run_calibration`). `fix_skew_export.py` repairs pre-2026-08-16 skew CSV labels from recorded board data (does not invent truncated frames). |
 | `calibration_out/` | Example output of `calibration_loop` runs (CSV, JSON, plots). |
-| `tools/` | Ad-hoc bench/host diagnostics, run from the repo root with `PYTHONPATH=.` if invoked as a path. `prepare_capture_truth_check.py` and `live_before_after.py` grade de-framing/channel ordering against `BenchModel` truth or live bytes; `half_group_lag_impact.py`, `deframe_rotation_table.py`, `compare_reconstruction.py` quantify extraction errors. `skew_step_characterize.py` measures the actuator's step response, `skew_close_loop.py` converges it with the batch decision, `skew_park.py` returns it to a chosen control code through the ACK-checked firmware transaction, and `loop_direction_check.py` proves the loop's direction guard offline against `BenchModel`; `dither_vs_tone_gain.py` compares the dither and tone routes to the gain mismatch on the same frames (and `--save-frames` archives the captures so a state can be re-analysed without bench time); `dither_raw_evidence.py` reads gain, offset and timing straight off the folded impulse replicas of tone-free captures — folding must be polarity-corrected (the balanced ± train cancels a sign-blind fold) and timing comes from the slope route, readable as a difference between fixed states, not per frame. |
+| `tools/` | Ad-hoc bench/host diagnostics, run from the repo root with `PYTHONPATH=.` if invoked as a path. `prepare_capture_truth_check.py` and `live_before_after.py` grade de-framing/channel ordering against `BenchModel` truth or live bytes; `half_group_lag_impact.py`, `deframe_rotation_table.py`, `compare_reconstruction.py` quantify extraction errors. `skew_step_characterize.py` measures the actuator's step response, `skew_close_loop.py` converges it with the batch decision, `skew_park.py` returns it to a chosen control code through the ACK-checked firmware transaction, and `loop_direction_check.py` proves the loop's direction guard offline against `BenchModel` for the tone route **and both dither routes**; `timing_route_check.py` compares the two tone-free timing routes against known actuator codes for whichever waveform is loaded (the loop's route choice is made from its output, not assumed). `dither_vs_tone_gain.py` compares the dither and tone routes to the gain mismatch on the same frames (and `--save-frames` archives the captures so a state can be re-analysed without bench time); `dither_raw_evidence.py` reads gain, offset and timing straight off the folded impulse replicas of tone-free captures — folding must be polarity-corrected (the balanced ± train cancels a sign-blind fold) and timing comes from the slope projection, readable as a difference between fixed states, not per frame. `dither_ladder.py` turns a ladder of captured states (16000 → 24000 → 30000 LSB) into the amplitude-linearity answer and a figure, and `dac_vs_adc_plot.py` overlays one capture on the DAC vector it came from. |
 | `fpga/skew_actuator/` | `adc_channel_skew_actuator_gpio.v` fractional-delay AXI-Stream module + Vivado TCL integration scripts + xsim validation logs. |
 | `axi_lite_wrapper/`, `axi_full_wrapper/` | AXI Lite / AXI Full master wrapper Verilog with SystemVerilog testbenches (Vivado xsim). |
 | `lwip_platform/` | Standalone lwIP Ethernet platform code (`ethernet.c/h`, static IPv4 config) and a minimal Vitis application. |
@@ -329,19 +329,77 @@ manual hardware procedures; do not attempt them without the bench.
 - **Dither-only excitation (what the impulses do without the tone)**: `gen --amp-dbfs -120`
   gives a waveform with the tone at 0 LSB and the identical pulse train
   (`waveforms/impulse_dither_only.txt`).  Anything running the loop with it **must** pass
-  `--gain-observable dither`: the default tone observable becomes a noise integrator and the
-  loop collapses (bench model: 1 of 21 captures accepted, offset residual tens of LSB),
-  whereas with the dither observable it converges (`gain_ratio` 1.00094, offset ~0).  With
-  that set, alignment, offset and gain behave **identically** to the tone+dither case
-  (offset scatter +0.670 ± 2.313 against +0.668 ± 2.297 codes; gain +1.001 ± 0.004 both) —
-  so the impulses carry those three on their own and are not disturbed by tone interference,
-  which in turn means the 1.2 % dither-vs-tone gain disagreement is a property of the pulse
-  path rather than of the tone.  **Skew has no usable route without the tone** and not
-  because of dispersion: even in the dispersion-free model the impulse train's content at f0
-  is too small for a coherent phase fit (+53 ± 556 ps against +0.20 ± 0.62 ps with the tone),
-  and the loop's own skew-range gate then rejects ~71 % of captures — use
-  `tools/dither_response_test.py`, which measures the estimator directly and saves the raw
-  frames, for a dither-only session.
+  `--tone-free` (equivalently `--gain-observable dither_mag --skew-observable dither_fold
+  --no-cancellation`): the tone routes become noise integrators and the loop collapses (bench
+  model: 1 of 21 captures accepted, offset residual tens of LSB).  With the tone-free routes the
+  loop converges on all three axes — measured 2026-09-20 in the model: gain magnitude 1.0000,
+  offset 0.08 codes, skew +0.18 ps on `dither_fold` and −0.59 ps on `dither_phase`, **0 of 40
+  captures rejected** on either (before the fixes below, a live run qualified 16 of 84).
+  Alignment, offset and gain behave identically to the tone case (offset scatter
+  +0.670 ± 2.313 against +0.668 ± 2.297 codes; gain +1.001 ± 0.004 both), so the impulses carry
+  those three on their own.
+
+  **The earlier claim that skew has no usable route without the tone is superseded.**  It was
+  true of the tone-phase and centroid routes.  Two tone-free routes now exist, both in
+  `calibration_loop/dither_raw.py`, both fed from the *folded* replicas and both sharing the
+  loop's convention (positive = channel B samples later):
+
+  * **`dither_fold`** (what `--tone-free` selects) projects the folded A-B difference onto the
+    pulse slope.  It is the route every bench ladder number was measured with, and it *compresses*
+    beyond ~0.1 sample (so its scale runs low on a large residual, while its zero crossing stays
+    honest — the loop still parks on the truth).
+  * **`dither_phase`** fits each channel's replica against the template at a **fractional
+    sampling phase** and differences the two phases.  Linear (unbiased to ±2 ps over ±400 ps in
+    the model, where the projection reads 86.6 ps for a true 103.6) but it needs the replica to
+    resemble the template, and the bench's analog path reshapes the impulse.
+
+  Which is quieter is a property of the waveform, so it is measured, not assumed:
+  `tools/timing_route_check.py` reports both against known actuator codes (offline, read-only).
+  Archived 2026-09-19 captures: **`w06` 16000 LSB → fold 15.3 ps/frame against phase 26.0**;
+  `w32` 2000 LSB → fold 145 ps/frame (+3.4 ps/code) against phase 747 (+4.5 ps/code), i.e. the
+  template route falls over on the reshaped 32-sample pulse (15 % fit residual) while the
+  projection holds.  Two traps paid for on 2026-09-20:
+
+  **(a) the sign is the sampling-instant convention**, and the index-domain shift is the negative
+  of it; a route written in the index convention closes the loop *backwards* — in the model the
+  commanded delay ran 0 → +390 ps while the true residual grew to −371 ps, every transaction
+  ACKed `OK`, with 81 % of captures rejected on the way.  Check any new timing route against a
+  known delay before trusting it; a converging-looking trace does not catch this.
+  **(b) a template fit needs a basin guard**: an unconstrained search over a whole sample lands in
+  a neighbouring basin on a degraded frame (1512 ps of scatter on a state whose real scatter is
+  tens of ps), so `replica_phase` seeds from the first-order estimate when that estimate is sane
+  and falls back to the full range when it is not (the 32-sample pulse's flat top makes the
+  projection itself read ±8 samples).
+
+  The loop's acceptance filter, its log and the value it integrates all follow the *route in
+  use* (`skew_used_ps`, `skew_observable`, `gain_source`; a gain-observable fallback is itself a
+  rejection in a tone-free run).  Gating on the estimator's tone fields, which stay finite on a
+  tone-free capture because the fit latches onto a dither comb line, threw away 45 % of good
+  frames in the model and 81 % in the first live run.  Offline proofs:
+  `calibration_out/_tone_free_loop_test.py` (both routes against known delays and closed-loop,
+  acquisition from a +200 ps mismatch, old-gate comparison) and `tools/loop_direction_check.py`
+  (batch decision and direction latch, run for the tone route and both dither routes).  Bench
+  procedure: `BENCH_SESSION_DITHER_ONLY.md` §7.
+
+- **Full-scale dither ladder (stage F, prepared 2026-09-20)**: the excitation has two knobs —
+  pulse width and amplitude.  Width is spent: the generator's floor is the 6-sample pulse
+  (`waveforms/pulse_ladder/w06adc_e04_t04_amp*.json`, all six widths measured 2026-09-19 with no
+  plateau in FWHM).  Amplitude is what is left, so the ladder now runs to it:
+  `w06adc_e04_t04_amp24000` (73.2 % of DAC full scale) and `w06adc_e04_t04_amp30000` (91.6 %),
+  both `check` 6/6 at 1.3 GSPS and both uncommitted as of this writing.  `tools/dither_ladder.py`
+  is what reads a captured ladder: per state it reports the **folded** replica peak-to-peak,
+  FWHM, slope, `B/A mag`, `DC(B−A)` and the per-frame timing scatter on both routes, and across
+  states it compares each measured amplitude ratio with the commanded one — a ratio that falls
+  short *is* the compression knee, and it is the answer, not a failed run.  Two things to carry:
+  quote the **folded** replica amplitude (the per-event range is noise-biased at low amplitude —
+  the model reads 48.8 codes for a 25-code replica at 2000 LSB, which fabrication-invents a
+  compression at the bottom of the ladder), and remember the ADC is never the limit here (a
+  735-code replica at amp30000 is 9 % of ±8192) while the **DAC is** (91.6 % of its own full
+  scale).  The third question stage F answers is a ground-truth one: repeating stage A's IFC step
+  (B: 0x0C → 0x0D) at the top amplitude decides whether the ~2.4 % amplitude-dependence of the
+  `B/A mag` readout is a real differential nonlinearity.  Instrument check, including a
+  deliberately compressing ladder that must fail:
+  `python calibration_out/_dither_ladder_test.py`.  Procedure: `BENCH_SESSION_DITHER_ONLY.md` §F.
 
 - **Sample accounting in the loop**: `CalibrationLoop.run(N)` collects N *qualified*
   samples.  A capture the acceptance filter rejects is logged with its reason and
@@ -411,10 +469,20 @@ manual hardware procedures; do not attempt them without the bench.
    bench-model branch of `CalibrationLoop.step()`, so the decision logic that
    lives on the hardware branch (the batch skew decision and its direction latch)
    has its own offline proof: run `python tools/loop_direction_check.py` after
-   touching `_skew_decision`.  Gain-loop changes have one too: `python
-   calibration_out/_gain_loop_test.py`, which uses `BenchModel.pulse_gain_a/_b` to
-   reproduce the bench's dither-vs-tone disagreement and checks that the chosen
-   observable actually nulls the tone.
+   touching `_skew_decision` — it covers the tone route and both dither routes.
+   Gain-loop changes have one too: `python calibration_out/_gain_loop_test.py`, which
+   uses `BenchModel.pulse_gain_a/_b` to reproduce the bench's dither-vs-tone
+   disagreement and checks that the chosen observable actually nulls the tone.
+   Anything touching the tone-free routes (`dither_raw.py`, `skew_batch_dither`, the
+   route-dependent gates in `_reject_reason`) must also keep
+   `python calibration_out/_tone_free_loop_test.py` green: it closes the loop on both
+   dither routes and is the only check that catches a timing route with the wrong
+   sign (a loop closing backwards still produces a smooth-looking learning curve).
+   When a route choice depends on the hardware — as the two tone-free timing routes
+   do — settle it with `python tools/timing_route_check.py` against known actuator
+   codes rather than from the model.  Ladder/amplitude tooling has its own instrument
+   check, including a deliberately compressing ladder that must fail:
+   `python calibration_out/_dither_ladder_test.py`.
 6. Hardware behavior is validated by `BOARD_TEST_PLAN.md` stages on the bench,
    not by the host simulator — the simulator explicitly does not cover JESD,
    DMA hardware state, cache coherency, SPI registers, or analog noise.

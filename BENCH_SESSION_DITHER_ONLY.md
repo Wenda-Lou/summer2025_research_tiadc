@@ -5,6 +5,11 @@ calibration**, **a shorter dither**, **different fixed settings recorded long en
 confirm that gain, offset and skew can be detected reliably. Each section keeps its procedure next
 to its measured result; §5 records the traps this session paid for.
 
+Two sections were added off-bench on **2026-09-20** and are not results from that session:
+**§F** (the full-scale amplitude ladder, waveforms generated and validated, procedure ready) and
+**§7** (the tone-free *closed loop*, whose host-side routes and acceptance logic are now fixed and
+proven offline — that is the "step 1" preparation).
+
 ## Session result
 
 **All three axes are detected, each against a change made on purpose, all of it dither-only:**
@@ -138,6 +143,12 @@ them (`--amp-dbfs -120`).
 | `w06adc_e04_t04_amp2000.*` | 6 samples (4.6 ns) | 4.6 % | 2000 LSB |
 | `w06adc_e04_t04_amp8000.*` | 6 samples | 4.6 % | 8000 LSB (24.4 % FS) |
 | `w06adc_e04_t04_amp16000.*` | 6 samples | 4.6 % | 16000 LSB (48.8 % FS) |
+| `w06adc_e04_t04_amp24000.*` | 6 samples | 4.6 % | 24000 LSB (73.2 % FS) |
+| `w06adc_e04_t04_amp30000.*` | 6 samples | 4.6 % | 30000 LSB (91.6 % FS) |
+
+The last two were generated for stage F (the full-scale ladder, below) and pass `check` 6/6 at
+1.3 GSPS; 30000 LSB is within 8.4 % of the DAC's full scale, so the DAC is the element closest to
+a limit in that state and the test is really "where does the amplitude chain stop being linear".
 
 The generator's own floor is `edge ≥ 2` and `top ≥ 2` ADC samples (flat top needed for the
 gain/offset statistics, ramp needed for skew), so 6 ADC samples is the shortest pulse
@@ -189,6 +200,7 @@ channels together cancels. So each stage varies exactly one thing.
 | **C** | actuator code 24 / 32 / 25 in one run | 3 | 1000 | ~35 min | can timing resolve one code (4.8 ps) | **done 2026-09-19 — yes: 8 codes = 20σ, 1 code = 4.9σ** (see §C) |
 | **A** | IFC on one channel: 0x0C → 0x0D | 2 | 500 | ~15 min | is 0x1910 a usable known gain step, and does the write disturb the link | mechanism proven in G; the recovery measurement is what remains |
 | **B** | pulse width, IFC unchanged | 6 | 200 | ~15 min | where the analog path stops passing a shorter pulse | **done 2026-09-19 — no plateau: FWHM 17.2 → 3.6 samples, slope ×3.6, 6 samples is the generator's floor** (see §B) |
+| **F** | dither amplitude to full scale (16000 → 24000 → 30000 LSB) | 3 | 300 | ~20 min | where the amplitude chain compresses, and whether the timing readout keeps improving to the top | **waveforms generated and validated; procedure below** (see §F) |
 | **D** | IFC on B: 0x0C / 0x0D / 0x0B | 3 | 500 | ~20 min | is the gain readout linear over more than two points | optional: A already gives a two-point proportionality |
 | **E** | B's internal DC-offset calibration on / off | 3 | 500 | ~15 min | is there a known offset step, and does the readout follow it | **done 2026-09-19 — yes: +7.93 / −8.16 codes, ~130σ** (see §E) |
 
@@ -548,6 +560,100 @@ python tools/dither_raw_evidence.py --state <stem>=calibration_out/response/B_<s
 Hold everything else fixed while doing this: IFC at 0x0C on both channels, offset calibration off,
 actuator untouched (record its code).
 
+### F — the full-scale ladder: how far the excitation can be pushed
+
+Stage F answers three things, and the third is a ground-truth question rather than a readout
+question:
+
+1. **Where the amplitude chain compresses.** Stage B fixed the pulse at the generator's floor
+   (6 samples); amplitude is what is left to spend, and amplitude is what the timing route's
+   precision is proportional to. 2000 → 30000 LSB is a ×15 span, and the question is where the
+   replica stops tracking the command.
+2. **Whether the timing readout keeps improving to the top.** The per-frame `dt` scatter should
+   fall as 1/replica *if* the route is slope-limited. On the bench it did not fall as fast as
+   that over 8000 → 16000 (16.2 → 15.2 ps for a ×2 replica), so something else contributes a
+   floor — jitter, the fs/4 line, quantisation. Stage F is what separates those: if the scatter
+   stops improving at the top, the ceiling is not the excitation and no further amplitude buys
+   precision.
+3. **Is the differential gain chain still linear at the top?** Stage A measured the known IFC
+   step (B: 0x0C → 0x0D) as `B/A mag` **−6.08 %** against a nominal −6.47 %, and §B left this
+   open: the *absolute* readout drifts ~2.4 % with dither amplitude (B grows ~1 % less than A
+   over an ×8 range), so a gain figure is only meaningful at a stated amplitude. Re-running the
+   same IFC step at the top of the ladder decides whether that drift is a real differential
+   nonlinearity: the same −6.08 % means the step is clean and only the absolute number is
+   amplitude-bound; a smaller step means every gain figure must carry its amplitude.
+
+**Prediction, from the states already measured** (bench, 6-sample pulse, 2026-09-19):
+
+| state | commanded | rep A pk-pk (predicted) | slope (predicted) | dt scatter |
+|---|---|---|---|---|
+| amp16000 | ×1 | **391.3** (measured) | **184.9** (measured) | 15.2 ps (measured) |
+| amp24000 | ×1.50 | ~587 | ~277 | ~10 ps if slope-limited, likely less improvement |
+| amp30000 | ×1.875 | ~734 (≈9 % of ±8192) | ~347 | ~8 ps if slope-limited |
+
+The predictions assume the chain is still linear; the tool below reports the measured ratios
+against the commanded ones, and **a state whose ratio falls short of the command is the answer**,
+not a failed run.
+
+```
+# 0. gates first (G1): link, geometry, neutral init, then park the actuator and record the code
+python tools/raw_frame_probe.py --uart COM5
+adc -cal diagnose skewprep fullprep
+adc -cal skew step 0            # require neutral_initialized=YES and note the code
+spi -r 0x0008                   # 1 = A, 2 = B, 3 = both
+spi -w 0x0008 3
+spi -r 0x1910                   # both channels must read 0x0C (1.59 Vpp) for this stage
+
+# 1. one --out per state, 300 frames each, actuator untouched throughout
+python tools/dither_response_test.py --uart COM5 --frames 300 \
+    --out calibration_out/response/F_amp16000
+#    ... load w06adc_e04_t04_amp24000.txt on the DPG (its JSON stays on the host) ...
+python tools/dither_response_test.py --uart COM5 --frames 300 \
+    --out calibration_out/response/F_amp24000
+#    ... load w06adc_e04_t04_amp30000.txt ...
+python tools/dither_response_test.py --uart COM5 --frames 300 \
+    --out calibration_out/response/F_amp30000
+
+# 2. the ladder, in one command
+python tools/dither_ladder.py \
+  --state 16000=calibration_out/response/F_amp16000/raw \
+  --state 24000=calibration_out/response/F_amp24000/raw \
+  --state 30000=calibration_out/response/F_amp30000/raw \
+  --state-json 16000=waveforms/pulse_ladder/w06adc_e04_t04_amp16000.json \
+  --state-json 24000=waveforms/pulse_ladder/w06adc_e04_t04_amp24000.json \
+  --state-json 30000=waveforms/pulse_ladder/w06adc_e04_t04_amp30000.json
+
+# 3. the ground-truth tie-in: repeat stage A's IFC step at the top amplitude, DECIMAL writes only
+spi -w 0x0008 2
+spi -w 0x1910 13                # 13 = 0x0D = 1.70 Vpp, channel B only
+spi -r 0x1910                   # confirm 0x0D
+python tools/dither_response_test.py --uart COM5 --frames 300 \
+    --out calibration_out/response/F_amp30000_ifcD
+python tools/dither_ladder.py \
+  --state off=calibration_out/response/F_amp30000/raw \
+  --state on=calibration_out/response/F_amp30000_ifcD/raw \
+  --state-json off=waveforms/pulse_ladder/w06adc_e04_t04_amp30000.json \
+  --state-json on=waveforms/pulse_ladder/w06adc_e04_t04_amp30000.json
+spi -w 0x0008 2
+spi -w 0x1910 12                # restore 0x0C before anything else
+spi -r 0x1910
+```
+
+**How to read the tool's table.** `rep A` / `rep B` are the *folded* replica peak-to-peak — the
+amplitude to quote, because folding averages the noise over the ~8 visible events before the range
+is taken; `mag` (per-event range) is reported too but carries a noise bias at small amplitudes.
+The linearity block compares each step with the commanded ratio (×1.5 and ×1.875 from amp16000).
+`dt phase` is the timing route the calibration loop now uses (each channel's replica fitted
+against the template at a fractional sampling phase); `dt fold` is the older derivative
+projection, kept because every earlier ladder number in this document was measured with it, and it
+is nonlinear beyond ~0.1 sample — that is why its scale looks short at the top of the ladder
+(2026-09-20, model: 86.6 ps where the phase route reads 103.6).
+
+**Limits worth stating before the run.** 30000 LSB is 91.6 % of the DAC's full scale, so the DAC is
+the element closest to a limit and the generator refuses a waveform that would clip
+(`clipping: false` in the JSON is the check). The ADC side is not near its limit at all — a
+735-code replica is 9 % of ±8192 — so a compression seen here is *not* the converter.
+
 ### C — known skew (results in, 2026-09-19; steps must stay inside 0..48)
 
 **The actuator spans codes 0..48 only** — `SkewActuator.CODE_MIN = 0`, `CODE_MAX = 48`,
@@ -884,6 +990,24 @@ timing via the slope route with its per-frame scatter, and alignment margin. The
   strange.** It is coherent (does not average away), it sits on the group granularity, and it
   makes the probe's 32-bit-word view show a 1.4× channel asymmetry that the correct 16-bit view
   does not (11.34 vs 11.12 codes; replica ratio 0.992). Do not chase that asymmetry in hardware.
+- **Two timing conventions differ by a sign, and the wrong one closes the loop backwards.** A delay
+  on channel B shifts its *sampling instant* later (positive in the loop's convention, and what
+  `CalibrationState` turns into "command less delay") and shifts its *index* sequence earlier. The
+  tone-free route was first written in the index convention; in the model the commanded delay then
+  ran 0 → +390 ps while the residual grew to −371 ps, every transaction ACKed `OK`. Any new
+  timing route must be checked against a known delay — `calibration_out/_tone_free_loop_test.py`
+  does that, and it is the only check that catches this class of bug (a converging-looking trace
+  does not).
+- **A route that is dead on the waveform in use must not be the one the gates judge.** On a
+  tone-free capture the estimator's tone-phase route still returns *finite* numbers — the
+  least-squares fit latches onto a dither comb line — so it passes its own validity bound while
+  reporting hundreds of ps of noise. Gating on it rejected 81 % of captures in the first live run
+  and 45 % of good frames in the model while the loop's own route was fine.
+- **A per-event peak-to-peak is noise-biased at low amplitude.** The range of ten noisy samples is
+  a few sigma wide whatever is inside them, so at 2000 LSB the per-event magnitude reads high and
+  an amplitude ladder built on it shows compression that is not there (model, 2026-09-20: 48.8
+  codes measured for a 25-code replica). `tools/dither_ladder.py` therefore quotes the *folded*
+  replica peak-to-peak, where the noise is averaged over the events before the range is taken.
 
 ## 6. What this session can and cannot support afterwards
 
@@ -911,3 +1035,116 @@ thing and holds the other two fixed, which is why the single-axis steps above co
 
 Judge the timing readout on the *difference* between two states against the known actuator
 codes — that is the only place a ground truth exists without extra hardware.
+
+## 7. The tone-free closed loop on the bench (step 1)
+
+Everything above measures. This is the run that *closes* the loop with no reference tone at all —
+all three axes off the impulses, which is what the 19 September direction asks for and what the
+host code only became able to do on 2026-09-20.
+
+### What the host code now does differently
+
+| change | why |
+|---|---|
+| **Timing comes from the folded replicas**, on a selectable route: `dither_fold` projects the folded A-B difference onto the pulse slope, `dither_phase` fits each channel against the template at a *fractional* sampling phase and differences the two phases. | The phase route is the linear one — in the model it is unbiased to ±2 ps over ±400 ps where the projection reads 86.6 ps for a true 103.6 — but the bench's analog path reshapes the impulse, and a shape mismatch hurts the route that fits the whole template. Measured on the archived 2026-09-19 captures: **at `w06` 16000 LSB the fold route scatters 15.3 ps/frame against 26.0**, and at the 32-sample ladder pulse it is **145 ps/frame against 747 ps**. Both routes recover the right ps/code against the actuator's known codes, so the choice is about noise — and `--tone-free` therefore selects `dither_fold`. |
+| **The sign is the sampling-instant convention** (positive = channel B samples later), matching what `CalibrationState` integrates. | The first version measured the *index*-domain shift, which has the opposite sign. In the model that closed the loop backwards: the commanded delay ran 0 → +390 ps while the true residual grew to −371 ps, with 81 % of captures rejected on the way. `calibration_out/_tone_free_loop_test.py` now checks both routes against known delays, so a sign flip cannot come back silently. |
+| **The acceptance filter judges the route in use**, and the log records it (`skew_used_ps`, `skew_observable`, `gain_source`). | The old filter gated on the estimator's *tone* fields, which on a tone-free capture are a fit of noise — it would have refused 45 % of good frames in the model and 81 % in the first live run, while the loop's own route was fine. A gain-observable fallback is now itself a rejection: on a tone-free bench, falling back means falling back onto noise. |
+| **`--tone-free`** sets `--gain-observable dither_mag`, `--skew-observable dither_fold` and `--no-cancellation` together. | There is no tone to cancel, and the tone observable would integrate noise. The gain loop still controls the *broadband* (pulse) mismatch; it deliberately does not null f_in, and with no tone there is no f_in to null. |
+
+Offline evidence, all green before the bench:
+
+```
+python calibration_out/_tone_free_loop_test.py     # routes vs truth, both closed loops, gate
+python tools/loop_direction_check.py               # batch decision + direction latch, all routes
+```
+
+The first prints, among others: the phase route reading +5.3 / +27.9 / +54.2 / +104.0 / +202.2 ps
+for true +3.6 / +28.6 / +53.6 / +103.6 / +203.6 ps (≤ 1.7 ps of error, 3–7 ps per frame at a
+bench-like 200-code replica); **both** tone-free routes converging over the model (gain magnitude
+1.0000, offset 0.08 codes, skew +0.18 ps on `dither_fold` and −0.59 ps on `dither_phase`, **0 of
+40 captures rejected** in each); and acquisition from a +200 ps mismatch driving the command to
+−199 ps instead of running away.
+
+### Preconditions — the same gates as any bench run, and two that are tone-free specific
+
+```
+python tools/raw_frame_probe.py --uart COM5        # link health (first UDP after boot often times out)
+python tools/geometry_id.py --uart COM5 --frames 4 # period + pulse width against the JSON you pass
+adc -cal diagnose skewprep fullprep                # neutral preparation
+adc -cal skew step 0                               # require neutral_initialized=YES, note the code
+python tools/skew_park.py --uart COM5 --code 24 --verify-frames 0
+```
+
+1. **Load a tone-free waveform and pass its geometry on the command line.** The loop builds its
+   config from the CLI, not from the JSON, so the flags must match the TXT on the DPG:
+   `--amp-dbfs -120 --dither-edge 4 --dither-top 4 --dither-scale 16000` is
+   `w06adc_e04_t04_amp16000`. Verify before spending time:
+   `python -m calibration_loop.run_calibration check --waveform-json waveforms/pulse_ladder/w06adc_e04_t04_amp16000.json --adc-rate 1.3e9`
+   (6/6), and confirm the replica is where it should be with
+   `python tools/dither_ladder.py --state ck=<a short capture dir> --state-json ck=<that JSON>`
+   — 391 ± 10 codes pk-pk for amp16000. A mismatch shows up as a collapsing alignment margin and
+   the run stopping after 20 consecutive rejects.
+2. **`--verify-frames 0` on `skew_park.py`**: its verification uses the tone-phase estimator, so on
+   a tone-free capture it always reports `+nan`. The parking itself is ACK-verified and sound; only
+   that line is meaningless.
+3. **Run the route check once per waveform, before the loop.** The two tone-free timing routes
+   trade places between the model and the bench, and which one is quieter depends on how much the
+   analog path reshaped *this* pulse — so measure it on the waveform you loaded (read-only, no
+   register writes):
+
+   ```
+   # from the two states of any known code pair, e.g. park 24, capture, step +8, capture
+   python tools/timing_route_check.py \
+     --state 24=calibration_out/response/ladder/raw/code24_frame_*.bin \
+     --state 32=calibration_out/response/ladder/raw/code32_frame_*.bin \
+     --waveform-json waveforms/pulse_ladder/<the file you loaded>.json
+   ```
+
+   It reports each route's ps/code against the actuator's characterized 4.8–4.9 (end-to-end) and
+   7.4 (single step, near neutral) ps/code, plus the per-frame scatter and what a 20-frame batch
+   would leave against the 10 ps deadband. On the archived 2026-09-19 captures it reads: `w06`
+   16000 LSB → fold 15.3 ps/frame, phase 26.0; `w32` 2000 LSB → fold 145 ps/frame (+3.4 ps/code),
+   phase 747 ps/frame (+4.5 ps/code). If the phase route wins on your waveform, use
+   `--skew-observable dither_phase` — it is the one whose scale is linear.
+
+### The run
+
+```
+python -m calibration_loop.run_calibration bench --uart COM5 --tone-free \
+    --allow-skew-writes --iterations 300 \
+    --amp-dbfs -120 --dither-edge 4 --dither-top 4 --dither-scale 16000 \
+    --out calibration_out/closed_loop --stem run4_tonefree
+```
+
+300 qualified samples ≈ 370 captures ≈ 30 min unattended. `--allow-skew-writes` is required or the
+run measures skew and never moves the actuator. `--tone-free` picks the fold route; add
+`--skew-observable dither_phase` if precondition 3 above says the phase route is quieter on the
+waveform you loaded.
+
+### What to watch, and what each reading means
+
+| reading | expected | if it is not |
+|---|---|---|
+| meta JSON `samples_qualified` / `captures_attempted` | ~300 from ~370 (>20 % rejections is normal: torn UDP frames) | rejections near 100 % with reasons mentioning the tone-free routes → the loaded TXT does not match the CLI geometry, or the link is half-synced (reset, re-probe) |
+| `skew_observable` on every row | `dither_fold` (or `dither_phase` if the route check said so) | a row with `phase` means the tone-free option did not take effect |
+| `gain_source` on every row | `dither_mag` | anything else is now a *rejection*, so a fallback cannot hide inside a converged-looking run |
+| `skew_used_ps` (the learning curve) | falls to the deadband in a handful of batches | a *rising* magnitude is the sign fault this section exists to prevent: stop, and re-run `_tone_free_loop_test.py` before trusting the bench |
+| `skew_action` per batch | at most one code per 20-frame batch, `move±1:OK` | `low-yield` means the batch filter is discarding frames; `abort:direction` latches skew actuation — that is the guard working, and it means the bench moved differently from the calibrated 4.8–7.4 ps/code |
+| `skew_batch_mean_ps` vs `skew_batch_se_ps` | a mean several times its own standard error | a batch mean inside its error bar must not move the actuator — check `skew_min_yield` and the frame count |
+| meta JSON `skew_abort` | `null` | a string is the reason actuation stopped; the digital loop keeps running |
+| `gain_mag_ratio`, `offset_b−offset_a` | gain → 1.0000 (broadband), offset → ~0.1 codes signed | remember `|dOffset|` rows are scatter, never a bias (AGENTS.md) |
+| `skew_fold_ps` vs `skew_slope_ps` (both logged) | the controlled one moves to zero; the other tracks it within its scatter | a large *disagreement between the routes* is a frame worth looking at — they measure the same delay by different arithmetic |
+
+**What is *not* readable from this run.** With no tone, `tone_ratio`, `raw_difference_dbc`,
+`cal_difference_dbc`, `raw_*_sndr_db` and the SFDR/ENOB columns are scored at f_in and describe the
+noise floor. The tone-free stand-ins are `gain_mag_ratio`, `offset_*_codes`, `skew_used_ps`,
+`dbc_ab_coherent` (coherent A-B power relative to the channel) and `snr_dither_db` (coherent dither
+power over what remains after subtracting it). The loop's own summary prints exactly those for a
+tone-free run.
+
+**Expected precision.** The bench measured 15.2 ps per frame on the timing route at amp16000 with
+the 6-sample pulse (45 ps on the long one, 2026-09-19). A 20-frame batch then has ~3.4 ps of
+standard error against a 10 ps deadband, and one actuator code (4.8 ps) is resolved at ~1.4σ per
+batch, so a handful of batches is what converges. Raising the amplitude per stage F is what would
+tighten that, and its own result says by how much.
+

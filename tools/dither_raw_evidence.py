@@ -55,6 +55,8 @@ sys.path.insert(0, REPO)
 
 from calibration_loop.dither import (DitherConfig, polarity_sequence,   # noqa: E402
                                      pulse, pulse_derivative)
+from calibration_loop.dither_raw import fold_replica                     # noqa: E402
+from calibration_loop.dither_raw import width_metrics as raw_width_metrics  # noqa: E402
 from calibration_loop.estimator import align_to_loop, visible_events     # noqa: E402
 
 FRAME_BYTES = 4095
@@ -121,6 +123,11 @@ def replica_of(x: np.ndarray, cfg: DitherConfig, n0: int | None = None,
                sign: float | None = None):
     """Sign-corrected co-add of the impulses in one record.
 
+    A thin wrapper over :func:`calibration_loop.dither_raw.fold_replica`, which is the same
+    arithmetic the calibration loop uses: one implementation, so a fix in the loop cannot leave
+    this tool reporting something else.  The tool's earlier private copy was removed on
+    2026-09-20 for that reason.
+
     ``n0`` is the capture's position in the DPG loop; supplied from channel A so both
     channels are sliced at the *same* loop position (a per-channel alignment would absorb
     the very timing difference being measured).
@@ -131,41 +138,25 @@ def replica_of(x: np.ndarray, cfg: DitherConfig, n0: int | None = None,
     or by the polarity anchor.  Measured 2026-09-19 it agrees with the folded replica ratio to
     0.02 % while the estimator's ``gain_ratio`` sits ~3 % away, which is why both are reported.
     """
-    guard = 2
-    align = align_to_loop(x, cfg)
-    if n0 is None:
-        n0 = align["n0"]
-    if sign is None:
-        sign = align["sign"]
-    m_lo, m_hi = -guard, int(np.ceil(cfg.pulse_len)) + guard
-    ks, starts = visible_events(n0, x.size, cfg, m_lo, m_hi)
-    m = np.arange(m_lo, m_hi)
-    if ks.size == 0:
-        return np.zeros(m.size), m, n0, sign, 0.0, float("nan")
-    signs = polarity_sequence(cfg) * sign
-    acc = np.zeros(m.size)
-    mags = []
-    for k, s in zip(ks, starts):
-        idx = s + m
-        if idx.min() < 0 or idx.max() >= x.size:
-            continue
-        acc += signs[k] * x[idx]
-        w = x[idx]
-        mags.append(float(w.max() - w.min()))
-    acc /= ks.size
-    mag = float(np.mean(mags)) if mags else float("nan")
-    return acc, m, n0, sign, float(align["margin"]), mag
+    return fold_replica(x, cfg, n0=n0, sign=sign)
 
 
 def slope_delay(rep_d: np.ndarray, rep_ref: np.ndarray, m: np.ndarray,
                 cfg: DitherConfig) -> float:
-    """Timing from the folded A-B difference, in ADC samples.
+    """Timing from the folded A-B difference, in ADC samples (index convention).
 
     A relative delay turns the pulse into its own derivative, so the difference replica is
     projected onto the known pulse slope: ``dt = <A-B, d/dt> / <d/dt, d/dt>``.  This is the
-    only route with sub-sample resolution -- the sampling grid is 769 ps, so a 44 ps skew
-    moves the sampled replica values by about one percent and a shift estimator cannot see it.
-    The slope comes from the injected pulse shape, not from a fit of the data.
+    route every ladder number in ``BENCH_SESSION_DITHER_ONLY.md`` was measured with, so it is
+    kept as-is for comparability.
+
+    **It is not the loop's route, and its scale is not linear.**  The six-sample pulse carries
+    its edges in two samples, so the integer-sampled derivative is under-sampled and this
+    projection compresses beyond ~0.1 sample (model, 2026-09-20: 86.6 ps read where the truth is
+    103.6, and 149.6 where it is 203.6), and a delay on channel B reads *negative* here because
+    it shifts B's index sequence earlier.  The route the calibration loop uses is the
+    fractional-phase fit in ``calibration_loop.dither_raw.replica_phase``, which is linear and
+    positive-late; ``tools/dither_ladder.py`` reports both.
     """
     dp = pulse_derivative(m, cfg.edge_r, cfg.top_w)
     pp = float(pulse(m, cfg.edge_r, cfg.top_w).max() - pulse(m, cfg.edge_r, cfg.top_w).min())
@@ -198,30 +189,12 @@ def width_metrics(rep: np.ndarray, m: np.ndarray) -> tuple[float, float]:
 
     These are the two quantities that answer "the dither should be shorter": the FWHM says
     whether the ADC actually sees a narrower impulse, and the peak slope says whether the
-    timing route gains anything from it (the slope route's sensitivity is proportional to
+    timing route gains anything from it (the timing route's sensitivity is proportional to
     ``d(pulse)/dt``).  Half-maximum is taken above a baseline read from the replica's outer
-    edges, so a DC or artifact offset in the window cannot inflate the width.
+    edges, so a DC or artifact offset in the window cannot inflate the width.  Shared with the
+    package (``calibration_loop.dither_raw``), not re-implemented here.
     """
-    base = float(np.median(np.concatenate([rep[:3], rep[-3:]])))
-    hi = float(rep.max() - base)
-    if hi <= 0:
-        return float("nan"), float("nan")
-    slope = float(np.max(np.abs(np.diff(rep))))
-    half = base + 0.5 * hi
-    idx = np.where(rep >= half)[0]
-    if idx.size == 0:
-        return float("nan"), slope
-    i0, i1 = int(idx[0]), int(idx[-1])
-
-    def cross(i, j):
-        if rep[j] == rep[i]:
-            return float(m[i])
-        t = (half - rep[i]) / (rep[j] - rep[i])
-        return float(m[i] + t * (m[j] - m[i]))
-
-    left = cross(i0 - 1, i0) if i0 > 0 else float(m[i0])
-    right = cross(i1, i1 + 1) if i1 < rep.size - 1 else float(m[i1])
-    return abs(right - left), slope
+    return raw_width_metrics(rep, m)
 
 
 def xcorr_lag(ra: np.ndarray, rb: np.ndarray) -> tuple[float, float]:
