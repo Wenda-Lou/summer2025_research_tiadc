@@ -110,14 +110,20 @@ def _run(bench, cfg, args, label: str):
         interleaved=args.interleaved,
         gain_observable=gain_observable,
         skew_observable=skew_observable,
+        # Only when asked: the default bound is per route (see LoopOptions), and a tone-free
+        # run takes its own, wider one.
+        **({"max_skew_samples": args.max_skew_samples}
+           if getattr(args, "max_skew_samples", None) is not None else {}),
     )
     loop = CalibrationLoop(bench, cfg, state=state, options=options)
 
+    gate = (options.max_skew_samples_dither if tone_free else options.max_skew_samples)
     print(f"\nRunning {label} for {args.iterations} qualified samples"
           + ("  (tone-free)" if tone_free else ""))
     print(f"routes: gain {gain_observable}, skew {skew_observable}"
           + (", tone cancellation OFF" if not options.cancel_signal
-             else ", tone cancellation ON"))
+             else ", tone cancellation ON")
+          + f", skew gate +/-{gate:.2f} samples ({gate * 1e12 / cfg.fs_adc:.0f} ps)")
     print("-" * 100)
     loop.run(args.iterations)
 
@@ -537,6 +543,18 @@ def build_parser() -> argparse.ArgumentParser:
                              "onto the pulse slope (quieter, but its scale read 2.8x low "
                              "on the same run, which widens the deadband to ~28 ps in "
                              "truth).  Check any waveform with tools/timing_route_check.py")
+        sp.add_argument("--max-skew-samples", dest="max_skew_samples", type=float, default=None,
+                        help="override the per-frame skew gate, in fractions of a sample "
+                             "period.  Default: 0.25 with the tone-phase route (0.5 with the "
+                             "tone-free routes, where acquisition is expected to start far "
+                             "from zero).  Raise it when the run must *acquire*: on the "
+                             "2026-09-20 bench the neutral code 24 carries ~-195 ps, i.e. "
+                             "0.25 samples, so the default gate cuts through the middle of "
+                             "the distribution -- most captures come back 'skew mismatch "
+                             "residual=... samples out of range', the batch yield falls "
+                             "under skew_min_yield and the actuator never moves.  0.5 is "
+                             "what a tone-free run uses and it is inside the tone phase's "
+                             "half-period wrap (0.63 samples)")
         sp.add_argument("--tone-free", dest="tone_free", action="store_true",
                         help="shorthand for a run with no reference tone: sets "
                              "--gain-observable dither_mag, --skew-observable "

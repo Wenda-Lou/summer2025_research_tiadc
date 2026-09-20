@@ -383,8 +383,16 @@ manual hardware procedures; do not attempt them without the bench.
   not academic: the dither-only run driving `dither_fold` parked at code 34 reading -7.5 ps
   (inside its 10 ps deadband) while the tone route measured -16.9 ps at that code and the raw A-B
   spur at f_in, minus the known 1.5 % gain term, implied 17.7 ps -- a scale-biased route stops
-  with a real residual ~2.8x its own deadband.  The *zero points* agreed to 0.3 code throughout
-  (fold 35.2, phase 35.2, tone 34.9), so the fault is scale, not offset.  Therefore `--tone-free`
+  with a real residual ~2.8x its own deadband.  The *zero points* agreed to 0.31 code throughout
+  (fold 35.18, phase 35.03, tone 34.87 -- each refitted from its own run's batch decisions by
+  `calibration_out/_session_figures.py`), so the fault is scale, not offset.  The tone route also
+  gives the best end state this bench has produced: a tone-mode run started at that parked code
+  (`tonezero_check`, 80 qualified samples from 100 captures, `gain tone` / `skew phase`,
+  cancellation on) needed exactly one code (34 -> 35) to reach **+2.63 +- 0.05 ps** and held it for
+  three batches, with the corrected A-B spur at **-48.4 dBc** against a raw -37.0 dBc (the raw one
+  is gain-limited), DC mismatch -0.02 codes, SNDR 37.1 dB, SFDR 41.2 dB.  It was scoped as a
+  zero-crossing check, so **no full-length tone closed loop has been run since `run3_gainfix`
+  (2026-09-17, 300 samples, corrected -38.12 dBc)**.  Therefore `--tone-free`
   selects `dither_phase` (a 20-frame batch has 1.1 ps of standard error against the 10 ps
   deadband) and `dither_fold` is the quieter cross-check.  **The 4.85 and 7.4 ps/code
   characterizations are not an independent anchor**: both were measured with the tone route
@@ -415,12 +423,12 @@ manual hardware procedures; do not attempt them without the bench.
   (batch decision and direction latch, run for the tone route and both dither routes).  Bench
   procedure: `BENCH_SESSION_DITHER_ONLY.md` §7.
 
-- **Full-scale dither ladder (stage F, prepared 2026-09-20)**: the excitation has two knobs —
+- **Full-scale dither ladder (stage F, measured 2026-09-20)**: the excitation has two knobs —
   pulse width and amplitude.  Width is spent: the generator's floor is the 6-sample pulse
   (`waveforms/pulse_ladder/w06adc_e04_t04_amp*.json`, all six widths measured 2026-09-19 with no
-  plateau in FWHM).  Amplitude is what is left, so the ladder now runs to it:
+  plateau in FWHM).  Amplitude was what was left, and the ladder ran to it:
   `w06adc_e04_t04_amp24000` (73.2 % of DAC full scale) and `w06adc_e04_t04_amp30000` (91.6 %),
-  both `check` 6/6 at 1.3 GSPS and both uncommitted as of this writing.  `tools/dither_ladder.py`
+  300 frames per state at code 35, 300/300 aligned at margin 16.6.  `tools/dither_ladder.py`
   is what reads a captured ladder: per state it reports the **folded** replica peak-to-peak,
   FWHM, slope, `B/A mag`, `DC(B−A)` and the per-frame timing scatter on both routes, and across
   states it compares each measured amplitude ratio with the commanded one — a ratio that falls
@@ -428,12 +436,30 @@ manual hardware procedures; do not attempt them without the bench.
   quote the **folded** replica amplitude (the per-event range is noise-biased at low amplitude —
   the model reads 48.8 codes for a 25-code replica at 2000 LSB, which fabrication-invents a
   compression at the bottom of the ladder), and remember the ADC is never the limit here (a
-  735-code replica at amp30000 is 9 % of ±8192) while the **DAC is** (91.6 % of its own full
-  scale).  The third question stage F answers is a ground-truth one: repeating stage A's IFC step
-  (B: 0x0C → 0x0D) at the top amplitude decides whether the ~2.4 % amplitude-dependence of the
-  `B/A mag` readout is a real differential nonlinearity.  Instrument check, including a
-  deliberately compressing ladder that must fail:
-  `python calibration_out/_dither_ladder_test.py`.  Procedure: `BENCH_SESSION_DITHER_ONLY.md` §F.
+  701-code replica at amp30000 is 8.6 % of ±8192) while the **DAC is** (91.6 % of its own full
+  scale).
+  **Result**: no compression knee below 91.6 % FS — commanded ×1.5 → ×1.498, ×1.25 → ×1.250,
+  ×1.875 → ×1.873 (≤ 0.1 % short) with the replica FWHM unchanged at 3.68–3.69 samples; the
+  per-frame timing scatter falls 3.39 → 2.29 → 1.89 ps for 374 → 561 → 701 codes, ratios
+  0.68 / 0.82 against 1/replica's 0.67 / 0.81, so the timing route is **slope-limited** and
+  amplitude buys precision 1:1 (at 30000 LSB one working-point code is ~10σ per frame, and a
+  20-frame batch has 0.42 ps of standard error); `B/A mag` is amplitude-independent
+  (0.9873 / 0.9873 / 0.9876, constant to 0.03 %), which retires the 2026-09-19 worry that gain
+  figures need an amplitude qualifier on this setup; and stage A's IFC known step
+  (B: 0x0C → 0x0D) measures **−6.647 ± 0.044 % at amp16000 against −6.713 ± 0.022 % at
+  amp30000** (nominal 1.59/1.70 = −6.47 %), i.e. the differential gain chain is
+  amplitude-independent to 0.066 % — an upper bound, since the two states also sit at different
+  actuator codes — while the measured step is 0.24 % *larger* than nominal, so the nominal Vpp
+  table is not ground truth at that level.  ADC-side scale: 1 code = 97.05 µV differential at
+  1.59 Vpp FS, so amp16000/24000/30000 are 374 / 561 / 701 codes = 36.3 / 54.4 / 68.0 mVpp
+  = 2.28 / 3.42 / 4.28 % of the ADC span, and the DAC's own ceiling (32767 LSB = 100 % FS,
+  extrapolated on the measured 0.023358 codes/LSB) is **765 codes = 74.3 mVpp = 4.67 %**.  The
+  DAC budget is shared with the tone: a −1.5 dBFS tone is ~27 570 LSB, leaving only ~5 200 LSB
+  (15.9 % FS) for the dither before the vector clips — the 30000 LSB excitation is a *tone-free*
+  option.  Instrument check, including a deliberately compressing ladder that must fail:
+  `python calibration_out/_dither_ladder_test.py`.  Figures, numbers and procedure:
+  `calibration_out/professor_update/session_fullscale.png` and `BENCH_SESSION_DITHER_ONLY.md` §F
+  (which holds every ladder table).
 
 - **Sample accounting in the loop**: `CalibrationLoop.run(N)` collects N *qualified*
   samples.  A capture the acceptance filter rejects is logged with its reason and
@@ -517,6 +543,11 @@ manual hardware procedures; do not attempt them without the bench.
    codes rather than from the model.  Ladder/amplitude tooling has its own instrument
    check, including a deliberately compressing ladder that must fail:
    `python calibration_out/_dither_ladder_test.py`.
+   Session-level figures come from `python calibration_out/_session_figures.py`, which
+   reads **only** committed run outputs and prints the numbers each panel carries (the
+   three `calibration_out/professor_update/session_*.png` figures; the full tables stay in
+   `BENCH_SESSION_DITHER_ONLY.md` §7 and §F).  If a figure and a doc disagree, the figure
+   script is the reproducible side, so fix the doc.
 6. Hardware behavior is validated by `BOARD_TEST_PLAN.md` stages on the bench,
    not by the host simulator — the simulator explicitly does not cover JESD,
    DMA hardware state, cache coherency, SPI registers, or analog noise.

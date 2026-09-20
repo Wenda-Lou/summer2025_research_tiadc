@@ -77,7 +77,25 @@ class LoopOptions:
     max_skew_samples: float = 0.25
     """Reject a skew estimate larger than this fraction of a sample period.  The
     first-order expansion behind the skew estimate is only valid for small
-    errors, so a large value means the fit failed, not that the skew is large."""
+    errors, so a large value means the fit failed, not that the skew is large.
+
+    **This bound is also an acquisition limit, and on this bench it bites.**
+    Measured 2026-09-20: the actuator's *neutral* code 24 carries about -195 ps of
+    real skew (the tone-free loop read its phase route at -196.8 ps there, against
+    +2.6 ps at the converged code 35), while 0.25 samples at 1.300 GSPS is
+    **192.3 ps**.  A tone run started from neutral therefore has the gate cutting
+    through the middle of its frame distribution: the first run with the new
+    tone+dither vector accepted 7 of 32 captures, and the survivors were the *upper*
+    half of the distribution.  The consequence is not just lost frames -- at a 22 %
+    yield `skew_min_yield` (0.4) reports `low-yield:N/M` and the actuator is never
+    moved, so the loop cannot acquire at all, and `max_consecutive_rejects` stops
+    the run.  Two sanctioned ways out: park near the converged code first
+    (`tools/skew_park.py --uart COM5 --code 30`, where ~19 ps/code puts the residual
+    inside the gate), or widen the bound for that run with
+    `--max-skew-samples 0.5` (385 ps, still inside the tone phase's half-period wrap
+    of 0.63 samples, so a wrapped branch is still caught).  A tone-free run needs
+    none of this: its own bound is :attr:`max_skew_samples_dither` below, which
+    exists for exactly this reason."""
 
     max_skew_samples_dither: float = 0.5
     """The same gate for the *tone-free* routes (:attr:`skew_observable` = ``dither_phase``

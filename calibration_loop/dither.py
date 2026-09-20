@@ -104,7 +104,10 @@ class DitherConfig:
 
     -1.5 dBFS is the bench-validated drive (peak 29570 of 32768).  A much lower
     tone leaves the ADC capture far below full scale, where the alignment
-    correlation cannot reach the firmware's reference threshold."""
+    correlation cannot reach the firmware's reference threshold.  The tone also
+    sets how much is left for the dither -- see :meth:`max_dither_lsb`, and note
+    that the tone and the impulses share the *same* DAC rail because they are
+    summed in the DAC's digital domain."""
 
     # --- dither (all lengths in DAC samples) --------------------------------
     dither_period_dac: int = 260
@@ -126,7 +129,30 @@ class DitherConfig:
     dither_scale_lsb: float = 2000.0
     """Impulse amplitude [LSB].  Convergence time goes as 1/A^2 (Wang et al.,
     TCAS-I 2025, Eq. 7), so this is the main speed knob; the ceiling is the
-    headroom left by the main tone."""
+    headroom left by the main tone -- :meth:`max_dither_lsb` returns it for the
+    configured ``amp_dbfs``.
+
+    With a tone present, spend that ceiling on a *short, tall* pulse.  The
+    2026-09-20 tone-mode model run (tone -1.5 dBFS, 5190 LSB, same seed, 60
+    samples) separated the two knobs:
+
+    | pulse (ADC samples) | alignment margin | per-frame DC scatter | DC residual |
+    |---|---|---|---|
+    | 6 (edge 4 / top 4 DAC) | **17.1 +- 1.6** | 12.2 codes | 0.98 LSB |
+    | 12 (edge 4 / top 16) | 11.6 +- 1.1 | 3.5 codes | 0.35 LSB |
+    | 20 (edge 4 / top 32) | 9.0 +- 0.9 | 2.2 codes | 0.18 LSB |
+    | 32 (edge 16 / top 32) | 7.6 +- 0.7 | 2.9 codes | 0.20 LSB |
+
+    So the *edge* length buys margin and slope (a narrow tall pulse correlates
+    sharply, which is what stops the alignment filter rejecting captures -- the
+    tone run of 2026-09-20 came back at margin 6.05 against a 6.0 floor with the
+    old wide vector), while the *top* length buys flat-top samples for the offset
+    estimate.  The tone+dither vectors therefore keep the generator's floor edge
+    and take the top that the run needs:
+    ``waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5`` (margin first) and
+    ``w12adc_e04_t16_amp5190_tone_m1p5`` (offset first).  A tone-free vector can
+    go much further -- the stage F ladder measured up to 30000 LSB with no
+    compression."""
 
     seed: int = 20260725
     """Seed of the balanced polarity sequence.  Must match between the TXT that
@@ -172,6 +198,18 @@ class DitherConfig:
         return 2.0 * self.edge_r + self.top_w
 
     # --- derived: amplitudes ----------------------------------------------
+    @staticmethod
+    def max_dither_lsb(amp_dbfs: float) -> float:
+        """Largest impulse amplitude [LSB] that still leaves the vector unclipped.
+
+        The tone and the impulses are summed on the DAC rail, so the usable dither
+        is whatever the tone does not use: ``(1 - 10**(amp_dbfs/20)) * 32767``.
+        At the bench tone of -1.5 dBFS that is 5197 LSB (15.9 % of full scale),
+        which is why a tone+dither vector cannot use the amplitude the *tone-free*
+        ladder reaches (up to 30000 LSB measured, no compression).
+        """
+        return (1.0 - 10.0 ** (amp_dbfs / 20.0)) * DAC_FULL_SCALE
+
     @property
     def a_sine(self) -> float:
         return 10.0 ** (self.amp_dbfs / 20.0)
@@ -235,7 +273,13 @@ class DitherConfig:
                 "the ADC to actually land on the ramp"
             )
         if self.a_sine + self.a_dither > 1.0:
-            raise ValueError("main tone plus dither would clip the DAC")
+            raise ValueError(
+                f"main tone plus dither would clip the DAC: tone "
+                f"{self.a_sine * DAC_FULL_SCALE:.0f} LSB at {self.amp_dbfs:+.1f} dBFS plus dither "
+                f"{self.dither_scale_lsb:.0f} LSB exceeds {DAC_FULL_SCALE} LSB. The tone leaves "
+                f"{self.max_dither_lsb(self.amp_dbfs):.0f} LSB for the dither at this drive; lower "
+                "the tone (--amp-dbfs) or the dither (--dither-scale)."
+            )
         coherence = self.tone_phase_coherence()
         if coherence > 0.3:
             raise ValueError(
