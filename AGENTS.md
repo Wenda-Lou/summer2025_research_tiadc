@@ -252,6 +252,23 @@ manual hardware procedures; do not attempt them without the bench.
   path, one code at a time, ACK-required) to put the actuator back at code 24
   before a repeat run — a run that inherits code 31 is not a matched pair with one
   that started from 24.
+  **Caveat added 2026-09-20: re-measure the step at the code you use.**  A tone-mode cross-check
+  (`tonezero_check`, tone+dither waveform, at the code a dither-only run had parked on) moved one
+  control code and the tone-phase residual went −16.90 → +2.63 ps, i.e. **19.5 ps per code** at the
+  working point, against these 4.8–7.4 ps/code figures — and the 7.4 was measured with the same
+  tone route.
+  **Resolved the same afternoon**: `tools/skew_step_characterize.py --code 34 --frames 55 --execute`
+  (which now takes a base code, drives to it through ACK-checked single steps, and refuses to run
+  on the wrong timing route) ran the paired sequence 34 → 35 → 34 → 35 → 34 and measured
+  **+19.08 ± 0.06 ps/code** — baseline −16.45 / restores −16.36 and −16.62 ps, stepped +2.60 and
+  +2.62 ps, repeat signs agreeing, the restores reproducing the baseline to 0.26 ps, ~318σ; the two
+  tone-route readings also reproduce the earlier cross-check to 0.4 ps.  So the step is **~7 ps/code
+  near neutral and ~19 ps/code where the loop parks — a factor 2.6 within one actuator**;
+  `SkewActuator.HOST_STEP_PS` is now 19.1 (the working-point value) with both measurements in its
+  docstring, and it should be re-measured per code rather than extrapolated.  Note what that
+  constant is *for*: every move is clamped to one code, so an inaccurate step does not affect
+  convergence, and the direction check only latches when the error moves the *wrong way* (a
+  step-size disagreement alone does not trip it, by construction).
 - **Which A-B spur to quote**: a converged run yields three different numbers and
   only the first is skew-limited.  (1) The raw channel difference, measured
   read-only *without* dither subtraction: **−38.8 ± 0.6 dBc**, matching the
@@ -329,44 +346,53 @@ manual hardware procedures; do not attempt them without the bench.
 - **Dither-only excitation (what the impulses do without the tone)**: `gen --amp-dbfs -120`
   gives a waveform with the tone at 0 LSB and the identical pulse train
   (`waveforms/impulse_dither_only.txt`).  Anything running the loop with it **must** pass
-  `--tone-free` (equivalently `--gain-observable dither_mag --skew-observable dither_fold
+  `--tone-free` (equivalently `--gain-observable dither_mag --skew-observable dither_phase
   --no-cancellation`): the tone routes become noise integrators and the loop collapses (bench
   model: 1 of 21 captures accepted, offset residual tens of LSB).  With the tone-free routes the
   loop converges on all three axes — measured 2026-09-20 in the model: gain magnitude 1.0000,
   offset 0.08 codes, skew +0.18 ps on `dither_fold` and −0.59 ps on `dither_phase`, **0 of 40
-  captures rejected** on either (before the fixes below, a live run qualified 16 of 84).
-  Alignment, offset and gain behave identically to the tone case (offset scatter
-  +0.670 ± 2.313 against +0.668 ± 2.297 codes; gain +1.001 ± 0.004 both), so the impulses carry
-  those three on their own.
+  captures rejected** on either (before the fixes below, a live run qualified 16 of 84) — and on
+  the bench, where the first dither-only closed loop ran 300 qualified samples from 300 captures
+  with 0 rejected, closed the skew from −71.4 ps to inside the deadband in ten ACKed single-code
+  moves, and improved the raw coherent A−B dither power by 18.1 dB (see
+  `BENCH_SESSION_DITHER_ONLY.md` §7).  Alignment, offset and gain behave identically to the tone
+  case (offset scatter +0.670 ± 2.313 against +0.668 ± 2.297 codes; gain +1.001 ± 0.004 both), so
+  the impulses carry those three on their own.
 
   **The earlier claim that skew has no usable route without the tone is superseded.**  It was
   true of the tone-phase and centroid routes.  Two tone-free routes now exist, both in
   `calibration_loop/dither_raw.py`, both fed from the *folded* replicas and both sharing the
   loop's convention (positive = channel B samples later):
 
-  * **`dither_fold`** (what `--tone-free` selects) projects the folded A-B difference onto the
-    pulse slope.  It is the route every bench ladder number was measured with, and it *compresses*
-    beyond ~0.1 sample (so its scale runs low on a large residual, while its zero crossing stays
-    honest — the loop still parks on the truth).
-  * **`dither_phase`** fits each channel's replica against the template at a **fractional
-    sampling phase** and differences the two phases.  Linear (unbiased to ±2 ps over ±400 ps in
-    the model, where the projection reads 86.6 ps for a true 103.6) but it needs the replica to
-    resemble the template, and the bench's analog path reshapes the impulse.
+  * **`dither_phase`** (what `--tone-free` selects) fits each channel's replica against the
+    template at a **fractional sampling phase** and differences the two phases.  In the model it
+    is unbiased to ±2 ps over ±400 ps where the projection reads 86.6 ps for a true 103.6, and on
+    the bench it is the route whose *scale* matches the shape-independent tone route.
+  * **`dither_fold`** projects the folded A-B difference onto the pulse slope.  It needs no
+    template fit, so it is the *quieter* of the two on a reshaped bench pulse, but its scale runs
+    low — 2.8× on 2026-09-20 — which is why it is the cross-check rather than the driver.
 
-  Which is quieter is a property of the waveform, so it is measured, not assumed:
-  `tools/timing_route_check.py` reports both against known actuator codes (offline, read-only).
-  **The first live run settled it (2026-09-20, `w06` 16000 LSB, 200 frames per state, alignment
-  margin 8.1 against the 8.06 reference): an 8-code step reads +6.46 ps/code on the fold route at
-  3.1 ps per frame -- agreeing with the actuator's 7.4 ps single-step figure and with the register
-  arithmetic (4 x 1.725 ps fine steps = 6.9) -- while the phase route reads +18.19 ps/code at
-  4.8 ps per frame, i.e. ~3x high as a *systematic* scale error, not noise.**  The phase route is
-  exact in the model but not on this bench: the replica is not the ideal raised cosine, so the
-  fitted phase is partly driven by its shape, and the actuator code moves the amplitude readout
-  (+0.21 %/code) for an ill-conditioned fit to convert into apparent timing.  The archived
-  2026-09-19 captures show the same ordering by noise alone (`w06` 16000 LSB: fold 15.3 against
-  phase 26.0 ps/frame; `w32` 2000 LSB: fold 145 against phase 747).  So `dither_fold` drives a
-  tone-free loop here, and the phase route's absolute scale must be re-verified per waveform
-  before it is trusted for anything.  Two traps paid for on 2026-09-20:
+  Which route to drive the loop with is a hardware question, so it is measured, not assumed:
+  `tools/timing_route_check.py` fits each route's ps/code against known actuator codes and, when
+  the captures hold a tone, against the tone-phase route as the scale anchor (refusing the anchor
+  when the fitted tone amplitude says the captures have no tone).  **Measured on the bench
+  2026-09-20, `w06` 16000 LSB, 200 frames per state, alignment margin 8.1 against a 6.0 floor:
+  `dither_phase` +18.2 ps/code at 4.8 ps per frame, `dither_fold` +6.5 ps/code at 3.1 ps per
+  frame, and the tone route +19.5 ps/code measured the next hour at the same working point.  The
+  fold projection is the quieter route and the one with the wrong *scale* -- 2.8x low.**  That is
+  not academic: the dither-only run driving `dither_fold` parked at code 34 reading -7.5 ps
+  (inside its 10 ps deadband) while the tone route measured -16.9 ps at that code and the raw A-B
+  spur at f_in, minus the known 1.5 % gain term, implied 17.7 ps -- a scale-biased route stops
+  with a real residual ~2.8x its own deadband.  The *zero points* agreed to 0.3 code throughout
+  (fold 35.2, phase 35.2, tone 34.9), so the fault is scale, not offset.  Therefore `--tone-free`
+  selects `dither_phase` (a 20-frame batch has 1.1 ps of standard error against the 10 ps
+  deadband) and `dither_fold` is the quieter cross-check.  **The 4.85 and 7.4 ps/code
+  characterizations are not an independent anchor**: both were measured with the tone route
+  (`tools/skew_step_characterize.py` takes `est.skew_phase_ps`), and today's tone reading of
+  19.5 ps/code at the working point disagrees with them, so the step where it is used must be
+  re-measured.  The archived 2026-09-19 captures show the same 2.3-2.8x phase/fold disagreement
+  (`w06` 16000 LSB: phase 17.5 against fold 7.6 ps/code; `w32` 2000 LSB: phase 18.3 against fold
+  6.5).  Two traps paid for on 2026-09-20:
 
   **(a) the sign is the sampling-instant convention**, and the index-domain shift is the negative
   of it; a route written in the index convention closes the loop *backwards* — in the model the

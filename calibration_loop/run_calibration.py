@@ -95,7 +95,10 @@ def _run(bench, cfg, args, label: str):
         gain_observable = "dither_mag"
     skew_observable = args.skew_observable
     if tone_free and skew_observable == "phase":
-        skew_observable = "dither_fold"
+        # `dither_phase`, not `dither_fold`: measured 2026-09-20, the fold projection's scale is
+        # ~2.8x low on this bench (6.46 ps/code against the tone route's 19.5 and the phase
+        # route's 18.2), so driving it puts the 10 ps deadband ~28 ps wide in truth.
+        skew_observable = "dither_phase"
     options = LoopOptions(
         # A tone-free run has no tone to cancel: leaving the least-squares tone fit on would
         # subtract structure from the record instead of a signal.
@@ -189,10 +192,10 @@ def cmd_sim(args) -> None:
         # stand-ins are the injected dither's own SNR and the coherent A-B power.
         print("  (no tone: the SNDR/SFDR/image columns are scored at f_in and describe the")
         print("   noise floor -- read the tone-free pair below instead)")
-        print(f"  dither SNR (A)    : {avg('snr_dither_db'):.2f} dB   "
-              f"(coherent dither power over the residual)")
-        print(f"  coherent A-B      : {avg('dbc_ab_coherent'):.1f} dBc   "
-              f"(tone-free stand-in for the A-B difference spur)")
+        print(f"  coherent A-B      : {avg('dbc_ab_coherent'):.1f} -> "
+              f"{avg('dbc_ab_coherent_cal'):.1f} dBc   (native -> residual, tone-free)")
+        print(f"  dither SNR (A)    : {avg('snr_dither_db'):.2f} -> "
+              f"{avg('snr_dither_db_cal'):.2f} dB   (raw -> corrected)")
         print(f"  skew routes       : fold {avg('skew_fold_ps'):+.2f} / "
               f"phase {avg('skew_slope_ps'):+.2f} ps   "
               f"(controlled: {last.get('skew_observable', 'phase')})")
@@ -527,16 +530,17 @@ def build_parser() -> argparse.ArgumentParser:
                              "tone-phase route (default; needs a tone), "
                              "dither_phase -- tone-free, fits each channel's folded "
                              "impulse replica against the template at a fractional "
-                             "sampling phase and differences the phases (linear, and "
-                             "the default for --tone-free), or dither_fold -- "
-                             "tone-free, projects the folded A-B difference onto the "
-                             "pulse slope (quieter on a reshaped bench pulse, but its "
-                             "scale compresses on a large residual).  Check both against "
-                             "known actuator codes with tools/timing_route_check.py")
+                             "sampling phase and differences the phases (the default for "
+                             "--tone-free, because its scale matches the tone route: "
+                             "18.2 against 19.5 ps/code measured 2026-09-20), or "
+                             "dither_fold -- tone-free, projects the folded A-B difference "
+                             "onto the pulse slope (quieter, but its scale read 2.8x low "
+                             "on the same run, which widens the deadband to ~28 ps in "
+                             "truth).  Check any waveform with tools/timing_route_check.py")
         sp.add_argument("--tone-free", dest="tone_free", action="store_true",
                         help="shorthand for a run with no reference tone: sets "
                              "--gain-observable dither_mag, --skew-observable "
-                             "dither_fold and --no-cancellation (there is no tone to "
+                             "dither_phase and --no-cancellation (there is no tone to "
                              "cancel, and the least-squares tone fit would otherwise "
                              "subtract structure from the record).  Load a waveform "
                              "generated with `gen --amp-dbfs -120`")

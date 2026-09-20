@@ -125,30 +125,42 @@ class LoopOptions:
     * ``"dither_phase"`` fits each channel's replica against the known template **at a fractional
       sampling phase** and differences the two phases.  It is the linear route: in the bench
       *model* it is unbiased to +-2 ps over +-400 ps with 3-7 ps of per-frame scatter, against a
-      projection that reads 86.6 ps where the truth is 103.6.
-    * ``"dither_fold"`` projects the folded A-B difference onto the pulse's derivative.  It
-      compresses beyond ~0.1 sample (so its *scale* runs low on a large residual, while its zero
-      crossing stays honest) but it needs no template fit, which on real hardware is an
-      advantage: the bench's analog path reshapes the impulse, and a shape mismatch hurts the
-      template route much more than the projection.
+      projection that reads 86.6 ps where the truth is 103.6 -- and on the bench it is the one
+      whose scale matches the tone route.
+    * ``"dither_fold"`` projects the folded A-B difference onto the pulse's derivative.  It needs
+      no template fit and is therefore quieter on a reshaped bench pulse, but it compresses: its
+      *scale* ran 2.8x low on this bench, which widens the effective deadband to ~28 ps (see
+      below).  Its zero crossing stays honest, so it is still usable as a cross-check.
 
     Which to use is a hardware question, and it is answerable before closing the loop:
     ``tools/timing_route_check.py`` measures both against known actuator codes (read-only, offline
-    on archived or fresh captures).  The first live run (2026-09-20, ``w06`` 16000 LSB, 200 frames
-    per state, a healthy bench: alignment margin 8.1 against the 8.06 reference) measured an
-    8-code step as
+    on archived or fresh captures), and -- when the captures hold a tone -- against the
+    tone-phase route as well, which is shape-independent and therefore the scale anchor.
+
+    **Measured 2026-09-20 on the bench, and the answer is not the one the noise figures suggest.**
+    On ``w06`` 16000 LSB with 200 frames per state (alignment margin 8.1 against a 6.0 floor):
 
     | route | ps/code | per-frame scatter |
     |---|---|---|
-    | ``dither_fold`` | **+6.46** -- agrees with the actuator's 7.4 ps single-step figure and with the register arithmetic (4 x 1.725 ps fine steps = 6.9) | 3.1 ps |
-    | ``dither_phase`` | +18.19 -- **~3x too high**, a systematic scale error rather than noise | 4.8 ps |
+    | ``dither_phase`` | **+18.2** | 4.8 ps |
+    | ``dither_fold`` | +6.5 | **3.1 ps** |
+    | tone route (next hour, one code, tone+dither waveform) | **+19.5** | (se 0.07 ps on the batch mean) |
 
-    The phase route is exact in the model but not on this bench: the replica is not the ideal
-    raised cosine, so the fitted phase is partly driven by its *shape*, and the actuator code moves
-    the amplitude readout (+0.21 %/code) for an ill-conditioned fit to convert into apparent
-    timing.  A 20-frame batch on the fold route then has 0.7 ps of standard error against the 10 ps
-    deadband.  Hence ``dither_fold`` is what ``--tone-free`` selects; ``dither_phase`` stays
-    available, and its absolute scale must be checked per waveform before it is trusted.
+    The fold projection is *quieter* and still has the **wrong scale** -- 2.8x low -- and the two
+    consequences are the reason ``dither_phase`` is what ``--tone-free`` selects.  A dither-only
+    run driving ``dither_fold`` parked at code 34 reading **-7.5 ps**, i.e. inside its 10 ps
+    deadband, while the tone route measured **-16.9 ps** at that same code and an independent
+    functional on the same frames (the raw A-B spur at f_in, after removing the known 1.5 % gain
+    term) implied **17.7 ps**.  So a scale-biased route does not just converge slowly: it stops
+    with a real residual nearly 3x its own deadband.  The *zero points* agreed throughout, to
+    0.3 code (fold 35.2, phase 35.2, tone 34.9), so this is a scale error, not an offset.
+
+    A 20-frame batch on ``dither_phase`` then has 1.1 ps of standard error against the 10 ps
+    deadband -- still more than precise enough.  The earlier 4.85 and 7.4 ps/code
+    characterizations are *not* an independent anchor: both were measured with the tone route
+    (``tools/skew_step_characterize.py`` takes ``est.skew_phase_ps``), and today's tone reading of
+    19.5 ps/code at the working point disagrees with them, so the step at the code you actually
+    use should be re-measured before any figure from it is quoted.
 
     A tone-free run must also set ``cancel_signal = False``: with no tone to remove, the
     least-squares tone fit subtracts structure from the record instead of a signal.  Both are set
@@ -180,9 +192,17 @@ class LoopOptions:
     convention.  If the error instead moves the other way, the hardware no longer
     agrees with the calibration -- a stale code belief, a swapped channel, a
     reloaded DPG -- and one more code per batch would walk the actuator away from
-    the target instead of towards it.  The tolerance absorbs the batch noise on a
-    single 7.4 ps move: the 20-frame mean has ~0.7 ps of standard error, so 8 ps
-    is more than ten sigma and only a real wrong-direction move trips it."""
+    the target instead of towards it.
+
+    The check requires **both** a large disagreement *and* the opposite sign, so a step-size error
+    alone cannot latch it.  That matters on this bench, because the actuator's step is not
+    uniform: measured 2026-09-20 with `tools/skew_step_characterize.py`, one code is 19.08 +- 0.06
+    ps between codes 34 and 35 (where the loop parks) against ~7.4 ps near neutral (2026-09-17).
+    Whichever value ``HOST_STEP_PS`` carries, an honest move in the other region disagrees with
+    the expectation by ~12 ps > this tolerance but keeps the sign, so it is not a fault.  The
+    tolerance itself absorbs the batch noise on a single move: a 20-frame batch mean has ~1-2 ps
+    of standard error on the bench, so 8 ps is several sigma and only a real wrong-direction move
+    trips it."""
 
     skew_min_yield: float = 0.4
     """Fraction of a batch that must survive the acceptance filter to be acted on.
@@ -357,10 +377,12 @@ class CalibrationLoop:
         )
         est.rotation = prep["rotation"]
 
-        # Tone-free routes, measured only when the run asks for them.  They are taken on the
-        # *corrected* streams (the loop integrates residual errors, not absolutes) while the
-        # excitation figures -- peak, coherent A-B power, dither SNR -- are taken on the raw
-        # capture, because those describe the bench rather than the residual.
+        # Tone-free routes, measured only when the run asks for them.  The observables the loop
+        # integrates are taken on the *corrected* streams (the loop integrates residual errors,
+        # not absolutes); the excitation and the raw mismatch are measured on the raw capture,
+        # because those describe the bench rather than the residual.  The coherent A-B power is
+        # logged both ways: raw is the native mismatch, corrected is what the loop left, and
+        # their difference is the tone-free answer to "what did this run buy".
         if self.opt.skew_observable.startswith("dither") or self.opt.gain_observable == "dither_mag":
             from .dither_raw import measure as measure_raw
 
@@ -373,7 +395,9 @@ class CalibrationLoop:
             est.phase_a, est.phase_b = res.phase_a, res.phase_b
             est.peak_a = exc.peak_a
             est.dbc_ab_coherent = exc.dbc_ab_coherent
+            est.dbc_ab_coherent_cal = res.dbc_ab_coherent
             est.snr_dither_db = exc.snr_dither_db
+            est.snr_dither_db_cal = res.snr_dither_db
             self._raw_measure = res
             self._raw_excitation = exc
         else:
@@ -536,7 +560,9 @@ class CalibrationLoop:
             "phase_b_samples": est.phase_b,
             "dither_peak_a_codes": est.peak_a,
             "dbc_ab_coherent": est.dbc_ab_coherent,
+            "dbc_ab_coherent_cal": est.dbc_ab_coherent_cal,
             "snr_dither_db": est.snr_dither_db,
+            "snr_dither_db_cal": est.snr_dither_db_cal,
         }
 
         # Per-channel dynamic performance, always meaningful.

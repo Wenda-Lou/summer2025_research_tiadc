@@ -39,6 +39,7 @@ the tool warns when it sees the same file in two states.
 from __future__ import annotations
 
 import argparse
+import csv
 import glob
 import json
 import os
@@ -185,7 +186,16 @@ def main(argv=None) -> int:
     ap.add_argument("--min-margin", type=float, default=6.0,
                     help="alignment-margin floor; below it the frame is counted but not measured")
     ap.add_argument("--out", default=DEFAULT_OUT)
+    ap.add_argument("--step-ps", type=float, default=None,
+                    help="ps per actuator control code, for the 'one code is N sigma' line.  "
+                         "Default: SkewActuator.HOST_STEP_PS (19.1, the working-point measurement "
+                         "of 2026-09-20), so there is one source of truth.  The step is not "
+                         "uniform (~7 ps/code near neutral), so pass the value for the code you "
+                         "are actually working at.")
     args = ap.parse_args(argv)
+    if args.step_ps is None:
+        from calibration_loop.capture import SkewActuator
+        args.step_ps = SkewActuator.HOST_STEP_PS
 
     states = load_states(args.state)
     json_of = {}
@@ -272,27 +282,44 @@ def main(argv=None) -> int:
         print(f"  {name:>8}: rep A {r['rep_pp_a']:>7.1f} codes, slope {r['slope_a']:>7.2f} "
               f"codes/sample, dt scatter {r['dt_phase_sd']:>6.1f} ps "
               f"({r['dt_fold_sd']:>6.1f} ps on the fold route); one actuator code "
-              f"(4.8 ps) is {4.8 / r['dt_phase_sd']:.2f} sigma per frame")
+              f"({args.step_ps:.1f} ps) is {args.step_ps / r['dt_phase_sd']:.2f} sigma per frame")
 
     out_dir = args.out
     os.makedirs(out_dir, exist_ok=True)
-    stem = "dither_ladder"
-    csv_path = os.path.join(out_dir, f"{stem}.csv")
-    # A single-state health check ("is the waveform I loaded the one I think it is?") and a
-    # multi-state ladder both want this tool, and they write the same file name: measured
-    # 2026-09-20, a one-state check silently replaced a recorded three-state ladder table.  When
-    # the state sets differ, keep both files.
-    if os.path.exists(csv_path):
+
+    def table_identity(path: str):
+        """The (state, amplitude) set a table file already holds, or None if unreadable."""
         try:
-            with open(csv_path, newline="", encoding="utf-8") as fh:
-                previous = {row.get("state", "") for row in csv.DictReader(fh)}
-        except OSError:
-            previous = set()
-        if previous and previous != set(order):
+            with open(path, newline="", encoding="utf-8") as fh:
+                return {(row.get("state", ""), row.get("amplitude_lsb", ""))
+                        for row in csv.DictReader(fh)}
+        except (OSError, csv.Error):
+            return None
+
+    # Several different runs want this tool -- a one-state health check ("is the waveform I loaded
+    # the one I think it is?"), a multi-state amplitude ladder, and an off/on pair for a known step
+    # at one amplitude -- and they collide on the file name.  Measured twice on 2026-09-20: a
+    # one-state check replaced a recorded three-state ladder, and then an off/on pair at another
+    # amplitude replaced the off/on pair at the first (protecting only the canonical name was not
+    # enough).  So: never overwrite a table that holds a different (state, amplitude) set.  Same
+    # content is a re-run and is allowed to overwrite.
+    mine = {(name, f"{amps[name]:.0f}") for name in order}
+    stem = "dither_ladder"
+    for attempt in range(1, 20):
+        candidate = os.path.join(out_dir, f"{stem}.csv")
+        if not os.path.exists(candidate):
+            break
+        previous = table_identity(candidate)
+        if previous is None or previous == mine:
+            break
+        if attempt == 1:
             stem = "dither_ladder_" + "_".join(order)
-            csv_path = os.path.join(out_dir, f"{stem}.csv")
-            print(f"note: dither_ladder.csv already holds the states {sorted(previous)} -- "
-                  f"writing this run to {os.path.basename(csv_path)} instead")
+            continue
+        stem = "dither_ladder_" + "_".join(order) + f"_{attempt}"
+    csv_path = os.path.join(out_dir, f"{stem}.csv")
+    if stem != "dither_ladder":
+        print(f"note: this directory already holds other tables -- writing this run to "
+              f"{os.path.basename(csv_path)} so nothing is overwritten")
     keys = ["state", "amplitude_lsb", "pct_dac_fs", "json"] + [
         k for k in results[order[0]].keys() if k != "json"]
     with open(csv_path, "w", encoding="utf-8") as fh:

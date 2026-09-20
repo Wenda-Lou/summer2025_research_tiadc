@@ -225,25 +225,45 @@ class SkewActuator:
 
     The controller works in *control codes* (0..48, neutral 24), not picoseconds
     and never raw per-channel register codes.  ``HOST_STEP_PS`` is the measured
-    7.4 ps per code (the firmware's nominal 13.8 ps is ~1.9x larger; see the
-    constant for the measurements).  ``deadband_ps`` keeps the loop from acting on
-    measurement noise rather than signal.
+    ps per code **at the working point** (19.1 there against ~7.4 near neutral; see
+    the constant for both measurements).  ``deadband_ps`` keeps the loop from acting
+    on measurement noise rather than signal.
     """
 
     NEUTRAL_CODE = 24
     CODE_MIN = 0
     CODE_MAX = 48
-    HOST_STEP_PS = 7.4
-    """Measured differential skew per control code, in picoseconds.
+    HOST_STEP_PS = 19.1
+    """Measured differential skew per control code, in picoseconds, **at the working point**.
 
-    Bench-measured 2026-09-17 with the actuator initialized to neutral, paired
-    same-session runs: code 25 vs 24 gave +7.17 +- 1.21 ps (95 % CI), a repeat of
-    the same step +7.6 ps, code 23 vs 24 gave -8.0 ps (opposite sign), and a
-    two-code move gave +15.36 ps, i.e. 7.68 ps per code -- linear, and about half
-    the firmware's documented 13.8 ps (4 raw 0x0112 taps per channel in opposite
-    directions at 1.725 ps each).  Either only one channel's taps move the
-    measured relation, or the tap is nearer 0.9 ps than 1.725 ps; the empirical
-    value is used here and the discrepancy is recorded for the firmware team.
+    The step is not uniform across the code range, so this constant is a statement about *where*
+    it was measured.  Two paired, same-session measurements, both with the tone-phase route:
+
+    * **2026-09-20, codes 34 <-> 35** (`tools/skew_step_characterize.py --code 34 --frames 55
+      --execute`): baseline -16.45 / restore -16.36 / restore -16.62 ps, stepped +2.60 / +2.62 ps,
+      step **+19.08 +- 0.06 ps** (se; 95 % CI +-0.12), repeat signs agreeing and the two restores
+      reproducing the baseline to 0.26 ps -- ~318 sigma.  This is the region the closed loop
+      converges into (a dither-only run walked 24 -> 35 in eleven single-code moves at a mean
+      +17.87 ps/code, and a tone-mode run measured the same code pair as -16.90 -> +2.63 ps).
+    * **2026-09-17, codes 24 <-> 25**, near neutral: +7.17 +- 1.21 ps (95 % CI), a repeat of the
+      same step +7.6 ps, code 23 vs 24 -8.0 ps (opposite sign), and a two-code move +15.36 ps,
+      i.e. 7.68 ps/code.  A closed-loop traversal between codes 24 and 31 on that session read
+      4.8-4.9 ps/code end to end.
+
+    So the step is ~7 ps/code near neutral and ~19 ps/code where the loop parks -- a factor 2.6
+    within one actuator.  Characterize the code you use; never extrapolate, and re-measure with
+    the tool above rather than trusting either figure.
+
+    What this constant is actually used for is narrower than it looks.  ``error_to_steps``
+    discretizes a ps error into codes but every move is clamped to one code, so an inaccurate step
+    changes nothing about convergence; and the loop's direction check only latches when the error
+    moves the *wrong way* (a large step-size disagreement alone does not trip it, by construction).
+    The number is documented because a code is what the hardware takes and picoseconds are what
+    every other measurement is in.
+
+    The firmware's nominal 13.8 ps (4 raw 0x0112 taps per channel in opposite directions at
+    1.725 ps each) sits between the two measured regions; either only one channel's taps move the
+    measured relation, or the tap is nearer 0.9 ps than 1.725 ps.
     """
     deadband_ps = 10.0
     ack_timeout_s = 20.0

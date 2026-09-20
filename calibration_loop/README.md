@@ -64,7 +64,7 @@ parameters, all of which can be overridden on the command line.
 
 A dither-only session has no tone to align to, no tone to cancel and no tone phase to time with,
 so the loop switches routes. `--tone-free` sets all three together
-(`--gain-observable dither_mag --skew-observable dither_fold --no-cancellation`):
+(`--gain-observable dither_mag --skew-observable dither_phase --no-cancellation`):
 
 ```bash
 python -m calibration_loop.run_calibration sim --tone-free \
@@ -83,20 +83,23 @@ after 20 consecutive rejects. What each route is, and why:
 - Both timing routes take their answer from the folded impulse replicas and share the loop's
   convention — **positive means channel B samples later**; the index-domain sign is the opposite
   and closes the loop backwards.
-  - `dither_fold` (the default for `--tone-free`) projects the folded A-B difference onto the
-    pulse slope. It compresses beyond ~0.1 sample, so its *scale* runs low on a large residual
-    (the zero crossing stays honest), but it needs no template fit.
-  - `dither_phase` fits each channel's replica against the template at a **fractional** sampling
-    phase and differences the phases. It is the linear route — unbiased to ±2 ps over ±400 ps in
-    the bench model — but it needs the replica to resemble the template, and the bench's analog
-    path reshapes the impulse.
-- Which is quieter *and* correctly scaled is a property of the waveform, so measure it rather than
-  assuming: `python tools/timing_route_check.py --state 24=<dir> --state 32=<dir> --waveform-json <yours>.json`
-  reports both routes' ps/code against the actuator's known 4.8–4.9 (end-to-end) and 7.4 (single
-  step) ps/code, plus their per-frame scatter. First live run (2026-09-20, `w06` 16000 LSB, 200
-  frames per state, alignment margin 8.1): fold **+6.46 ps/code at 3.1 ps/frame** — a 20-frame
-  batch then has 0.7 ps of standard error against the 10 ps deadband — while phase reads
-  **+18.19 ps/code**, ~3× high as a systematic scale error. Hence the fold default.
+  - `dither_phase` (the default for `--tone-free`) fits each channel's replica against the template
+    at a **fractional** sampling phase and differences the phases. It is the linear route, and on
+    the bench it is the one whose scale matches the shape-independent tone route.
+  - `dither_fold` projects the folded A-B difference onto the pulse slope. It needs no template
+    fit, so it is the *quieter* of the two on a reshaped bench pulse, but its scale ran **2.8× low**
+    (2026-09-20), which widens the 10 ps deadband to ~28 ps in truth — hence cross-check, not
+    driver.
+- Which route is quieter *and* correctly scaled is a property of the waveform, so measure it rather
+  than assuming: `python tools/timing_route_check.py --state 24=<dir> --state 32=<dir> --waveform-json <yours>.json`
+  fits both routes' ps/code against the actuator's known codes and, when the captures hold a tone,
+  uses the tone-phase route as the scale anchor (with a guard that refuses the anchor if the
+  captures have no tone). Measured on the bench 2026-09-20 (`w06` 16000 LSB, 200 frames per state):
+  `dither_phase` **+18.2 ps/code at 4.8 ps/frame** (a 20-frame batch has 1.1 ps of standard error
+  against the 10 ps deadband), `dither_fold` **+6.5 ps/code at 3.1 ps/frame**, and the tone route
+  **+19.5 ps/code** — the fold projection was the quieter route and the one with the wrong scale.
+  A dither-only run driving it parked reading −7.5 ps while the tone route measured −16.9 ps at the
+  same code, so a scale-biased route stops with a real residual ~2.8× its own deadband.
 - Because there is no tone, `tone_ratio`, the A−B difference spur and the SNDR/SFDR columns are
   scored at f_in and describe the noise floor. The tone-free stand-ins are `gain_mag_ratio`,
   `offset_*_codes`, `skew_used_ps`, `skew_fold_ps` / `skew_slope_ps`, `dbc_ab_coherent` and

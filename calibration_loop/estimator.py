@@ -709,10 +709,22 @@ class BlockEstimate:
     296-code peak is 1.8 % of 16384."""
 
     dbc_ab_coherent: float = np.nan
-    """Coherent dither power in A-B relative to channel A, dBc.  Tone-free."""
+    """Coherent dither power in A-B relative to channel A, dBc.  Tone-free.
+
+    The tone-free analogue of the A-B difference spur, and the metric a dither-only run should
+    quote for "what did the loop buy": it is a functional of the *folded replicas*, so closing the
+    hardware skew makes the two replicas alike and drives this down.  Measured on the raw capture
+    it is the native mismatch; see :attr:`dbc_ab_coherent_cal` for the residual.
+    """
+
+    dbc_ab_coherent_cal: float = np.nan
+    """The same quantity measured on the corrected streams (the residual).  Tone-free."""
 
     snr_dither_db: float = np.nan
     """Coherent dither power over the residual after subtracting it, dB.  Tone-free."""
+
+    snr_dither_db_cal: float = np.nan
+    """The same, measured on the corrected streams.  Tone-free."""
 
 
 def event_centroid_samples(resid: np.ndarray, starts: np.ndarray,

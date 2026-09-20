@@ -81,7 +81,7 @@ def run_tool(states, jsons, out: str) -> tuple[int, str]:
     return code, buf.getvalue()
 
 
-def read_table(out_dir: str) -> dict:
+def read_table(out_dir: str, name: str = "dither_ladder.csv") -> dict:
     """Read the tool's CSV, not its printed table.
 
     The printed table is for a human and gained a column between two runs of this test, which
@@ -90,7 +90,7 @@ def read_table(out_dir: str) -> dict:
     labelled the state column ``amplitude_lsb``.)
     """
     import csv as _csv
-    path = os.path.join(out_dir, "dither_ladder.csv")
+    path = os.path.join(out_dir, name)
     with open(path, newline="", encoding="utf-8") as fh:
         rows = list(_csv.DictReader(fh))
     if not rows or "state" not in rows[0]:
@@ -167,6 +167,35 @@ def main() -> int:
                        f"30000 measures x"
                        f"{comp['rep_a'] / reported(table_c, '16000')['rep_a']:.3f} "
                        f"against a commanded x1.875"))
+
+        # ---- a second run into the same directory must not clobber ----------
+        # This is the path that crashed on a missing `import csv` on the bench, because the guard
+        # only runs when the output file already exists -- i.e. never in a fresh temp directory.
+        state_one = [s for s in states if s.startswith("16000=")]
+        json_one = [j for j in jsons if j.startswith("16000=")]
+        code_two, text_two = run_tool(state_one, json_one, out_clean)
+        checks.append(("a one-state run into a used directory keeps both tables",
+                       code_two == 0 and "nothing is overwritten" in text_two,
+                       f"exit code {code_two}; "
+                       + next((ln for ln in text_two.splitlines() if "nothing is overwritten" in ln),
+                              "no redirect notice")))
+        checks.append(("and the five-state table is still there",
+                       len(read_table(out_clean)) == 5,
+                       f"dither_ladder.csv still holds {len(read_table(out_clean))} states"))
+        side = os.path.join(out_clean, "dither_ladder_16000.csv")
+        checks.append(("the one-state table went to its own file",
+                       os.path.exists(side) and len(read_table(out_clean, side)) == 1,
+                       f"{os.path.basename(side)} exists with "
+                       f"{len(read_table(out_clean, side)) if os.path.exists(side) else 0} state"))
+        # ... and the *same* one-state run twice must not overwrite itself either: an identical
+        # table is a re-run and may overwrite, but a different amplitude at the same state name
+        # must not (this is the case that clobbered the second off/on pair on the bench).
+        code_three, text_three = run_tool(state_one, json_one, out_clean)
+        untouched = (len(read_table(out_clean, side)) == 1
+                     and read_table(out_clean, side)["16000"]["amplitude_lsb"] == 16000.0)
+        checks.append(("a re-run of the same one-state table may overwrite it",
+                       code_three == 0 and untouched,
+                       f"exit code {code_three}, table intact: {untouched}"))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
