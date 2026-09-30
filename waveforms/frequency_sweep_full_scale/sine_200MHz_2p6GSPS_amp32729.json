@@ -1,0 +1,19 @@
+{
+  "requested_frequency_hz": 200000000.0,
+  "actual_frequency_hz": 200000000.0,
+  "frequency_error_hz": 0.0,
+  "coherent_tone_bin": 1280,
+  "bin_spacing_hz": 156250.0,
+  "fs_dac_hz": 2600000000.0,
+  "n_dac_samples": 16640,
+  "peak_code_commanded": 32729,
+  "peak_dbfs": -0.01007890079643443,
+  "phase_deg": 90.0,
+  "minimum_code": -31778,
+  "maximum_code": 32729,
+  "rms_codes": 23142.874409266384,
+  "mean_code": -0.07692307692307693,
+  "clipping": false,
+  "dither_enabled": false,
+  "format": "signed 16-bit integer, one sample per line"
+}
