@@ -4,7 +4,7 @@
 -   Prof wants to know the low cutoff and high cutoff of the DAC output. Try different frequencies 
 
 ## 2. Manually introduce some mismatch to the 2 channels in the ADC and see how the calibration loop perform
--   record ground truth
+-   record ground truth (write on host side)
 -   know how each aspects are calculated (gain, offset, skew)
 -   be familier of how the result comes out and what they mean
 
