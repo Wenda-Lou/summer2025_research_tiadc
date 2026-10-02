@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 
 from .plot import plot_adc_csv, plot_ifc_sweep_capture
 from .receive_data import (
@@ -130,6 +130,39 @@ def gui_receive_and_plot():
 def gui_receive_ifc_sweep():
 
     try:
+        tone_frequency_mhz = simpledialog.askfloat(
+            "ADC IFC Verification",
+            "Signal-generator tone frequency (MHz):",
+            initialvalue=100.0,
+            minvalue=0.001,
+            maxvalue=649.999,
+            parent=root,
+        )
+        if tone_frequency_mhz is None:
+            return
+
+        input_vpp_diff = simpledialog.askfloat(
+            "ADC IFC Verification",
+            "Measured differential Vpp at the ADC input:\n"
+            "(Use less than 1.36 Vpp so every range remains unclipped.)",
+            initialvalue=0.8,
+            minvalue=0.001,
+            maxvalue=1.359,
+            parent=root,
+        )
+        if input_vpp_diff is None:
+            return
+
+        messagebox.showinfo(
+            "Start ADC IFC Sweep",
+            "Keep the generator amplitude and frequency fixed.\n\n"
+            "After closing this message, run:\n"
+            "  adc -gain\n"
+            "  IFC\n"
+            "  sweep",
+            parent=root,
+        )
+
         (
             sweep_dir,
             summary_file,
@@ -140,7 +173,8 @@ def gui_receive_ifc_sweep():
             packet_size=512,
             timeout=15.0,
             reconstruct=True,
-            offset_threshold_codes=2.0,
+            tone_frequency_mhz=tone_frequency_mhz,
+            input_vpp_diff=input_vpp_diff,
         )
 
         show_ifc_summary_window(
@@ -243,7 +277,7 @@ def show_ifc_summary_window(
 
     summary_text.insert(
         "end",
-        "IFC Sweep Summary\n",
+        "ADC IFC Verification Summary\n",
     )
 
     summary_text.insert(
@@ -914,7 +948,12 @@ def create_root():
     btn_both = tk.Button(root, text='Receive + Plot', width=25, command=gui_receive_and_plot)
     btn_both.pack(pady=8)
 
-    btn_sweep = tk.Button(root, text='Receive IFC Sweep', width=25, command=gui_receive_ifc_sweep)
+    btn_sweep = tk.Button(
+        root,
+        text='Run ADC IFC Verification',
+        width=28,
+        command=gui_receive_ifc_sweep,
+    )
     btn_sweep.pack(pady=8)
 
     btn_open_sweep = tk.Button(root, text='Open Existing IFC Sweep', width=28, command=gui_open_ifc_sweep_folder)

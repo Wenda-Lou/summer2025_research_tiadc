@@ -3046,7 +3046,7 @@ void handle_adc_gain_cmd(void)
             xil_printf("  status      Check current input full-scale status\r\n");
             xil_printf("  back        Back to gain mode selection\r\n");
             xil_printf("  quit        Quit gain setting menu\r\n");
-            xil_printf("  sweep       Run sweep test across the IFC range\r\n");
+            xil_printf("  sweep       Verify ADC code amplitude across IFC ranges\r\n");
 
             while (1)
             {
@@ -3083,7 +3083,7 @@ void handle_adc_gain_cmd(void)
                     xil_printf("  status      Check current input full-scale status\r\n");
                     xil_printf("  back        Back to gain mode selection\r\n");
                     xil_printf("  quit        Quit gain setting menu\r\n");
-                    xil_printf("  sweep       Sweep all supported IFC values\r\n");
+                    xil_printf("  sweep       Verify ADC code amplitude across IFC ranges\r\n");
                 }
 
                 else if (strcmp(token, "status") == 0)
@@ -3444,22 +3444,34 @@ static void handle_adc_skew_transaction_cmd(int requested_steps)
 
 static void adc_ifc_sweep(void)
 {
-    static const char *ifc_values[] =
+    static const struct
     {
-        "2.04",
-        "1.93",
-        "1.81",
-        "1.70",
-        "1.59",
-        "1.47",
-        "1.36"
+        const char *vpp;
+        uint8_t register_code;
+    } ifc_steps[] =
+    {
+        {"2.04", 0x00U},
+        {"1.93", 0x0FU},
+        {"1.81", 0x0EU},
+        {"1.70", 0x0DU},
+        {"1.59", 0x0CU},
+        {"1.47", 0x0BU},
+        {"1.36", 0x0AU}
     };
 
     const int number_of_steps =
-        sizeof(ifc_values) / sizeof(ifc_values[0]);
+        sizeof(ifc_steps) / sizeof(ifc_steps[0]);
 
     int successful_captures = 0;
     int transmitted_frames = 0;
+    uint8_t saved_fs_register = 0U;
+
+    /* Restore the user's ADC range after the verification sweep. */
+    ad9695_read_register(
+        &spi_inst,
+        AD9695_INPUT_FULL_SCALE_CTRL,
+        &saved_fs_register
+    );
 
     /*
      * Prevent manual DMA or UDP commands from interfering with
@@ -3469,8 +3481,11 @@ static void adc_ifc_sweep(void)
 
     xil_printf("\r\n");
     xil_printf("===============================\r\n");
-    xil_printf("Starting Input Full-Scale Sweep\r\n");
+    xil_printf("Starting ADC Input Full-Scale Verification Sweep\r\n");
     xil_printf("===============================\r\n");
+    xil_printf("Keep one sine-wave generator amplitude and frequency fixed.\r\n");
+    xil_printf("Use less than 1.36 Vpp differential to avoid clipping.\r\n");
+    xil_printf("Saved register 0x1910 = 0x%02X\r\n", saved_fs_register);
 
     for (int i = 0; i < number_of_steps; i++)
     {
@@ -3483,13 +3498,46 @@ static void adc_ifc_sweep(void)
 
         xil_printf(
             "Input Full-Scale : %s Vpp\r\n",
-            ifc_values[i]
+            ifc_steps[i].vpp
         );
 
         /*
          * Program the AD9695 input full-scale register.
          */
-        ad9695_set_input_full_scale(ifc_values[i]);
+        ad9695_set_input_full_scale(ifc_steps[i].vpp);
+
+        /* Read the setting back so the saved UART log proves which range
+         * produced the UDP frame that follows. */
+        {
+            uint8_t readback = 0U;
+            uint8_t readback_code;
+
+            ad9695_read_register(
+                &spi_inst,
+                AD9695_INPUT_FULL_SCALE_CTRL,
+                &readback
+            );
+            readback_code = readback & AD9695_INPUT_FS_MASK;
+
+            xil_printf(
+                "IFC-STEP %d vpp=%s reg_0x1910=0x%02X "
+                "expected_code=0x%02X result=%s\r\n",
+                i + 1,
+                ifc_steps[i].vpp,
+                readback,
+                ifc_steps[i].register_code,
+                readback_code == ifc_steps[i].register_code ? "OK" : "MISMATCH"
+            );
+
+            if (readback_code != ifc_steps[i].register_code)
+            {
+                /* Frames carry no IFC tag on the existing UDP wire format.
+                 * Abort instead of skipping one step and silently shifting
+                 * every subsequent host-side label. */
+                xil_printf("Aborting sweep because IFC readback failed.\r\n");
+                break;
+            }
+        }
 
         /*
          * Allow the ADC analog and digital datapaths to settle.
@@ -3504,10 +3552,13 @@ static void adc_ifc_sweep(void)
         {
             xil_printf(
                 "Capture failed for %s Vpp.\r\n",
-                ifc_values[i]
+                ifc_steps[i].vpp
             );
 
-            continue;
+            /* Preserve the one-frame-per-setting mapping expected by the
+             * host receiver. Continuing would mislabel all later frames. */
+            xil_printf("Aborting sweep to preserve IFC/frame ordering.\r\n");
+            break;
         }
 
         successful_captures++;
@@ -3537,7 +3588,7 @@ static void adc_ifc_sweep(void)
 
         xil_printf(
             "Transmission complete for %s Vpp.\r\n",
-            ifc_values[i]
+            ifc_steps[i].vpp
         );
 
         /*
@@ -3546,6 +3597,16 @@ static void adc_ifc_sweep(void)
          */
         usleep(100000);  /* 100 ms */
     }
+
+    ad9695_write_register(
+        &spi_inst,
+        AD9695_INPUT_FULL_SCALE_CTRL,
+        saved_fs_register
+    );
+    xil_printf(
+        "Restored register 0x1910 = 0x%02X\r\n",
+        saved_fs_register
+    );
 
     adc_sweep_active = 0;
 

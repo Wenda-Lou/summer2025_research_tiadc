@@ -1,16 +1,153 @@
+"""Receive and analyse an AD9695 input-full-scale (IFC) sweep.
+
+The board command ``adc -gain`` -> ``IFC`` -> ``sweep`` holds the injected
+signal constant, selects each supported AD9695 full-scale range, and sends one
+raw DMA capture per range.  This module verifies the property the experiment
+is meant to measure:
+
+    fitted_peak_codes * selected_full_scale_vpp = constant
+
+When the actual differential input voltage is supplied, it also estimates the
+absolute ADC full-scale voltage and volts per code for each setting.
+"""
+
+from __future__ import annotations
+
 from datetime import datetime
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
-from tkinter import filedialog, messagebox
 
 from .receive_data import receive_adc_data
-from .frame import reconstruct_adc_bytes
+
+
+# ``udp_receiver.py`` is commonly launched from the firmware application
+# directory, which does not put the repository root on sys.path. Import the
+# production de-framer explicitly so this diagnostic follows the same
+# [A A A A B B B B] boundary rule as the calibration loop.
+REPO_DIR = Path(__file__).resolve().parents[3]
+if str(REPO_DIR) not in sys.path:
+    sys.path.insert(0, str(REPO_DIR))
+
+from calibration_loop.estimator import deframe, fit_tone, unpack_words  # noqa: E402
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-SAVE_DIR = PROJECT_DIR / 'adc_data'
+SAVE_DIR = PROJECT_DIR / "adc_data"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
+ADC_SAMPLE_RATE_HZ = 1.3e9
+ADC_CODE_COUNT = 2 ** 14
+ADC_PEAK_CODES = ADC_CODE_COUNT / 2.0
+ADC_MIN_CODE = -8192
+ADC_MAX_CODE = 8191
+
+IFC_VALUES_VPP = (2.04, 1.93, 1.81, 1.70, 1.59, 1.47, 1.36)
+
+
+def analyse_ifc_frame(
+    raw_bytes: bytes,
+    ifc_vpp: float,
+    tone_frequency_mhz: float,
+    input_vpp_diff: float | None,
+    sample_rate_hz: float = ADC_SAMPLE_RATE_HZ,
+):
+    """Return tone/full-scale metrics and the two correctly de-framed channels."""
+    if ifc_vpp <= 0.0:
+        raise ValueError("IFC full-scale voltage must be positive.")
+    if sample_rate_hz <= 0.0:
+        raise ValueError("ADC sample rate must be positive.")
+    if input_vpp_diff is not None and input_vpp_diff <= 0.0:
+        raise ValueError("Measured differential input Vpp must be positive.")
+
+    tone_hz = tone_frequency_mhz * 1e6
+    f0 = tone_hz / sample_rate_hz
+    if not 0.0 < f0 < 0.5:
+        raise ValueError(
+            f"Tone must be between 0 and Nyquist; got {tone_frequency_mhz} MHz."
+        )
+
+    view = deframe(unpack_words(raw_bytes))
+    channel_a = np.asarray(view["ch_a"], dtype=np.float64)
+    channel_b = np.asarray(view["ch_b"], dtype=np.float64)
+
+    fit_a = fit_tone(channel_a, f0, refine=True)
+    fit_b = fit_tone(channel_b, f0, refine=True)
+    amplitude_a = abs(float(fit_a["amplitude"]))
+    amplitude_b = abs(float(fit_b["amplitude"]))
+    amplitude_mean = 0.5 * (amplitude_a + amplitude_b)
+    if amplitude_a <= 0.0 or amplitude_b <= 0.0 or amplitude_mean <= 0.0:
+        raise ValueError("Fitted tone amplitude is zero.")
+
+    min_a = int(np.min(channel_a))
+    max_a = int(np.max(channel_a))
+    min_b = int(np.min(channel_b))
+    max_b = int(np.max(channel_b))
+    clip_samples_a = int(np.count_nonzero(
+        (channel_a <= ADC_MIN_CODE) | (channel_a >= ADC_MAX_CODE)
+    ))
+    clip_samples_b = int(np.count_nonzero(
+        (channel_b <= ADC_MIN_CODE) | (channel_b >= ADC_MAX_CODE)
+    ))
+
+    # This product should be invariant across the seven programmed ranges,
+    # even when the absolute voltage at the ADC pins is not yet known.
+    scale_product = amplitude_mean * ifc_vpp
+    estimated_input_a = amplitude_a * ifc_vpp / ADC_PEAK_CODES
+    estimated_input_b = amplitude_b * ifc_vpp / ADC_PEAK_CODES
+
+    expected_amplitude = np.nan
+    amplitude_error_pct = np.nan
+    estimated_fs_a = np.nan
+    estimated_fs_b = np.nan
+    estimated_fs_mean = np.nan
+    estimated_lsb_uv = np.nan
+    range_error_pct = np.nan
+    if input_vpp_diff is not None:
+        expected_amplitude = ADC_PEAK_CODES * input_vpp_diff / ifc_vpp
+        amplitude_error_pct = 100.0 * (
+            amplitude_mean / expected_amplitude - 1.0
+        )
+        estimated_fs_a = input_vpp_diff * ADC_PEAK_CODES / amplitude_a
+        estimated_fs_b = input_vpp_diff * ADC_PEAK_CODES / amplitude_b
+        estimated_fs_mean = input_vpp_diff * ADC_PEAK_CODES / amplitude_mean
+        estimated_lsb_uv = estimated_fs_mean / ADC_CODE_COUNT * 1e6
+        range_error_pct = 100.0 * (estimated_fs_mean / ifc_vpp - 1.0)
+
+    metrics = {
+        "ifc_vpp": float(ifc_vpp),
+        "rotation": int(view["rotation"]),
+        "abs_channel_correlation": float(abs(view["corr"])),
+        "sample_count_per_channel": int(channel_a.size),
+        "tone_frequency_mhz": float(tone_frequency_mhz),
+        "input_vpp_diff": input_vpp_diff,
+        "tone_a_peak_codes": amplitude_a,
+        "tone_b_peak_codes": amplitude_b,
+        "tone_mean_peak_codes": amplitude_mean,
+        "gain_ratio_b_over_a": amplitude_b / amplitude_a,
+        "expected_peak_codes": expected_amplitude,
+        "amplitude_error_pct": amplitude_error_pct,
+        "scale_product_code_v": scale_product,
+        "estimated_input_a_vpp": estimated_input_a,
+        "estimated_input_b_vpp": estimated_input_b,
+        "estimated_fs_a_vpp": estimated_fs_a,
+        "estimated_fs_b_vpp": estimated_fs_b,
+        "estimated_fs_mean_vpp": estimated_fs_mean,
+        "estimated_lsb_uv": estimated_lsb_uv,
+        "range_error_pct": range_error_pct,
+        "dc_a_codes": float(fit_a["dc"]),
+        "dc_b_codes": float(fit_b["dc"]),
+        "min_a": min_a,
+        "max_a": max_a,
+        "min_b": min_b,
+        "max_b": max_b,
+        "clip_samples_a": clip_samples_a,
+        "clip_samples_b": clip_samples_b,
+        "clipped": bool(clip_samples_a or clip_samples_b),
+    }
+    return metrics, channel_a.astype(np.int32), channel_b.astype(np.int32)
 
 
 def receive_ifc_sweep(
@@ -20,42 +157,29 @@ def receive_ifc_sweep(
     packet_size=512,
     timeout=15.0,
     reconstruct=True,
-    offset_threshold_codes=2.0,
+    offset_threshold_codes=None,
+    tone_frequency_mhz=100.0,
+    input_vpp_diff=None,
+    sample_rate_hz=ADC_SAMPLE_RATE_HZ,
+    scale_tolerance_pct=3.0,
 ):
+    """Receive seven IFC captures and verify ADC range scaling.
+
+    ``input_vpp_diff`` must be the measured differential sine-wave Vpp at the
+    ADC input. Leave it as ``None`` when only the relative range scaling is
+    being checked. ``reconstruct`` and ``offset_threshold_codes`` remain in
+    the signature for compatibility with older GUI callers; every capture is
+    now always split into the two physical ADC channels.
     """
-    Receive seven IFC sweep captures and calculate DC-offset metrics.
+    del reconstruct, offset_threshold_codes
 
-    Metrics:
-        sample_sum:
-            Sum of all reconstructed ADC samples.
-
-        mean:
-            Signed average ADC code.
-
-        absolute_offset:
-            Absolute value of the mean.
-
-        pos_mean / neg_mean:
-            Mean values of the positive and reconstructed-negative
-            branches before interleaving. These help determine whether
-            the observed offset is caused by branch asymmetry.
-
-        needs_calibration:
-            True when absolute_offset exceeds offset_threshold_codes.
-    """
-
-    ifc_values = [
-        "2.04",
-        "1.93",
-        "1.81",
-        "1.70",
-        "1.59",
-        "1.47",
-        "1.36",
-    ]
+    if not 0.0 < tone_frequency_mhz * 1e6 < sample_rate_hz / 2.0:
+        raise ValueError("Tone frequency must be between 0 and ADC Nyquist.")
+    if input_vpp_diff is not None and input_vpp_diff <= 0.0:
+        raise ValueError("Measured differential input Vpp must be positive.")
 
     sweep_dir = SAVE_DIR / (
-        f"ifc_sweep_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        f"ifc_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
     sweep_dir.mkdir(parents=True, exist_ok=True)
 
@@ -66,25 +190,14 @@ def receive_ifc_sweep(
         return {
             "index": index,
             "ifc_vpp": float(ifc),
-            "sample_count": None,
-            "sample_sum": None,
-            "mean": None,
-            "absolute_offset": None,
-            "pos_mean": None,
-            "neg_mean": None,
-            "branch_mean_difference": None,
-            "needs_calibration": None,
-            "min": None,
-            "max": None,
-            "peak": None,
-            "rms": None,
+            "status": status,
             "csv_file": status,
         }
 
-    for index, ifc in enumerate(ifc_values, start=1):
+    for index, ifc in enumerate(IFC_VALUES_VPP, start=1):
         print(
-            f"\nWaiting for sweep frame {index}/{len(ifc_values)}, "
-            f"IFC = {ifc} Vpp"
+            f"\nWaiting for verification frame {index}/{len(IFC_VALUES_VPP)}, "
+            f"IFC = {ifc:.2f} Vpp"
         )
 
         csv_file = receive_adc_data(
@@ -96,154 +209,111 @@ def receive_ifc_sweep(
         )
 
         if csv_file is None:
-            results.append(
-                empty_result(index, ifc, "TIMEOUT")
+            results.append(empty_result(index, ifc, "TIMEOUT"))
+            print(
+                "Stopping the receiver: without this frame, later UDP frames "
+                "cannot be assigned to IFC settings safely."
             )
-            continue
+            break
 
         try:
             raw_df = pd.read_csv(csv_file)
-
             if "byte" not in raw_df.columns:
                 raise ValueError(
                     f"Raw capture does not contain a 'byte' column: {csv_file}"
                 )
-
             raw = raw_df["byte"].to_numpy(dtype=np.uint8)
-
-            if raw.size < 2:
-                raise ValueError(
-                    f"Capture for IFC {ifc} Vpp is too short."
-                )
-
-            pos_mean = np.nan
-            neg_mean = np.nan
-            branch_mean_difference = np.nan
-
-            if reconstruct:
-                adc = reconstruct_adc_bytes(raw.tobytes())
-
-                # Recover branch statistics from the same validated word layout.
-                raw_even = raw[:-1] if raw.size % 2 else raw
-                words14 = (raw_even.view("<i2") >> 2).astype(np.int16)
-                if words14.size <= 8:
-                    raise ValueError(
-                        f"Capture for IFC {ifc} Vpp contains too few samples."
-                    )
-                words14 = words14[:-8]
-                words14 = words14[: words14.size - (words14.size % 8)]
-                grouped = words14.reshape(-1, 8)
-
-                pos = grouped[:, :4].reshape(-1).astype(np.int32)
-                neg = (-grouped[:, 4:]).reshape(-1).astype(np.int32)
-
-                pos_mean = float(np.mean(pos))
-                neg_mean = float(np.mean(neg))
-                branch_mean_difference = float(pos_mean - neg_mean)
-            else:
-                raw_even = raw[:-1] if raw.size % 2 else raw
-                adc = (raw_even.view("<i2") >> 2).astype(np.int32)
-
-            if adc.size == 0:
-                raise ValueError(
-                    f"No ADC samples available for IFC {ifc} Vpp."
-                )
-
-            adc_float = adc.astype(np.float64)
-
-            sample_count = int(adc.size)
-            sample_sum = float(np.sum(adc_float))
-            mean_val = float(np.mean(adc_float))
-            absolute_offset = float(abs(mean_val))
-
-            min_val = int(np.min(adc))
-            max_val = int(np.max(adc))
-            peak_val = float((max_val - min_val) / 2.0)
-
-            rms_val = float(
-                np.sqrt(np.mean(adc_float ** 2))
-            )
-
-            needs_calibration = bool(
-                absolute_offset > offset_threshold_codes
+            metrics, channel_a, channel_b = analyse_ifc_frame(
+                raw.tobytes(),
+                ifc_vpp=ifc,
+                tone_frequency_mhz=tone_frequency_mhz,
+                input_vpp_diff=input_vpp_diff,
+                sample_rate_hz=sample_rate_hz,
             )
 
             out_csv = sweep_dir / (
-                f"sweep_{index:02d}_"
-                f"ifc_{ifc.replace('.', 'p')}_vpp.csv"
+                f"sweep_{index:02d}_ifc_{str(ifc).replace('.', 'p')}_vpp.csv"
             )
-
+            sample_count = min(channel_a.size, channel_b.size)
             pd.DataFrame({
-                "sample_index": np.arange(
-                    adc.size,
-                    dtype=np.int32,
-                ),
-                "adc_code": adc,
+                "sample_index": np.arange(sample_count, dtype=np.int32),
+                # Keep adc_code as a Channel A alias for the existing plotter.
+                "adc_code": channel_a[:sample_count],
+                "channel_a_code": channel_a[:sample_count],
+                "channel_b_code": channel_b[:sample_count],
                 "ifc_vpp": float(ifc),
                 "sweep_index": index,
             }).to_csv(out_csv, index=False)
 
             saved_files.append(out_csv)
-
-            results.append({
+            result = {
                 "index": index,
-                "ifc_vpp": float(ifc),
-                "sample_count": sample_count,
-                "sample_sum": sample_sum,
-                "mean": mean_val,
-                "absolute_offset": absolute_offset,
-                "pos_mean": pos_mean,
-                "neg_mean": neg_mean,
-                "branch_mean_difference": branch_mean_difference,
-                "needs_calibration": needs_calibration,
-                "min": min_val,
-                "max": max_val,
-                "peak": peak_val,
-                "rms": rms_val,
+                "status": "CAPTURED",
+                **metrics,
                 "csv_file": str(out_csv),
-            })
+            }
+            results.append(result)
 
-            status_text = (
-                "CALIBRATION NEEDED"
-                if needs_calibration
-                else "PASS"
-            )
-
+            absolute_text = ""
+            if input_vpp_diff is not None:
+                absolute_text = (
+                    f", estimated FS={metrics['estimated_fs_mean_vpp']:.4f} Vpp"
+                    f", LSB={metrics['estimated_lsb_uv']:.2f} uV"
+                )
             print(
-                f"IFC {ifc} Vpp: "
-                f"sum={sample_sum:.1f}, "
-                f"mean={mean_val:.6f}, "
-                f"|offset|={absolute_offset:.6f}, "
-                f"pos mean={pos_mean:.6f}, "
-                f"neg mean={neg_mean:.6f}, "
-                f"status={status_text}"
+                f"IFC {ifc:.2f} Vpp: "
+                f"A={metrics['tone_a_peak_codes']:.1f}, "
+                f"B={metrics['tone_b_peak_codes']:.1f} peak codes, "
+                f"|corr|={metrics['abs_channel_correlation']:.4f}, "
+                f"clipped={metrics['clipped']}"
+                f"{absolute_text}"
             )
 
         except Exception as exc:
-            print(
-                f"Processing failed for IFC {ifc} Vpp: {exc}"
-            )
-
-            results.append(
-                empty_result(index, ifc, "PROCESSING_ERROR")
-            )
-
+            print(f"Processing failed for IFC {ifc:.2f} Vpp: {exc}")
+            results.append(empty_result(index, ifc, "PROCESSING_ERROR"))
         finally:
-            # Remove the temporary raw-byte CSV.
             try:
                 Path(csv_file).unlink()
             except OSError:
                 pass
 
     summary_df = pd.DataFrame(results)
+    valid = summary_df["status"].eq("CAPTURED")
+    if valid.any():
+        reference_product = float(
+            summary_df.loc[valid, "scale_product_code_v"].median()
+        )
+        summary_df.loc[valid, "scale_product_error_pct"] = 100.0 * (
+            summary_df.loc[valid, "scale_product_code_v"] / reference_product
+            - 1.0
+        )
+        summary_df.loc[valid, "relative_scale_pass"] = (
+            summary_df.loc[valid, "scale_product_error_pct"].abs()
+            <= scale_tolerance_pct
+        )
 
+        max_error = float(
+            summary_df.loc[valid, "scale_product_error_pct"].abs().max()
+        )
+        overall = "PASS" if max_error <= scale_tolerance_pct else "FAIL"
+        print(
+            f"\nRelative IFC scaling: {overall}; maximum product deviation "
+            f"{max_error:.2f}% (limit {scale_tolerance_pct:.2f}%)."
+        )
+        if input_vpp_diff is not None:
+            mean_range_error = float(
+                summary_df.loc[valid, "range_error_pct"].mean()
+            )
+            print(
+                "Absolute range check: mean error "
+                f"{mean_range_error:+.2f}% using {input_vpp_diff:.6f} Vpp "
+                "differential at the ADC input."
+            )
+
+    # Keep the historical filename so "Open Existing IFC Sweep" continues to
+    # work for both old offset-oriented runs and the new scale verification.
     summary_file = sweep_dir / "ifc_sweep_summary.csv"
     summary_df.to_csv(summary_file, index=False)
 
-    return (
-        sweep_dir,
-        summary_file,
-        summary_df,
-        saved_files,
-    )
-
+    return sweep_dir, summary_file, summary_df, saved_files
