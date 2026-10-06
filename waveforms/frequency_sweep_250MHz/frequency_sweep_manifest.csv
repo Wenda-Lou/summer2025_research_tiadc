@@ -1,0 +1,2 @@
+requested_frequency_mhz,actual_frequency_mhz,frequency_error_hz,tone_bin,peak_code,peak_dbfs,minimum_code,maximum_code,txt,json
+250.0,250.0,0.0,1600,32729,-0.01007890079643443,-32729,32729,waveforms\frequency_sweep_250MHz\sine_250MHz_2p6GSPS_amp32729.txt,waveforms\frequency_sweep_250MHz\sine_250MHz_2p6GSPS_amp32729.json

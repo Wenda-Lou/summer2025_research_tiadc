@@ -1,0 +1,5 @@
+run_id,source,frequency_mhz,source_setting_vpp,dac_peak_code,mean_adc_vpp,adc_vpp_std_millivolts,channel_b_over_a,gain_mismatch_percent,amplitude_fit_r_squared,notes
+ifc_sweep_20261006_154001,signal_generator,250,1.0,,0.063538,0.136,1.01405,1.405,0.999817,Signal-generator sweep through the approximately 9.6 dB splitter
+ifc_sweep_20261006_161754,DAC,250,,32729,0.130799,0.504,1.05411,5.411,0.999162,Full-scale coherent DAC vector
+ifc_sweep_20261006_162139,DAC,400,,32729,0.123854,0.516,1.06896,6.896,0.999092,Detected tone is 400 MHz; do not label this run as 300 MHz
+ifc_sweep_20261006_162555,DAC,300,,32729,0.127236,0.230,1.04902,4.902,0.999866,Correct 300 MHz full-scale coherent DAC-vector run
