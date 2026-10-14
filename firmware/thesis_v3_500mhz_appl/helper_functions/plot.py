@@ -290,7 +290,35 @@ def plot_ifc_sweep_capture(csv_file, summary_row=None):
     ax.grid(True)
     ax.legend(loc="upper right")
 
-    if summary_row is not None:
+    if summary_row is not None and "tone_a_peak_codes" in summary_row.index:
+        ifc_vpp = float(summary_row["ifc_vpp"])
+        driven_channel = str(summary_row.get("driven_channel", "BOTH"))
+        tone_peak = float(summary_row.get("driven_tone_peak_codes", np.nan))
+        rotation = int(summary_row.get("rotation", 0))
+        clipped = bool(summary_row.get("clipped", False))
+        isolation = float(summary_row.get("tone_isolation_db", np.nan))
+
+        title = (
+            f"IFC Sweep Capture — {ifc_vpp:.2f} Vpp — "
+            f"Channel {driven_channel}"
+        )
+        isolation_text = (
+            f"{isolation:.2f} dB" if np.isfinite(isolation) else "N/A"
+        )
+        info = (
+            f"IFC: {ifc_vpp:.2f} Vpp\n"
+            f"Driven: {driven_channel}\n"
+            f"Samples: {adc_code.size}\n"
+            f"Rotation: {rotation}\n"
+            f"Tone peak: {tone_peak:.2f} codes\n"
+            f"Tone isolation: {isolation_text}\n"
+            f"Mean: {measured_mean:.4f}\n"
+            f"Min: {np.min(adc_code):.0f}\n"
+            f"Max: {np.max(adc_code):.0f}\n"
+            f"Clipped: {clipped}"
+        )
+
+    elif summary_row is not None:
         ifc_vpp = float(summary_row["ifc_vpp"])
         peak_val = float(summary_row["peak"])
         rms_val = float(summary_row["rms"])

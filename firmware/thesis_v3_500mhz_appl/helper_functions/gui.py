@@ -127,11 +127,26 @@ def gui_receive_and_plot():
         messagebox.showerror("Error", str(exc))
 
 
-def gui_receive_ifc_sweep():
+def gui_receive_ifc_sweep(driven_channel=None):
+
+    if driven_channel is not None:
+        driven_channel = str(driven_channel).strip().upper()
+        if driven_channel not in {"A", "B"}:
+            messagebox.showerror(
+                "Invalid Channel",
+                "Single-channel mode requires Channel A or Channel B.",
+            )
+            return
+
+    mode_title = (
+        f"Channel {driven_channel} IFC Verification"
+        if driven_channel is not None
+        else "ADC IFC Verification"
+    )
 
     try:
         tone_frequency_mhz = simpledialog.askfloat(
-            "ADC IFC Verification",
+            mode_title,
             "Signal-generator tone frequency (MHz):",
             initialvalue=100.0,
             minvalue=0.001,
@@ -141,21 +156,44 @@ def gui_receive_ifc_sweep():
         if tone_frequency_mhz is None:
             return
 
-        input_vpp_diff = simpledialog.askfloat(
-            "ADC IFC Verification",
-            "Measured differential Vpp at the ADC input:\n"
-            "(Use less than 1.36 Vpp so every range remains unclipped.)",
-            initialvalue=0.8,
-            minvalue=0.001,
-            maxvalue=1.359,
-            parent=root,
-        )
-        if input_vpp_diff is None:
-            return
+        source_vpp_at_sma = None
+        if driven_channel is None:
+            input_vpp_diff = simpledialog.askfloat(
+                mode_title,
+                "Measured differential Vpp at the ADC input:\n"
+                "(Use less than 1.36 Vpp so every range remains unclipped.)",
+                initialvalue=0.8,
+                minvalue=0.001,
+                maxvalue=1.359,
+                parent=root,
+            )
+            if input_vpp_diff is None:
+                return
+        else:
+            # This is connector-level metadata only.  Do not treat the
+            # generator's single-ended setting as differential voltage at the
+            # ADC die after the evaluation-board input network.
+            input_vpp_diff = None
+            source_vpp_at_sma = simpledialog.askfloat(
+                mode_title,
+                "Generator Vpp setting into 50 ohm:\n"
+                "(Recorded as SMA-level metadata; not used as ADC-die Vpp.)",
+                initialvalue=1.0,
+                minvalue=0.001,
+                parent=root,
+            )
+            if source_vpp_at_sma is None:
+                return
 
+        connection_text = (
+            f"Connect the generator only to Channel {driven_channel}.\n"
+            if driven_channel is not None
+            else "Keep both ADC channels driven.\n"
+        )
         messagebox.showinfo(
             "Start ADC IFC Sweep",
-            "Keep the generator amplitude and frequency fixed.\n\n"
+            connection_text
+            + "Keep the generator amplitude and frequency fixed.\n\n"
             "After closing this message, run:\n"
             "  adc -gain\n"
             "  IFC\n"
@@ -175,6 +213,8 @@ def gui_receive_ifc_sweep():
             reconstruct=True,
             tone_frequency_mhz=tone_frequency_mhz,
             input_vpp_diff=input_vpp_diff,
+            driven_channel=driven_channel,
+            source_vpp_at_sma=source_vpp_at_sma,
         )
 
         show_ifc_summary_window(
@@ -188,6 +228,20 @@ def gui_receive_ifc_sweep():
             "IFC Sweep Error",
             str(exc),
         )
+
+
+def gui_receive_single_channel_ifc_sweep():
+    selection = messagebox.askyesnocancel(
+        "Select Driven ADC Channel",
+        "Which ADC input is connected to the generator?\n\n"
+        "Yes = Channel A\n"
+        "No = Channel B\n"
+        "Cancel = do not start",
+        parent=root,
+    )
+    if selection is None:
+        return
+    gui_receive_ifc_sweep("A" if selection else "B")
 
 
 def show_ifc_summary_window(
@@ -955,6 +1009,14 @@ def create_root():
         command=gui_receive_ifc_sweep,
     )
     btn_sweep.pack(pady=8)
+
+    btn_single_sweep = tk.Button(
+        root,
+        text='Run Single-Channel IFC Sweep',
+        width=28,
+        command=gui_receive_single_channel_ifc_sweep,
+    )
+    btn_single_sweep.pack(pady=8)
 
     btn_open_sweep = tk.Button(root, text='Open Existing IFC Sweep', width=28, command=gui_open_ifc_sweep_folder)
     btn_open_sweep.pack(pady=8)

@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from .receive_data import receive_adc_data
+from .frame import ADC_VALID_SAMPLE_COUNT as ADC_VALID_WORD_COUNT
 
 
 # ``udp_receiver.py`` is commonly launched from the firmware application
@@ -31,7 +32,12 @@ REPO_DIR = Path(__file__).resolve().parents[3]
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
 
-from calibration_loop.estimator import deframe, fit_tone, unpack_words  # noqa: E402
+from calibration_loop.estimator import (  # noqa: E402
+    deframe,
+    fit_tone,
+    split_at,
+    unpack_words,
+)
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -47,12 +53,93 @@ ADC_MAX_CODE = 8191
 IFC_VALUES_VPP = (2.04, 1.93, 1.81, 1.70, 1.59, 1.47, 1.36)
 
 
+def _normalise_driven_channel(driven_channel: str | None) -> str | None:
+    if driven_channel is None:
+        return None
+    channel = str(driven_channel).strip().upper()
+    if channel not in {"A", "B"}:
+        raise ValueError("Driven channel must be 'A', 'B', or None.")
+    return channel
+
+
+def deframe_single_tone(
+    words: np.ndarray,
+    f0: float,
+    driven_channel: str,
+    group: int = 8,
+    half: int = 4,
+    minimum_isolation_db: float = 6.0,
+) -> dict:
+    """De-frame a capture in which only one physical ADC has the test tone.
+
+    The normal two-channel de-framer uses A/B correlation and therefore cannot
+    identify the group boundary when the other ADC has no matching waveform.
+    Here the selected physical channel supplies the missing orientation: the
+    correct ``[A A A A B B B B]`` boundary is the rotation that concentrates
+    the known-frequency tone in the selected half and rejects it from the idle
+    half.  Requiring tone isolation prevents a low-SNR or accidentally
+    dual-driven capture from being silently assigned to the wrong channel.
+    """
+    channel = _normalise_driven_channel(driven_channel)
+    if channel is None:
+        raise ValueError("Single-channel de-framing requires channel A or B.")
+    if not 0.0 < f0 < 0.5:
+        raise ValueError("Tone frequency must be between DC and Nyquist.")
+
+    best = None
+    epsilon = np.finfo(np.float64).eps
+    for rotation in range(group):
+        try:
+            candidate = split_at(words, rotation, group, half)
+        except ValueError:
+            continue
+
+        # Do not refine during boundary selection.  Both halves must be tested
+        # at the exact frequency entered by the user; otherwise idle-channel
+        # noise can win by fitting a nearby unrelated component.
+        amplitude_a = abs(float(
+            fit_tone(candidate["ch_a"], f0, refine=False)["amplitude"]
+        ))
+        amplitude_b = abs(float(
+            fit_tone(candidate["ch_b"], f0, refine=False)["amplitude"]
+        ))
+        driven_amplitude = amplitude_a if channel == "A" else amplitude_b
+        idle_amplitude = amplitude_b if channel == "A" else amplitude_a
+        isolation_db = 20.0 * np.log10(
+            (driven_amplitude + epsilon) / (idle_amplitude + epsilon)
+        )
+
+        candidate.update({
+            "tone_a_peak_codes_boundary": amplitude_a,
+            "tone_b_peak_codes_boundary": amplitude_b,
+            "tone_isolation_db": float(isolation_db),
+            "score": float(isolation_db),
+        })
+        if best is None or candidate["score"] > best["score"]:
+            best = candidate
+
+    if best is None:
+        raise ValueError("Capture too short to de-frame.")
+    if best["tone_isolation_db"] < minimum_isolation_db:
+        raise ValueError(
+            f"Cannot identify Channel {channel}: tone isolation is only "
+            f"{best['tone_isolation_db']:.2f} dB; require at least "
+            f"{minimum_isolation_db:.2f} dB. Check that only Channel "
+            f"{channel} is driven and that the entered frequency is correct."
+        )
+
+    best["driven_channel"] = channel
+    best["lagged"] = False
+    return best
+
+
 def analyse_ifc_frame(
     raw_bytes: bytes,
     ifc_vpp: float,
     tone_frequency_mhz: float,
     input_vpp_diff: float | None,
     sample_rate_hz: float = ADC_SAMPLE_RATE_HZ,
+    driven_channel: str | None = None,
 ):
     """Return tone/full-scale metrics and the two correctly de-framed channels."""
     if ifc_vpp <= 0.0:
@@ -69,7 +156,23 @@ def analyse_ifc_frame(
             f"Tone must be between 0 and Nyquist; got {tone_frequency_mhz} MHz."
         )
 
-    view = deframe(unpack_words(raw_bytes))
+    driven_channel = _normalise_driven_channel(driven_channel)
+    words = unpack_words(raw_bytes)
+    # The UDP transport carries the complete 4096-byte DDR region, while the
+    # firmware's production adc_frame.c intentionally consumes only the first
+    # 2032 decoded words.  The tail is not ADC data and can retain identical
+    # near-rail values across captures, so exclude it before boundary search,
+    # tone fitting, min/max checks, and CSV export.
+    if words.size < ADC_VALID_WORD_COUNT:
+        raise ValueError(
+            f"Capture contains {words.size} ADC words; expected at least "
+            f"{ADC_VALID_WORD_COUNT}."
+        )
+    words = words[:ADC_VALID_WORD_COUNT]
+    if driven_channel is None:
+        view = deframe(words)
+    else:
+        view = deframe_single_tone(words, f0, driven_channel)
     channel_a = np.asarray(view["ch_a"], dtype=np.float64)
     channel_b = np.asarray(view["ch_b"], dtype=np.float64)
 
@@ -78,7 +181,23 @@ def analyse_ifc_frame(
     amplitude_a = abs(float(fit_a["amplitude"]))
     amplitude_b = abs(float(fit_b["amplitude"]))
     amplitude_mean = 0.5 * (amplitude_a + amplitude_b)
-    if amplitude_a <= 0.0 or amplitude_b <= 0.0 or amplitude_mean <= 0.0:
+    driven_amplitude = (
+        amplitude_a
+        if driven_channel == "A"
+        else amplitude_b
+        if driven_channel == "B"
+        else amplitude_mean
+    )
+    idle_amplitude = (
+        amplitude_b
+        if driven_channel == "A"
+        else amplitude_a
+        if driven_channel == "B"
+        else np.nan
+    )
+    if driven_amplitude <= 0.0 or (
+        driven_channel is None and (amplitude_a <= 0.0 or amplitude_b <= 0.0)
+    ):
         raise ValueError("Fitted tone amplitude is zero.")
 
     min_a = int(np.min(channel_a))
@@ -94,7 +213,7 @@ def analyse_ifc_frame(
 
     # This product should be invariant across the seven programmed ranges,
     # even when the absolute voltage at the ADC pins is not yet known.
-    scale_product = amplitude_mean * ifc_vpp
+    scale_product = driven_amplitude * ifc_vpp
     estimated_input_a = amplitude_a * ifc_vpp / ADC_PEAK_CODES
     estimated_input_b = amplitude_b * ifc_vpp / ADC_PEAK_CODES
 
@@ -108,11 +227,11 @@ def analyse_ifc_frame(
     if input_vpp_diff is not None:
         expected_amplitude = ADC_PEAK_CODES * input_vpp_diff / ifc_vpp
         amplitude_error_pct = 100.0 * (
-            amplitude_mean / expected_amplitude - 1.0
+            driven_amplitude / expected_amplitude - 1.0
         )
         estimated_fs_a = input_vpp_diff * ADC_PEAK_CODES / amplitude_a
         estimated_fs_b = input_vpp_diff * ADC_PEAK_CODES / amplitude_b
-        estimated_fs_mean = input_vpp_diff * ADC_PEAK_CODES / amplitude_mean
+        estimated_fs_mean = input_vpp_diff * ADC_PEAK_CODES / driven_amplitude
         estimated_lsb_uv = estimated_fs_mean / ADC_CODE_COUNT * 1e6
         range_error_pct = 100.0 * (estimated_fs_mean / ifc_vpp - 1.0)
 
@@ -126,7 +245,13 @@ def analyse_ifc_frame(
         "tone_a_peak_codes": amplitude_a,
         "tone_b_peak_codes": amplitude_b,
         "tone_mean_peak_codes": amplitude_mean,
-        "gain_ratio_b_over_a": amplitude_b / amplitude_a,
+        "driven_channel": driven_channel or "BOTH",
+        "driven_tone_peak_codes": driven_amplitude,
+        "idle_tone_peak_codes": idle_amplitude,
+        "tone_isolation_db": view.get("tone_isolation_db", np.nan),
+        "gain_ratio_b_over_a": (
+            amplitude_b / amplitude_a if driven_channel is None else np.nan
+        ),
         "expected_peak_codes": expected_amplitude,
         "amplitude_error_pct": amplitude_error_pct,
         "scale_product_code_v": scale_product,
@@ -162,24 +287,38 @@ def receive_ifc_sweep(
     input_vpp_diff=None,
     sample_rate_hz=ADC_SAMPLE_RATE_HZ,
     scale_tolerance_pct=3.0,
+    driven_channel=None,
+    source_vpp_at_sma=None,
 ):
     """Receive seven IFC captures and verify ADC range scaling.
 
     ``input_vpp_diff`` must be the measured differential sine-wave Vpp at the
     ADC input. Leave it as ``None`` when only the relative range scaling is
-    being checked. ``reconstruct`` and ``offset_threshold_codes`` remain in
-    the signature for compatibility with older GUI callers; every capture is
-    now always split into the two physical ADC channels.
+    being checked. Set ``driven_channel`` to ``"A"`` or ``"B"`` when the
+    generator is connected directly to only that input; the known tone then
+    replaces A/B correlation for de-framing. ``source_vpp_at_sma`` is recorded
+    as connector-level metadata and is never treated as ADC-die differential
+    voltage. ``reconstruct`` and ``offset_threshold_codes`` remain in the
+    signature for compatibility with older GUI callers.
     """
     del reconstruct, offset_threshold_codes
 
+    driven_channel = _normalise_driven_channel(driven_channel)
     if not 0.0 < tone_frequency_mhz * 1e6 < sample_rate_hz / 2.0:
         raise ValueError("Tone frequency must be between 0 and ADC Nyquist.")
     if input_vpp_diff is not None and input_vpp_diff <= 0.0:
         raise ValueError("Measured differential input Vpp must be positive.")
 
+    if source_vpp_at_sma is not None and source_vpp_at_sma <= 0.0:
+        raise ValueError("Generator Vpp at the SMA must be positive.")
+
+    mode_stem = (
+        f"ifc_single_{driven_channel.lower()}_verification"
+        if driven_channel is not None
+        else "ifc_verification"
+    )
     sweep_dir = SAVE_DIR / (
-        f"ifc_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        f"{mode_stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
     sweep_dir.mkdir(parents=True, exist_ok=True)
 
@@ -229,18 +368,31 @@ def receive_ifc_sweep(
                 tone_frequency_mhz=tone_frequency_mhz,
                 input_vpp_diff=input_vpp_diff,
                 sample_rate_hz=sample_rate_hz,
+                driven_channel=driven_channel,
             )
+            metrics["source_vpp_at_sma"] = source_vpp_at_sma
 
             out_csv = sweep_dir / (
                 f"sweep_{index:02d}_ifc_{str(ifc).replace('.', 'p')}_vpp.csv"
             )
             sample_count = min(channel_a.size, channel_b.size)
+            driven_samples = (
+                channel_a if driven_channel in {None, "A"} else channel_b
+            )
             pd.DataFrame({
                 "sample_index": np.arange(sample_count, dtype=np.int32),
-                # Keep adc_code as a Channel A alias for the existing plotter.
-                "adc_code": channel_a[:sample_count],
+                # Keep adc_code for the existing plotter. In single-channel
+                # mode it follows the selected driven channel.
+                "adc_code": driven_samples[:sample_count],
                 "channel_a_code": channel_a[:sample_count],
                 "channel_b_code": channel_b[:sample_count],
+                "driven_channel": driven_channel or "BOTH",
+                "tone_frequency_mhz": float(tone_frequency_mhz),
+                "source_vpp_at_sma": (
+                    source_vpp_at_sma
+                    if source_vpp_at_sma is not None
+                    else np.nan
+                ),
                 "ifc_vpp": float(ifc),
                 "sweep_index": index,
             }).to_csv(out_csv, index=False)
@@ -260,13 +412,21 @@ def receive_ifc_sweep(
                     f", estimated FS={metrics['estimated_fs_mean_vpp']:.4f} Vpp"
                     f", LSB={metrics['estimated_lsb_uv']:.2f} uV"
                 )
+            if driven_channel is None:
+                frame_text = (
+                    f"A={metrics['tone_a_peak_codes']:.1f}, "
+                    f"B={metrics['tone_b_peak_codes']:.1f} peak codes, "
+                    f"|corr|={metrics['abs_channel_correlation']:.4f}"
+                )
+            else:
+                frame_text = (
+                    f"Channel {driven_channel}="
+                    f"{metrics['driven_tone_peak_codes']:.1f} peak codes, "
+                    f"isolation={metrics['tone_isolation_db']:.1f} dB"
+                )
             print(
-                f"IFC {ifc:.2f} Vpp: "
-                f"A={metrics['tone_a_peak_codes']:.1f}, "
-                f"B={metrics['tone_b_peak_codes']:.1f} peak codes, "
-                f"|corr|={metrics['abs_channel_correlation']:.4f}, "
-                f"clipped={metrics['clipped']}"
-                f"{absolute_text}"
+                f"IFC {ifc:.2f} Vpp: {frame_text}, "
+                f"clipped={metrics['clipped']}{absolute_text}"
             )
 
         except Exception as exc:
