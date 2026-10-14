@@ -45,6 +45,8 @@ The repository mixes four kinds of code that support that bench:
 | `firmware/final_ver_1.0.xsa` | Exported hardware specification for Vitis. |
 | `calibration_sim/` | Host C simulator + test harness (CMake). Reuses production firmware sources. |
 | `calibration_loop/` | Python impulse-dither calibration package (`python -m calibration_loop.run_calibration`). `fix_skew_export.py` repairs pre-2026-08-16 skew CSV labels from recorded board data (does not invent truncated frames). |
+| `calibration_loop_c/` | C port of `calibration_loop` (tone route: de-framing, estimator, block LMS, batch skew decision), BSP-free; compiled into `calibration_sim` and `firmware/thesis_v3_loop_appl`; tested by `calibration_sim --run-loop-tests` and against the Python loop with `export_golden.py` + `--loop-golden`. See its README. |
+| `firmware/thesis_v3_loop_appl/` | Vitis 2025.2 app: the original firmware (most sources referenced from `thesis_v3_500mhz_appl/`) plus `adc -cal loop`, which runs `calibration_loop_c` on the A53. Local files: modified `butils.c`, `butils_loop.c` (board adapter, `#include`d), `loop_waveform.h`. Compiles and links; not yet run on the board. Design, build traps and bench procedure: last section of `calibration_sim/README.md`. |
 | `calibration_out/` | Example output of `calibration_loop` runs (CSV, JSON, plots). |
 | `tools/` | Ad-hoc bench/host diagnostics, run from the repo root with `PYTHONPATH=.` if invoked as a path. `prepare_capture_truth_check.py` and `live_before_after.py` grade de-framing/channel ordering against `BenchModel` truth or live bytes; `half_group_lag_impact.py`, `deframe_rotation_table.py`, `compare_reconstruction.py` quantify extraction errors. `skew_step_characterize.py` measures the actuator's step response, `skew_close_loop.py` converges it with the batch decision, `skew_park.py` returns it to a chosen control code through the ACK-checked firmware transaction, and `loop_direction_check.py` proves the loop's direction guard offline against `BenchModel` for the tone route **and both dither routes**; `timing_route_check.py` compares the two tone-free timing routes against known actuator codes for whichever waveform is loaded (the loop's route choice is made from its output, not assumed). `dither_vs_tone_gain.py` compares the dither and tone routes to the gain mismatch on the same frames (and `--save-frames` archives the captures so a state can be re-analysed without bench time); `dither_raw_evidence.py` reads gain, offset and timing straight off the folded impulse replicas of tone-free captures — folding must be polarity-corrected (the balanced ± train cancels a sign-blind fold) and timing comes from the slope projection, readable as a difference between fixed states, not per frame. `dither_ladder.py` turns a ladder of captured states (16000 → 24000 → 30000 LSB) into the amplitude-linearity answer and a figure, and `dac_vs_adc_plot.py` overlays one capture on the DAC vector it came from. |
 | `fpga/skew_actuator/` | `adc_channel_skew_actuator_gpio.v` fractional-delay AXI-Stream module + Vivado TCL integration scripts + xsim validation logs. |
@@ -515,6 +517,10 @@ manual hardware procedures; do not attempt them without the bench.
 
 1. Any change to the shared estimator/pipeline modules **must** keep
    `adc_cal_sim --run-all` green (and ideally the sanitizer build).
+   Changes to `calibration_loop_c/` or to the Python code it mirrors must keep
+   `adc_cal_sim --run-loop-tests` green and a fresh
+   `python calibration_loop_c/export_golden.py` replay (`--loop-golden`) at
+   0 failures.
 2. Adding a simulator scenario: add the name to `k_scenarios` in
    `calibration_sim/sim_tests.c`, add its signal configuration in
    `sim_signal_configure_scenario()`. Keep it deterministic via

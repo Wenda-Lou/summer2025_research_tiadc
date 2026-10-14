@@ -9,6 +9,7 @@
 #include "calibration_pending.h"
 #include "reference_buffer.h"
 #include "sim_assert.h"
+#include "sim_loop_tests.h"
 #include "sim_config.h"
 #include "sim_dma.h"
 #include "sim_platform.h"
@@ -6788,6 +6789,12 @@ int sim_tests_run(const sim_run_options_t *options, sim_run_summary_t *summary)
     }
     if (options->run_controller_tests) {
         run_controller_tests(&asserts, options->seed, iterations_csv, performance_csv);
+    }
+    if (options->run_loop_tests) {
+        sim_loop_tests_run_native(&asserts, summary_file);
+    }
+    if (options->loop_golden_path != NULL) {
+        sim_loop_tests_run_golden(&asserts, summary_file, options->loop_golden_path);
     }
     if (options->run_scenarios) {
         if (options->scenario != NULL) {

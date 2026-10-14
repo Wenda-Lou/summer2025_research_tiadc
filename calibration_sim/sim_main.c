@@ -18,6 +18,8 @@ static void print_help(const char *program)
     printf("  --run-all-pipeline-scenarios\n");
     printf("  --run-unit-tests\n");
     printf("  --run-controller-tests\n");
+    printf("  --run-loop-tests          calibration_loop_c native tests\n");
+    printf("  --loop-golden FILE        replay a calibration_loop_c/export_golden.py file\n");
     printf("  --run-all\n");
     printf("  --stress-seeds N\n");
     printf("  --seed N\n");
@@ -61,9 +63,18 @@ int main(int argc, char **argv)
             options.run_unit_tests = true;
         } else if (strcmp(argv[i], "--run-controller-tests") == 0) {
             options.run_controller_tests = true;
+        } else if (strcmp(argv[i], "--run-loop-tests") == 0) {
+            options.run_loop_tests = true;
+        } else if (strcmp(argv[i], "--loop-golden") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--loop-golden requires a file\n");
+                return 2;
+            }
+            options.loop_golden_path = argv[++i];
         } else if (strcmp(argv[i], "--run-all") == 0) {
             options.run_unit_tests = true;
             options.run_controller_tests = true;
+            options.run_loop_tests = true;
             options.run_scenarios = true;
             options.run_pipeline_scenarios = true;
             options.scenario = NULL;
@@ -118,6 +129,7 @@ int main(int argc, char **argv)
 
     if (!options.run_unit_tests && !options.run_controller_tests &&
         !options.run_scenarios && !options.run_pipeline_scenarios &&
+        !options.run_loop_tests && options.loop_golden_path == NULL &&
         options.stress_seeds == 0U) {
         options.run_unit_tests = true;
     }
