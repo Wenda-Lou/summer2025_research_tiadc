@@ -11,6 +11,8 @@ typedef struct {
     bool run_controller_tests;
     bool run_scenarios;
     bool run_pipeline_scenarios;
+    bool run_loop_tests;
+    const char *loop_golden_path;
     const char *scenario;
     const char *pipeline_scenario;
     uint32_t stress_seeds;

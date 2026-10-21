@@ -1,0 +1,386 @@
+# cmd: adc -cal loop 300
+# port: COM7
+# start: 2026-10-14 16:38:42
+# wave: 1
+
+LOOP-WAVE selected=1 name=w06adc_e04_t04_amp5190_tone_m1p5_f399p375 tone_mhz=399.375 sig_cycles=2556
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+0 result=OK code_after=24 stage=-
+LOOP-START mode=closed samples=300 waveform=w06adc_e04_t04_amp5190_tone_m1p5_f399p375 tone_mhz=399.375 sig_cycles=2556 code=24
+LOOP it=0 st=ok n0=686 rot=0 margin_x100=1609 tone_ppm=36404 gain_ppm=16444 doff_mc=-7017 skew_cps=7456 corr_a_ppm=6371 corr_b_ppm=-6147 offa_mc=-1488 offb_mc=-3944
+LOOP it=1 st=ok n0=2486 rot=0 margin_x100=1887 tone_ppm=60307 gain_ppm=-7263 doff_mc=-4281 skew_cps=9873 corr_a_ppm=16992 corr_b_ppm=-16039 offa_mc=-3747 offb_mc=-7739
+LOOP it=2 st=ok n0=350 rot=0 margin_x100=1662 tone_ppm=-8452 gain_ppm=-21837 doff_mc=-2901 skew_cps=6836 corr_a_ppm=15487 corr_b_ppm=-14571 offa_mc=-2679 offb_mc=-7667
+LOOP it=3 st=ok n0=3018 rot=0 margin_x100=1435 tone_ppm=61665 gain_ppm=-1251 doff_mc=-369 skew_cps=11637 corr_a_ppm=26446 corr_b_ppm=-24588 offa_mc=-2050 offb_mc=-7150
+LOOP it=4 st=ok n0=414 rot=0 margin_x100=1673 tone_ppm=-2560 gain_ppm=-30759 doff_mc=-3397 skew_cps=8217 corr_a_ppm=25986 corr_b_ppm=-24150 offa_mc=-3605 offb_mc=-10005
+LOOP it=5 st=ok n0=866 rot=0 margin_x100=1793 tone_ppm=43273 gain_ppm=-17754 doff_mc=-199 skew_cps=11795 corr_a_ppm=33755 corr_b_ppm=-31233 offa_mc=-4478 offb_mc=-10995
+LOOP it=6 st=ok n0=2626 rot=0 margin_x100=1731 tone_ppm=-38970 gain_ppm=-64096 doff_mc=760 skew_cps=6841 corr_a_ppm=26706 corr_b_ppm=-24358 offa_mc=-2641 offb_mc=-8760
+LOOP it=7 st=ok n0=7318 rot=0 margin_x100=1730 tone_ppm=-27036 gain_ppm=-51165 doff_mc=-495 skew_cps=6791 corr_a_ppm=21848 corr_b_ppm=-19614 offa_mc=-1382 offb_mc=-7613
+LOOP it=8 st=ok n0=834 rot=0 margin_x100=1567 tone_ppm=34636 gain_ppm=-38143 doff_mc=-686 skew_cps=10200 corr_a_ppm=28042 corr_b_ppm=-25357 offa_mc=-21 offb_mc=-6439
+LOOP it=9 st=ok n0=5366 rot=0 margin_x100=1587 tone_ppm=-30376 gain_ppm=-45593 doff_mc=1610 skew_cps=6721 corr_a_ppm=22577 corr_b_ppm=-20014 offa_mc=912 offb_mc=-4877
+LOOP it=10 st=ok n0=1714 rot=0 margin_x100=2026 tone_ppm=-19202 gain_ppm=-54117 doff_mc=1316 skew_cps=6759 corr_a_ppm=19140 corr_b_ppm=-16657 offa_mc=-1926 offb_mc=-7367
+LOOP it=11 st=ok n0=7914 rot=0 margin_x100=1654 tone_ppm=-11899 gain_ppm=-40996 doff_mc=134 skew_cps=6831 corr_a_ppm=17018 corr_b_ppm=-14584 offa_mc=-4317 offb_mc=-9799
+LOOP it=12 st=ok n0=4138 rot=0 margin_x100=1686 tone_ppm=22787 gain_ppm=-22786 doff_mc=293 skew_cps=8611 corr_a_ppm=21074 corr_b_ppm=-18426 offa_mc=-6219 offb_mc=-11657
+LOOP it=13 st=ok n0=2594 rot=0 margin_x100=1755 tone_ppm=12456 gain_ppm=-34200 doff_mc=1022 skew_cps=8444 corr_a_ppm=23300 corr_b_ppm=-20540 offa_mc=-7659 offb_mc=-12791
+LOOP it=14 st=ok n0=790 rot=0 margin_x100=1663 tone_ppm=18056 gain_ppm=-17005 doff_mc=569 skew_cps=9132 corr_a_ppm=26533 corr_b_ppm=-23580 offa_mc=-6844 offb_mc=-11736
+LOOP it=15 st=ok n0=370 rot=0 margin_x100=1651 tone_ppm=-25418 gain_ppm=-59142 doff_mc=-45 skew_cps=6853 corr_a_ppm=21967 corr_b_ppm=-19123 offa_mc=-7252 offb_mc=-12181
+LOOP it=16 st=ok n0=694 rot=0 margin_x100=1595 tone_ppm=-18111 gain_ppm=-39191 doff_mc=550 skew_cps=6790 corr_a_ppm=18728 corr_b_ppm=-15957 offa_mc=-6110 offb_mc=-10795
+LOOP it=17 st=ok n0=3934 rot=0 margin_x100=1666 tone_ppm=38375 gain_ppm=-28078 doff_mc=-1092 skew_cps=9982 corr_a_ppm=25569 corr_b_ppm=-22321 offa_mc=-3655 offb_mc=-8642
+LOOP it=18 st=ok n0=7790 rot=0 margin_x100=1643 tone_ppm=2710 gain_ppm=-52229 doff_mc=-246 skew_cps=8316 corr_a_ppm=26055 corr_b_ppm=-22783 offa_mc=-5071 offb_mc=-10216
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=24 code_after=23 stage=-
+LOOP it=19 st=ok n0=60 rot=0 margin_x100=1464 tone_ppm=10100 gain_ppm=-51436 doff_mc=1095 skew_cps=8930 corr_a_ppm=27869 corr_b_ppm=-24493 offa_mc=-6956 offb_mc=-11802 batch=20/20 bmean_cps=8351 act=move:OK-1 code=23
+LOOP it=20 st=ok n0=1682 rot=0 margin_x100=2006 tone_ppm=-19238 gain_ppm=-31872 doff_mc=616 skew_cps=6691 corr_a_ppm=24408 corr_b_ppm=-21145 offa_mc=-8181 offb_mc=-12872
+LOOP it=21 st=ok n0=594 rot=0 margin_x100=1641 tone_ppm=5686 gain_ppm=-47763 doff_mc=-4381 skew_cps=7858 corr_a_ppm=25428 corr_b_ppm=-22113 offa_mc=-3794 offb_mc=-9848
+LOOP it=22 st=ok n0=3162 rot=0 margin_x100=1540 tone_ppm=4368 gain_ppm=-40966 doff_mc=371 skew_cps=7897 corr_a_ppm=26212 corr_b_ppm=-22857 offa_mc=-5703 offb_mc=-11716
+LOOP it=23 st=ok n0=2798 rot=0 margin_x100=1437 tone_ppm=31409 gain_ppm=-21077 doff_mc=336 skew_cps=10139 corr_a_ppm=31852 corr_b_ppm=-28065 offa_mc=-8201 offb_mc=-14220
+LOOP it=24 st=ok n0=586 rot=0 margin_x100=1603 tone_ppm=-40592 gain_ppm=-65129 doff_mc=-668 skew_cps=5966 corr_a_ppm=24522 corr_b_ppm=-20868 offa_mc=-5878 offb_mc=-11993
+LOOP it=25 st=ok n0=2206 rot=0 margin_x100=2125 tone_ppm=39512 gain_ppm=-23701 doff_mc=303 skew_cps=10579 corr_a_ppm=31606 corr_b_ppm=-27381 offa_mc=-5740 offb_mc=-11740
+LOOP it=26 st=ok n0=2830 rot=0 margin_x100=1537 tone_ppm=25821 gain_ppm=-42811 doff_mc=1709 skew_cps=10564 corr_a_ppm=36268 corr_b_ppm=-31666 offa_mc=-7054 offb_mc=-12519
+LOOP it=27 st=ok n0=894 rot=0 margin_x100=1814 tone_ppm=5377 gain_ppm=-40209 doff_mc=-327 skew_cps=9604 corr_a_ppm=37243 corr_b_ppm=-32572 offa_mc=-6305 offb_mc=-11836
+LOOP it=28 st=ok n0=418 rot=0 margin_x100=1672 tone_ppm=-21415 gain_ppm=-71581 doff_mc=-302 skew_cps=7693 corr_a_ppm=33356 corr_b_ppm=-28867 offa_mc=-3804 offb_mc=-9264
+LOOP it=29 st=ok n0=2758 rot=0 margin_x100=1673 tone_ppm=-36080 gain_ppm=-46361 doff_mc=421 skew_cps=6258 corr_a_ppm=26831 corr_b_ppm=-22506 offa_mc=-5853 offb_mc=-11292
+LOOP it=30 st=ok n0=7254 rot=0 margin_x100=1739 tone_ppm=-28443 gain_ppm=-33690 doff_mc=-3107 skew_cps=6052 corr_a_ppm=21720 corr_b_ppm=-17498 offa_mc=-3621 offb_mc=-10060
+LOOP it=31 st=ok n0=1630 rot=0 margin_x100=1910 tone_ppm=26398 gain_ppm=-35892 doff_mc=1094 skew_cps=8914 corr_a_ppm=26440 corr_b_ppm=-21920 offa_mc=-3282 offb_mc=-9318
+LOOP it=32 st=ok n0=3722 rot=0 margin_x100=1639 tone_ppm=17898 gain_ppm=-46001 doff_mc=-707 skew_cps=9030 corr_a_ppm=29655 corr_b_ppm=-24929 offa_mc=-4109 offb_mc=-10439
+LOOP it=33 st=ok n0=4622 rot=0 margin_x100=1792 tone_ppm=8373 gain_ppm=-42925 doff_mc=-864 skew_cps=8761 corr_a_ppm=31164 corr_b_ppm=-26346 offa_mc=-4269 offb_mc=-10918
+LOOP it=34 st=ok n0=3122 rot=0 margin_x100=1545 tone_ppm=4062 gain_ppm=-36777 doff_mc=278 skew_cps=8611 corr_a_ppm=31897 corr_b_ppm=-27036 offa_mc=-5722 offb_mc=-12357
+LOOP it=35 st=ok n0=5254 rot=0 margin_x100=1506 tone_ppm=14074 gain_ppm=-42643 doff_mc=-1048 skew_cps=9608 corr_a_ppm=34438 corr_b_ppm=-29399 offa_mc=-5496 offb_mc=-12494
+LOOP it=36 st=ok n0=7466 rot=0 margin_x100=1705 tone_ppm=-45022 gain_ppm=-68972 doff_mc=-831 skew_cps=5924 corr_a_ppm=26288 corr_b_ppm=-21391 offa_mc=-4474 offb_mc=-11705
+LOOP it=37 st=ok n0=2766 rot=0 margin_x100=1667 tone_ppm=-28627 gain_ppm=-60851 doff_mc=338 skew_cps=5956 corr_a_ppm=21147 corr_b_ppm=-16344 offa_mc=-2389 offb_mc=-9397
+LOOP it=38 st=ok n0=2466 rot=0 margin_x100=1863 tone_ppm=-18829 gain_ppm=-39091 doff_mc=-821 skew_cps=5918 corr_a_ppm=17782 corr_b_ppm=-13041 offa_mc=-4705 offb_mc=-12094
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP it=39 st=ok n0=2894 rot=0 margin_x100=1552 tone_ppm=-12893 gain_ppm=-23283 doff_mc=3178 skew_cps=5875 corr_a_ppm=15486 corr_b_ppm=-10785 offa_mc=-5866 offb_mc=-12164 batch=20/20 bmean_cps=7895 act=move:OK-1 code=22
+LOOP it=40 st=ok n0=2038 rot=0 margin_x100=2022 tone_ppm=35775 gain_ppm=-14737 doff_mc=1174 skew_cps=8181 corr_a_ppm=21843 corr_b_ppm=-16764 offa_mc=-4475 offb_mc=-10321
+LOOP it=41 st=ok n0=6410 rot=0 margin_x100=1691 tone_ppm=-3076 gain_ppm=-32987 doff_mc=-1130 skew_cps=6362 corr_a_ppm=21293 corr_b_ppm=-16233 offa_mc=-3670 offb_mc=-9886
+LOOP it=42 st=ok n0=3154 rot=0 margin_x100=1548 tone_ppm=-19770 gain_ppm=-32294 doff_mc=-189 skew_cps=5329 corr_a_ppm=17760 corr_b_ppm=-12761 offa_mc=-1242 offb_mc=-7433
+LOOP it=43 st=ok n0=5332 rot=0 margin_x100=1592 tone_ppm=13135 gain_ppm=-30120 doff_mc=2189 skew_cps=6943 corr_a_ppm=20099 corr_b_ppm=-15001 offa_mc=-4774 offb_mc=-10299
+LOOP it=44 st=ok n0=4282 rot=0 margin_x100=1746 tone_ppm=-14261 gain_ppm=-49284 doff_mc=-654 skew_cps=5483 corr_a_ppm=17553 corr_b_ppm=-12507 offa_mc=-4917 offb_mc=-10680
+LOOP it=45 st=ok n0=6938 rot=0 margin_x100=1500 tone_ppm=-10564 gain_ppm=-35551 doff_mc=874 skew_cps=5465 corr_a_ppm=15672 corr_b_ppm=-10662 offa_mc=-4804 offb_mc=-10253
+LOOP it=46 st=ok n0=3900 rot=0 margin_x100=1672 tone_ppm=47822 gain_ppm=-25952 doff_mc=-1118 skew_cps=9120 corr_a_ppm=24172 corr_b_ppm=-18564 offa_mc=-1107 offb_mc=-6853
+LOOP it=47 st=ok n0=7866 rot=0 margin_x100=1570 tone_ppm=19602 gain_ppm=-31653 doff_mc=-1261 skew_cps=8174 corr_a_ppm=27685 corr_b_ppm=-21866 offa_mc=-4810 offb_mc=-11167
+LOOP it=48 st=ok n0=378 rot=0 margin_x100=1662 tone_ppm=-24061 gain_ppm=-42278 doff_mc=1765 skew_cps=5760 corr_a_ppm=23358 corr_b_ppm=-17645 offa_mc=-4335 offb_mc=-10036
+LOOP it=49 st=ok n0=706 rot=0 margin_x100=1508 tone_ppm=-23502 gain_ppm=-39792 doff_mc=1097 skew_cps=5306 corr_a_ppm=19149 corr_b_ppm=-13508 offa_mc=-4384 offb_mc=-9697
+LOOP it=50 st=ok n0=6674 rot=0 margin_x100=1614 tone_ppm=14918 gain_ppm=-37697 doff_mc=-2381 skew_cps=7145 corr_a_ppm=21810 corr_b_ppm=-16045 offa_mc=-3436 offb_mc=-9562
+LOOP it=51 st=ok n0=7486 rot=0 margin_x100=1724 tone_ppm=-17295 gain_ppm=-30735 doff_mc=840 skew_cps=5497 corr_a_ppm=18717 corr_b_ppm=-13015 offa_mc=-7143 offb_mc=-13112
+LOOP it=52 st=ok n0=3722 rot=0 margin_x100=1638 tone_ppm=-4793 gain_ppm=-18445 doff_mc=3730 skew_cps=5849 corr_a_ppm=17863 corr_b_ppm=-12183 offa_mc=-4495 offb_mc=-9057
+LOOP it=53 st=ok n0=64 rot=0 margin_x100=1473 tone_ppm=30360 gain_ppm=-18035 doff_mc=-1314 skew_cps=8065 corr_a_ppm=23271 corr_b_ppm=-17277 offa_mc=-4974 offb_mc=-10016
+LOOP it=54 st=ok n0=5268 rot=0 margin_x100=1518 tone_ppm=37344 gain_ppm=-49788 doff_mc=-814 skew_cps=9467 corr_a_ppm=29958 corr_b_ppm=-23468 offa_mc=-1452 offb_mc=-6638
+LOOP it=55 st=ok n0=1282 rot=0 margin_x100=1828 tone_ppm=11724 gain_ppm=-43383 doff_mc=-1613 skew_cps=8439 corr_a_ppm=32071 corr_b_ppm=-25448 offa_mc=-2572 offb_mc=-8398
+LOOP it=56 st=ok n0=4018 rot=0 margin_x100=1829 tone_ppm=-42479 gain_ppm=-44005 doff_mc=2161 skew_cps=5189 corr_a_ppm=24399 corr_b_ppm=-17882 offa_mc=-2629 offb_mc=-7683
+LOOP it=57 st=ok n0=4982 rot=0 margin_x100=1672 tone_ppm=21733 gain_ppm=-18913 doff_mc=-2922 skew_cps=8333 corr_a_ppm=28295 corr_b_ppm=-21538 offa_mc=-1672 offb_mc=-7725
+LOOP it=58 st=ok n0=2182 rot=0 margin_x100=2136 tone_ppm=22599 gain_ppm=-41744 doff_mc=324 skew_cps=9055 corr_a_ppm=32362 corr_b_ppm=-25322 offa_mc=-2128 offb_mc=-8089
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=22 code_after=21 stage=-
+LOOP it=59 st=ok n0=2754 rot=0 margin_x100=1676 tone_ppm=-39269 gain_ppm=-46498 doff_mc=1034 skew_cps=5332 corr_a_ppm=25267 corr_b_ppm=-18350 offa_mc=-2805 offb_mc=-8434 batch=17/20 bmean_cps=6869 act=move:OK-1 code=21
+LOOP it=60 st=ok n0=206 rot=0 margin_x100=1735 tone_ppm=-2001 gain_ppm=-41228 doff_mc=-643 skew_cps=6314 corr_a_ppm=24908 corr_b_ppm=-18006 offa_mc=-2115 offb_mc=-7943
+LOOP it=61 st=ok n0=1230 rot=0 margin_x100=1811 tone_ppm=9640 gain_ppm=-33750 doff_mc=-910 skew_cps=7018 corr_a_ppm=26637 corr_b_ppm=-19646 offa_mc=-3180 offb_mc=-9379
+LOOP it=62 st=ok n0=598 rot=0 margin_x100=1585 tone_ppm=-24295 gain_ppm=-52844 doff_mc=730 skew_cps=5094 corr_a_ppm=22272 corr_b_ppm=-15375 offa_mc=-1361 offb_mc=-7213
+LOOP it=63 st=ok n0=3994 rot=0 margin_x100=1829 tone_ppm=-264 gain_ppm=-20733 doff_mc=-1271 skew_cps=6023 corr_a_ppm=22225 corr_b_ppm=-15329 offa_mc=-2696 offb_mc=-9051
+LOOP it=64 st=ok n0=1182 rot=0 margin_x100=1981 tone_ppm=-23910 gain_ppm=-15866 doff_mc=-1159 skew_cps=4602 corr_a_ppm=17948 corr_b_ppm=-11108 offa_mc=-4980 offb_mc=-11834
+LOOP it=65 st=ok n0=746 rot=0 margin_x100=1706 tone_ppm=11779 gain_ppm=-34678 doff_mc=270 skew_cps=6235 corr_a_ppm=20046 corr_b_ppm=-13123 offa_mc=-6980 offb_mc=-13797
+LOOP it=66 st=ok n0=3842 rot=0 margin_x100=1589 tone_ppm=29777 gain_ppm=-26255 doff_mc=2951 skew_cps=7782 corr_a_ppm=25361 corr_b_ppm=-18117 offa_mc=-5363 offb_mc=-11080
+LOOP it=67 st=ok n0=3174 rot=0 margin_x100=1443 tone_ppm=-13167 gain_ppm=-6008 doff_mc=-137 skew_cps=5585 corr_a_ppm=22999 corr_b_ppm=-15824 offa_mc=-3298 offb_mc=-8972
+LOOP it=68 st=ok n0=2610 rot=0 margin_x100=1746 tone_ppm=-24746 gain_ppm=-32241 doff_mc=-2096 skew_cps=4620 corr_a_ppm=18568 corr_b_ppm=-11454 offa_mc=-3019 offb_mc=-9428
+LOOP it=69 st=ok n0=5106 rot=0 margin_x100=1661 tone_ppm=18195 gain_ppm=-28305 doff_mc=488 skew_cps=6773 corr_a_ppm=21812 corr_b_ppm=-14545 offa_mc=-4605 offb_mc=-10889
+LOOP it=70 st=ok n0=4174 rot=0 margin_x100=1676 tone_ppm=20984 gain_ppm=-23363 doff_mc=241 skew_cps=7370 corr_a_ppm=25564 corr_b_ppm=-18089 offa_mc=-4051 offb_mc=-10229
+LOOP it=71 st=ok n0=2670 rot=0 margin_x100=1658 tone_ppm=-22718 gain_ppm=-45645 doff_mc=423 skew_cps=5002 corr_a_ppm=21487 corr_b_ppm=-14095 offa_mc=-4966 offb_mc=-11034
+LOOP it=72 st=ok n0=5042 rot=0 margin_x100=1669 tone_ppm=-23288 gain_ppm=-34557 doff_mc=-955 skew_cps=4554 corr_a_ppm=17324 corr_b_ppm=-9981 offa_mc=-3330 offb_mc=-9677
+LOOP it=73 st=ok n0=4394 rot=0 margin_x100=1861 tone_ppm=1749 gain_ppm=3270 doff_mc=-629 skew_cps=5522 corr_a_ppm=17635 corr_b_ppm=-10284 offa_mc=-3039 offb_mc=-9601
+LOOP it=74 st=ok n0=658 rot=0 margin_x100=1608 tone_ppm=35779 gain_ppm=5066 doff_mc=-1163 skew_cps=7822 corr_a_ppm=24007 corr_b_ppm=-16267 offa_mc=-4321 offb_mc=-11331
+LOOP it=75 st=ok n0=7896 rot=0 margin_x100=1659 tone_ppm=-4016 gain_ppm=-34893 doff_mc=-1326 skew_cps=5934 corr_a_ppm=23287 corr_b_ppm=-15572 offa_mc=-765 offb_mc=-8100
+LOOP it=76 st=ok n0=198 rot=0 margin_x100=1522 tone_ppm=16891 gain_ppm=-21215 doff_mc=1681 skew_cps=7268 corr_a_ppm=26312 corr_b_ppm=-18434 offa_mc=-4300 offb_mc=-11178
+LOOP it=77 st=ok n0=3202 rot=0 margin_x100=1510 tone_ppm=1214 gain_ppm=-48871 doff_mc=-351 skew_cps=6576 corr_a_ppm=26530 corr_b_ppm=-18642 offa_mc=-4419 offb_mc=-11427
+LOOP it=78 st=ok n0=934 rot=0 margin_x100=1768 tone_ppm=-8062 gain_ppm=-18493 doff_mc=-116 skew_cps=5982 corr_a_ppm=25082 corr_b_ppm=-17247 offa_mc=-5747 offb_mc=-12858
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=21 code_after=20 stage=-
+LOOP it=79 st=ok n0=334 rot=0 margin_x100=1672 tone_ppm=-21069 gain_ppm=-46404 doff_mc=-2598 skew_cps=5038 corr_a_ppm=21302 corr_b_ppm=-13545 offa_mc=-2756 offb_mc=-10663 batch=20/20 bmean_cps=6056 act=move:OK-1 code=20
+LOOP it=80 st=ok n0=7776 rot=0 margin_x100=1647 tone_ppm=-20645 gain_ppm=-12436 doff_mc=1194 skew_cps=4221 corr_a_ppm=17612 corr_b_ppm=-9906 offa_mc=-4794 offb_mc=-12350
+LOOP it=81 st=ok n0=4566 rot=0 margin_x100=1774 tone_ppm=13304 gain_ppm=-9649 doff_mc=-581 skew_cps=5817 corr_a_ppm=19982 corr_b_ppm=-12181 offa_mc=-4036 offb_mc=-11776
+LOOP it=82 st=ok n0=7896 rot=0 margin_x100=1659 tone_ppm=8772 gain_ppm=-5350 doff_mc=3154 skew_cps=5808 corr_a_ppm=21548 corr_b_ppm=-13684 offa_mc=-3069 offb_mc=-9660
+LOOP it=83 st=ok n0=5182 rot=0 margin_x100=1593 tone_ppm=14645 gain_ppm=-19893 doff_mc=-2463 skew_cps=6450 corr_a_ppm=24166 corr_b_ppm=-16175 offa_mc=-3720 offb_mc=-11208
+LOOP it=84 st=ok n0=1362 rot=0 margin_x100=1759 tone_ppm=-1881 gain_ppm=-27634 doff_mc=1037 skew_cps=5634 corr_a_ppm=23828 corr_b_ppm=-15851 offa_mc=-2587 offb_mc=-9659
+LOOP it=85 st=ok n0=2738 rot=0 margin_x100=1676 tone_ppm=14015 gain_ppm=-37593 doff_mc=1236 skew_cps=6717 corr_a_ppm=26339 corr_b_ppm=-18231 offa_mc=-4153 offb_mc=-10849
+LOOP it=86 st=ok n0=7852 rot=0 margin_x100=1581 tone_ppm=-21647 gain_ppm=-39017 doff_mc=1174 skew_cps=4672 corr_a_ppm=22451 corr_b_ppm=-14430 offa_mc=-4449 offb_mc=-10741
+LOOP it=87 st=ok n0=4942 rot=0 margin_x100=1682 tone_ppm=8403 gain_ppm=-39481 doff_mc=-1699 skew_cps=6112 corr_a_ppm=23955 corr_b_ppm=-15867 offa_mc=-5714 offb_mc=-12655
+LOOP it=88 st=ok n0=2298 rot=0 margin_x100=2021 tone_ppm=-13447 gain_ppm=-40709 doff_mc=-1247 skew_cps=4902 corr_a_ppm=21545 corr_b_ppm=-13520 offa_mc=-6584 offb_mc=-14004
+LOOP it=89 st=ok n0=1414 rot=0 margin_x100=1888 tone_ppm=26744 gain_ppm=-13371 doff_mc=497 skew_cps=7351 corr_a_ppm=26326 corr_b_ppm=-18016 offa_mc=-6314 offb_mc=-13549
+LOOP it=90 st=ok n0=374 rot=0 margin_x100=1655 tone_ppm=1404 gain_ppm=-30632 doff_mc=-546 skew_cps=6140 corr_a_ppm=26578 corr_b_ppm=-18257 offa_mc=-4617 offb_mc=-11970
+LOOP it=91 st=ok n0=4138 rot=0 margin_x100=1682 tone_ppm=-22032 gain_ppm=-48939 doff_mc=8 skew_cps=4671 corr_a_ppm=22620 corr_b_ppm=-14386 offa_mc=-6033 offb_mc=-13447
+LOOP it=92 st=ok n0=7006 rot=0 margin_x100=1592 tone_ppm=-24837 gain_ppm=-35802 doff_mc=1693 skew_cps=4048 corr_a_ppm=18176 corr_b_ppm=-9993 offa_mc=-5619 offb_mc=-12417
+LOOP it=93 st=ok n0=4762 rot=0 margin_x100=1730 tone_ppm=-7788 gain_ppm=-44285 doff_mc=1458 skew_cps=4514 corr_a_ppm=16788 corr_b_ppm=-8634 offa_mc=-6633 offb_mc=-12944
+LOOP it=94 st=ok n0=2342 rot=0 margin_x100=1995 tone_ppm=8067 gain_ppm=-31077 doff_mc=-2085 skew_cps=5386 corr_a_ppm=18223 corr_b_ppm=-10022 offa_mc=-6775 offb_mc=-13826
+LOOP it=95 st=ok n0=2494 rot=0 margin_x100=1894 tone_ppm=6733 gain_ppm=-11485 doff_mc=421 skew_cps=5424 corr_a_ppm=19423 corr_b_ppm=-11181 offa_mc=-7094 offb_mc=-14005
+LOOP it=96 st=ok n0=2354 rot=0 margin_x100=2030 tone_ppm=781 gain_ppm=-32574 doff_mc=-631 skew_cps=5198 corr_a_ppm=19562 corr_b_ppm=-11316 offa_mc=-3864 offb_mc=-10898
+LOOP it=97 st=ok n0=4868 rot=0 margin_x100=1509 tone_ppm=30871 gain_ppm=-33458 doff_mc=-1841 skew_cps=7352 corr_a_ppm=25070 corr_b_ppm=-16497 offa_mc=-2162 offb_mc=-9794
+LOOP it=98 st=ok n0=8046 rot=0 margin_x100=1602 tone_ppm=-30290 gain_ppm=-34889 doff_mc=-1917 skew_cps=4029 corr_a_ppm=19637 corr_b_ppm=-11121 offa_mc=-3134 offb_mc=-11490
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=20 code_after=19 stage=-
+LOOP it=99 st=ok n0=710 rot=0 margin_x100=1503 tone_ppm=-18131 gain_ppm=-54968 doff_mc=1635 skew_cps=4067 corr_a_ppm=16402 corr_b_ppm=-7925 offa_mc=-4716 offb_mc=-12542 batch=19/20 bmean_cps=5324 act=move:OK-1 code=19
+LOOP it=100 st=ok n0=4830 rot=0 margin_x100=1698 tone_ppm=-14155 gain_ppm=-15002 doff_mc=-494 skew_cps=3516 corr_a_ppm=13884 corr_b_ppm=-5432 offa_mc=-5587 offb_mc=-13609
+LOOP it=101 st=ok n0=4870 rot=0 margin_x100=1523 tone_ppm=72 gain_ppm=2824 doff_mc=-66 skew_cps=4054 corr_a_ppm=13897 corr_b_ppm=-5445 offa_mc=-1841 offb_mc=-9814
+LOOP it=102 st=ok n0=7314 rot=0 margin_x100=1754 tone_ppm=34274 gain_ppm=5193 doff_mc=3675 skew_cps=6291 corr_a_ppm=19978 corr_b_ppm=-11213 offa_mc=-873 offb_mc=-7534
+LOOP it=103 st=ok n0=4066 rot=0 margin_x100=1836 tone_ppm=16484 gain_ppm=-8163 doff_mc=1722 skew_cps=5871 corr_a_ppm=22920 corr_b_ppm=-14019 offa_mc=-4167 offb_mc=-10322
+LOOP it=104 st=ok n0=4574 rot=0 margin_x100=1773 tone_ppm=-24953 gain_ppm=-34297 doff_mc=-991 skew_cps=3606 corr_a_ppm=18454 corr_b_ppm=-9603 offa_mc=-4822 offb_mc=-11354
+LOOP it=105 st=ok n0=986 rot=0 margin_x100=1870 tone_ppm=-2556 gain_ppm=-29145 doff_mc=-848 skew_cps=4455 corr_a_ppm=17998 corr_b_ppm=-9159 offa_mc=-2783 offb_mc=-9556
+LOOP it=106 st=ok n0=3046 rot=0 margin_x100=1367 tone_ppm=-9904 gain_ppm=-18663 doff_mc=875 skew_cps=3904 corr_a_ppm=16234 corr_b_ppm=-7425 offa_mc=-3386 offb_mc=-9867
+LOOP it=107 st=ok n0=114 rot=0 margin_x100=1555 tone_ppm=-1446 gain_ppm=-25872 doff_mc=-1704 skew_cps=4234 corr_a_ppm=15976 corr_b_ppm=-7173 offa_mc=-4196 offb_mc=-11296
+LOOP it=108 st=ok n0=4970 rot=0 margin_x100=1687 tone_ppm=-13323 gain_ppm=-27405 doff_mc=636 skew_cps=3525 corr_a_ppm=13608 corr_b_ppm=-4827 offa_mc=-3402 offb_mc=-10260
+LOOP it=109 st=ok n0=986 rot=0 margin_x100=1919 tone_ppm=32907 gain_ppm=9518 doff_mc=-2152 skew_cps=6136 corr_a_ppm=19445 corr_b_ppm=-10375 offa_mc=-4619 offb_mc=-12256
+LOOP it=110 st=ok n0=4918 rot=0 margin_x100=1696 tone_ppm=-18237 gain_ppm=-19278 doff_mc=523 skew_cps=3603 corr_a_ppm=16191 corr_b_ppm=-7158 offa_mc=-5046 offb_mc=-12511
+LOOP it=111 st=ok n0=7114 rot=0 margin_x100=1668 tone_ppm=29520 gain_ppm=-17881 doff_mc=1846 skew_cps=6233 corr_a_ppm=21441 corr_b_ppm=-12140 offa_mc=-4432 offb_mc=-11232
+LOOP it=112 st=ok n0=8026 rot=0 margin_x100=1615 tone_ppm=6332 gain_ppm=-495 doff_mc=543 skew_cps=5391 corr_a_ppm=22573 corr_b_ppm=-13228 offa_mc=-4095 offb_mc=-10692
+LOOP it=113 st=ok n0=6690 rot=0 margin_x100=1582 tone_ppm=-646 gain_ppm=-53317 doff_mc=-391 skew_cps=5079 corr_a_ppm=22457 corr_b_ppm=-13116 offa_mc=-3261 offb_mc=-9966
+LOOP it=114 st=ok n0=3026 rot=0 margin_x100=1443 tone_ppm=15300 gain_ppm=-8725 doff_mc=-1716 skew_cps=6158 corr_a_ppm=25194 corr_b_ppm=-15719 offa_mc=533 offb_mc=-6644
+LOOP it=115 st=ok n0=4550 rot=0 margin_x100=1777 tone_ppm=-941 gain_ppm=-29325 doff_mc=192 skew_cps=5350 corr_a_ppm=25026 corr_b_ppm=-15556 offa_mc=-2416 offb_mc=-9647
+LOOP it=116 st=ok n0=3832 rot=0 margin_x100=1560 tone_ppm=9590 gain_ppm=-18843 doff_mc=-138 skew_cps=6095 corr_a_ppm=26746 corr_b_ppm=-17193 offa_mc=-799 offb_mc=-8012
+LOOP it=117 st=ok n0=726 rot=0 margin_x100=1695 tone_ppm=965 gain_ppm=-26796 doff_mc=189 skew_cps=5681 corr_a_ppm=26919 corr_b_ppm=-17359 offa_mc=-3582 offb_mc=-10853
+LOOP it=118 st=ok n0=6710 rot=0 margin_x100=1677 tone_ppm=10272 gain_ppm=-22975 doff_mc=-735 skew_cps=6391 corr_a_ppm=28765 corr_b_ppm=-19107 offa_mc=-3276 offb_mc=-10795
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=19 code_after=18 stage=-
+LOOP it=119 st=ok n0=6646 rot=0 margin_x100=1603 tone_ppm=-23623 gain_ppm=-35905 doff_mc=50 skew_cps=4310 corr_a_ppm=24512 corr_b_ppm=-14954 offa_mc=-5419 offb_mc=-13024 batch=20/20 bmean_cps=4994 act=move:OK-1 code=18
+LOOP it=120 st=ok n0=5284 rot=0 margin_x100=1584 tone_ppm=-23929 gain_ppm=-53769 doff_mc=-353 skew_cps=3371 corr_a_ppm=20222 corr_b_ppm=-10728 offa_mc=-2722 offb_mc=-10345
+LOOP it=121 st=ok n0=5318 rot=0 margin_x100=1585 tone_ppm=-21132 gain_ppm=-40940 doff_mc=1493 skew_cps=3018 corr_a_ppm=16449 corr_b_ppm=-6991 offa_mc=-4658 offb_mc=-11813
+LOOP it=122 st=ok n0=630 rot=0 margin_x100=1627 tone_ppm=23130 gain_ppm=-21748 doff_mc=466 skew_cps=5340 corr_a_ppm=20564 corr_b_ppm=-10919 offa_mc=-8001 offb_mc=-15070
+LOOP it=123 st=ok n0=6926 rot=0 margin_x100=1509 tone_ppm=7792 gain_ppm=-11639 doff_mc=-2459 skew_cps=4939 corr_a_ppm=21955 corr_b_ppm=-12257 offa_mc=-2534 offb_mc=-10299
+LOOP it=124 st=ok n0=3410 rot=0 margin_x100=1611 tone_ppm=6260 gain_ppm=-18089 doff_mc=3177 skew_cps=4984 corr_a_ppm=23075 corr_b_ppm=-13333 offa_mc=-5257 offb_mc=-11991
+LOOP it=125 st=ok n0=8102 rot=0 margin_x100=1609 tone_ppm=2880 gain_ppm=-23611 doff_mc=-1632 skew_cps=4888 corr_a_ppm=23590 corr_b_ppm=-13829 offa_mc=-3317 offb_mc=-10558
+LOOP it=126 st=ok n0=8148 rot=0 margin_x100=1552 tone_ppm=6755 gain_ppm=-21272 doff_mc=203 skew_cps=5237 corr_a_ppm=24801 corr_b_ppm=-14987 offa_mc=-4393 offb_mc=-11603
+LOOP it=127 st=ok n0=5174 rot=0 margin_x100=1598 tone_ppm=4547 gain_ppm=-15121 doff_mc=-943 skew_cps=5245 corr_a_ppm=25616 corr_b_ppm=-15767 offa_mc=-5663 offb_mc=-13260
+LOOP it=128 st=ok n0=6194 rot=0 margin_x100=1693 tone_ppm=-8487 gain_ppm=-15483 doff_mc=1987 skew_cps=4478 corr_a_ppm=24093 corr_b_ppm=-14293 offa_mc=-6825 offb_mc=-13764
+LOOP it=129 st=ok n0=1426 rot=0 margin_x100=1891 tone_ppm=-10127 gain_ppm=-23706 doff_mc=3525 skew_cps=4148 corr_a_ppm=22278 corr_b_ppm=-12528 offa_mc=-8725 offb_mc=-14486
+LOOP it=130 st=ok n0=2130 rot=0 margin_x100=2025 tone_ppm=-25259 gain_ppm=-43816 doff_mc=-1450 skew_cps=3049 corr_a_ppm=17759 corr_b_ppm=-8050 offa_mc=-5829 offb_mc=-12002
+LOOP it=131 st=ok n0=1442 rot=0 margin_x100=1891 tone_ppm=-15489 gain_ppm=-14580 doff_mc=-540 skew_cps=3076 corr_a_ppm=15000 corr_b_ppm=-5319 offa_mc=-7173 offb_mc=-13571
+LOOP it=132 st=ok n0=582 rot=0 margin_x100=1588 tone_ppm=2655 gain_ppm=-21934 doff_mc=-239 skew_cps=3883 corr_a_ppm=15472 corr_b_ppm=-5780 offa_mc=-6774 offb_mc=-13249
+LOOP it=133 st=ok n0=1530 rot=0 margin_x100=1990 tone_ppm=8338 gain_ppm=13167 doff_mc=-224 skew_cps=4290 corr_a_ppm=16954 corr_b_ppm=-7218 offa_mc=-3815 offb_mc=-10305
+LOOP it=134 st=ok n0=6134 rot=0 margin_x100=1860 tone_ppm=21805 gain_ppm=-3447 doff_mc=-222 skew_cps=5375 corr_a_ppm=20834 corr_b_ppm=-10926 offa_mc=-5024 offb_mc=-11622
+LOOP it=135 st=ok n0=7162 rot=0 margin_x100=1669 tone_ppm=15925 gain_ppm=-8464 doff_mc=-2935 skew_cps=5494 corr_a_ppm=23679 corr_b_ppm=-13639 offa_mc=-4869 offb_mc=-12500
+LOOP it=136 st=ok n0=1278 rot=0 margin_x100=1833 tone_ppm=8506 gain_ppm=2994 doff_mc=3556 skew_cps=5368 corr_a_ppm=25203 corr_b_ppm=-15095 offa_mc=-6949 offb_mc=-13397
+LOOP it=137 st=ok n0=3178 rot=0 margin_x100=1435 tone_ppm=-2249 gain_ppm=-28628 doff_mc=-1351 skew_cps=4773 corr_a_ppm=24799 corr_b_ppm=-14706 offa_mc=-4743 offb_mc=-11581
+LOOP it=138 st=ok n0=6010 rot=0 margin_x100=1657 tone_ppm=-28453 gain_ppm=-41932 doff_mc=266 skew_cps=3115 corr_a_ppm=19697 corr_b_ppm=-9656 offa_mc=-2428 offb_mc=-9079
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=18 code_after=17 stage=-
+LOOP it=139 st=ok n0=6362 rot=0 margin_x100=1683 tone_ppm=-12168 gain_ppm=-15421 doff_mc=-2227 skew_cps=3454 corr_a_ppm=17525 corr_b_ppm=-7522 offa_mc=-941 offb_mc=-8334 batch=19/20 bmean_cps=4429 act=move:OK-1 code=17
+LOOP it=140 st=ok n0=718 rot=0 margin_x100=1511 tone_ppm=11642 gain_ppm=-4036 doff_mc=-1909 skew_cps=4428 corr_a_ppm=19598 corr_b_ppm=-9520 offa_mc=9 offb_mc=-8034
+LOOP it=141 st=ok n0=2166 rot=0 margin_x100=2147 tone_ppm=164 gain_ppm=-23007 doff_mc=1020 skew_cps=3863 corr_a_ppm=19627 corr_b_ppm=-9549 offa_mc=806 offb_mc=-6853
+LOOP it=142 st=ok n0=2706 rot=0 margin_x100=1671 tone_ppm=-6200 gain_ppm=-12387 doff_mc=3695 skew_cps=3474 corr_a_ppm=18521 corr_b_ppm=-8467 offa_mc=153 offb_mc=-6219
+LOOP it=143 st=ok n0=1250 rot=0 margin_x100=1850 tone_ppm=1592 gain_ppm=-20611 doff_mc=2416 skew_cps=3801 corr_a_ppm=18805 corr_b_ppm=-8743 offa_mc=-617 offb_mc=-6158
+LOOP it=144 st=ok n0=7522 rot=0 margin_x100=1707 tone_ppm=-15717 gain_ppm=-9759 doff_mc=-1220 skew_cps=2757 corr_a_ppm=16003 corr_b_ppm=-5973 offa_mc=-2968 offb_mc=-9005
+LOOP it=145 st=ok n0=2970 rot=0 margin_x100=1451 tone_ppm=5613 gain_ppm=-3681 doff_mc=-2996 skew_cps=3762 corr_a_ppm=17001 corr_b_ppm=-6944 offa_mc=-1961 offb_mc=-9030
+LOOP it=146 st=ok n0=4634 rot=0 margin_x100=1820 tone_ppm=-16329 gain_ppm=-23994 doff_mc=1196 skew_cps=2523 corr_a_ppm=14095 corr_b_ppm=-4059 offa_mc=-3831 offb_mc=-10524
+LOOP it=147 st=ok n0=1338 rot=0 margin_x100=1831 tone_ppm=20275 gain_ppm=-5288 doff_mc=-883 skew_cps=4412 corr_a_ppm=17693 corr_b_ppm=-7523 offa_mc=-789 offb_mc=-7737
+LOOP it=148 st=ok n0=8070 rot=0 margin_x100=1613 tone_ppm=13823 gain_ppm=-8844 doff_mc=1830 skew_cps=4572 corr_a_ppm=20155 corr_b_ppm=-9891 offa_mc=-2989 offb_mc=-9348
+LOOP it=149 st=ok n0=7018 rot=0 margin_x100=1609 tone_ppm=-22893 gain_ppm=-38286 doff_mc=-1345 skew_cps=2514 corr_a_ppm=16068 corr_b_ppm=-5832 offa_mc=-1261 offb_mc=-8043
+LOOP it=150 st=ok n0=4918 rot=0 margin_x100=1677 tone_ppm=-13495 gain_ppm=-5392 doff_mc=-915 skew_cps=2585 corr_a_ppm=13668 corr_b_ppm=-3452 offa_mc=-3651 offb_mc=-10808
+LOOP it=151 st=ok n0=938 rot=0 margin_x100=1766 tone_ppm=16013 gain_ppm=-12671 doff_mc=-1895 skew_cps=4096 corr_a_ppm=16509 corr_b_ppm=-6200 offa_mc=-3411 offb_mc=-11229
+LOOP it=152 st=ok n0=2026 rot=0 margin_x100=2026 tone_ppm=-14931 gain_ppm=-17965 doff_mc=-734 skew_cps=2569 corr_a_ppm=13853 corr_b_ppm=-3564 offa_mc=-3073 offb_mc=-11142
+LOOP it=153 st=ok n0=6062 rot=0 margin_x100=1834 tone_ppm=-8437 gain_ppm=-3842 doff_mc=2612 skew_cps=2643 corr_a_ppm=12356 corr_b_ppm=-2080 offa_mc=-2935 offb_mc=-10084
+LOOP it=154 st=ok n0=7918 rot=0 margin_x100=1656 tone_ppm=7018 gain_ppm=-8961 doff_mc=332 skew_cps=3441 corr_a_ppm=13599 corr_b_ppm=-3298 offa_mc=-2743 offb_mc=-9773
+LOOP it=155 st=ok n0=578 rot=0 margin_x100=1603 tone_ppm=11536 gain_ppm=-15547 doff_mc=-2371 skew_cps=3893 corr_a_ppm=15645 corr_b_ppm=-5287 offa_mc=-606 offb_mc=-8433
+LOOP it=156 st=ok n0=7558 rot=0 margin_x100=1694 tone_ppm=-11098 gain_ppm=-37432 doff_mc=2126 skew_cps=2682 corr_a_ppm=13673 corr_b_ppm=-3333 offa_mc=-1343 offb_mc=-8436
+LOOP it=157 st=ok n0=730 rot=0 margin_x100=1677 tone_ppm=-9501 gain_ppm=-8150 doff_mc=928 skew_cps=2530 corr_a_ppm=11988 corr_b_ppm=-1660 offa_mc=-5275 offb_mc=-12110
+LOOP it=158 st=ok n0=2110 rot=0 margin_x100=2008 tone_ppm=-2211 gain_ppm=-6797 doff_mc=564 skew_cps=2765 corr_a_ppm=11596 corr_b_ppm=-1273 offa_mc=-4664 offb_mc=-11293
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=17 code_after=16 stage=-
+LOOP it=159 st=ok n0=730 rot=0 margin_x100=1688 tone_ppm=11194 gain_ppm=3908 doff_mc=12 skew_cps=3553 corr_a_ppm=13578 corr_b_ppm=-3208 offa_mc=-4131 offb_mc=-10749 batch=19/20 bmean_cps=3286 act=move:OK-1 code=16
+LOOP it=160 st=ok n0=5918 rot=0 margin_x100=1590 tone_ppm=638 gain_ppm=-6838 doff_mc=-2150 skew_cps=2784 corr_a_ppm=13691 corr_b_ppm=-3319 offa_mc=-1629 offb_mc=-8960
+LOOP it=161 st=ok n0=6254 rot=0 margin_x100=1686 tone_ppm=5044 gain_ppm=-3310 doff_mc=322 skew_cps=2981 corr_a_ppm=14586 corr_b_ppm=-4194 offa_mc=-90 offb_mc=-7281
+LOOP it=162 st=ok n0=1586 rot=0 margin_x100=2032 tone_ppm=-2687 gain_ppm=-13184 doff_mc=-1689 skew_cps=2643 corr_a_ppm=14109 corr_b_ppm=-3725 offa_mc=-1434 offb_mc=-9245
+LOOP it=163 st=ok n0=2862 rot=0 margin_x100=1544 tone_ppm=4201 gain_ppm=-1529 doff_mc=-531 skew_cps=3015 corr_a_ppm=14854 corr_b_ppm=-4454 offa_mc=-2572 offb_mc=-10589
+LOOP it=164 st=ok n0=7622 rot=0 margin_x100=1732 tone_ppm=-14110 gain_ppm=-8187 doff_mc=-883 skew_cps=2012 corr_a_ppm=12348 corr_b_ppm=-1961 offa_mc=-1121 offb_mc=-9420
+LOOP it=165 st=ok n0=2962 rot=0 margin_x100=1447 tone_ppm=-4510 gain_ppm=-20980 doff_mc=3346 skew_cps=2266 corr_a_ppm=11549 corr_b_ppm=-1170 offa_mc=-2732 offb_mc=-9882
+LOOP it=166 st=ok n0=4014 rot=0 margin_x100=1824 tone_ppm=605 gain_ppm=1076 doff_mc=2112 skew_cps=2522 corr_a_ppm=11656 corr_b_ppm=-1275 offa_mc=-4333 offb_mc=-10762
+LOOP it=167 st=ok n0=2650 rot=0 margin_x100=1720 tone_ppm=-6364 gain_ppm=-1190 doff_mc=-437 skew_cps=2082 corr_a_ppm=10530 corr_b_ppm=-156 offa_mc=-3500 offb_mc=-10072
+LOOP it=168 st=ok n0=5258 rot=0 margin_x100=1512 tone_ppm=-3380 gain_ppm=-9059 doff_mc=-2812 skew_cps=2115 corr_a_ppm=9932 corr_b_ppm=438 offa_mc=-810 offb_mc=-8338
+LOOP it=169 st=ok n0=642 rot=0 margin_x100=1605 tone_ppm=11068 gain_ppm=-1082 doff_mc=-1350 skew_cps=2922 corr_a_ppm=11888 corr_b_ppm=-1479 offa_mc=-2081 offb_mc=-10093
+LOOP it=170 st=ok n0=4458 rot=0 margin_x100=1864 tone_ppm=16744 gain_ppm=-3109 doff_mc=2357 skew_cps=3538 corr_a_ppm=14853 corr_b_ppm=-4357 offa_mc=-1276 offb_mc=-8451
+LOOP it=171 st=ok n0=5106 rot=0 margin_x100=1680 tone_ppm=-8348 gain_ppm=-20375 doff_mc=1363 skew_cps=2307 corr_a_ppm=13370 corr_b_ppm=-2890 offa_mc=-4349 offb_mc=-11104
+LOOP it=172 st=ok n0=5886 rot=0 margin_x100=1718 tone_ppm=15425 gain_ppm=171 doff_mc=-668 skew_cps=3607 corr_a_ppm=16106 corr_b_ppm=-5541 offa_mc=-2449 offb_mc=-9407
+LOOP it=173 st=ok n0=230 rot=0 margin_x100=1746 tone_ppm=4480 gain_ppm=-20042 doff_mc=1565 skew_cps=3228 corr_a_ppm=16902 corr_b_ppm=-6317 offa_mc=-3772 offb_mc=-10208
+LOOP it=174 st=ok n0=1154 rot=0 margin_x100=2003 tone_ppm=-12151 gain_ppm=-14793 doff_mc=-660 skew_cps=2361 corr_a_ppm=14740 corr_b_ppm=-4178 offa_mc=-6772 offb_mc=-13510
+LOOP it=175 st=ok n0=2814 rot=0 margin_x100=1559 tone_ppm=1377 gain_ppm=-23130 doff_mc=-2069 skew_cps=2914 corr_a_ppm=14985 corr_b_ppm=-4418 offa_mc=-6012 offb_mc=-13464
+LOOP it=176 st=ok n0=4906 rot=0 margin_x100=1671 tone_ppm=1070 gain_ppm=-651 doff_mc=-1425 skew_cps=2936 corr_a_ppm=15175 corr_b_ppm=-4604 offa_mc=-4829 offb_mc=-12759
+LOOP it=177 st=ok n0=1226 rot=0 margin_x100=1781 tone_ppm=11210 gain_ppm=5646 doff_mc=54 skew_cps=3565 corr_a_ppm=17166 corr_b_ppm=-6535 offa_mc=-3596 offb_mc=-11482
+LOOP it=178 st=ok n0=7306 rot=0 margin_x100=1740 tone_ppm=-16918 gain_ppm=-17746 doff_mc=2027 skew_cps=2056 corr_a_ppm=14155 corr_b_ppm=-3543 offa_mc=-4552 offb_mc=-11747
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=16 code_after=15 stage=-
+LOOP it=179 st=ok n0=1922 rot=0 margin_x100=1985 tone_ppm=-10841 gain_ppm=6316 doff_mc=-856 skew_cps=2069 corr_a_ppm=12231 corr_b_ppm=-1632 offa_mc=-4749 offb_mc=-12248 batch=20/20 bmean_cps=2696 act=move:OK-1 code=15
+LOOP it=180 st=ok n0=7698 rot=0 margin_x100=1736 tone_ppm=-4607 gain_ppm=-25770 doff_mc=981 skew_cps=1836 corr_a_ppm=11415 corr_b_ppm=-823 offa_mc=-5289 offb_mc=-12452
+LOOP it=181 st=ok n0=5106 rot=0 margin_x100=1698 tone_ppm=6494 gain_ppm=7233 doff_mc=1182 skew_cps=2406 corr_a_ppm=12564 corr_b_ppm=-1951 offa_mc=-2830 offb_mc=-9548
+LOOP it=182 st=ok n0=1418 rot=0 margin_x100=1885 tone_ppm=-851 gain_ppm=-12108 doff_mc=-1356 skew_cps=2095 corr_a_ppm=12413 corr_b_ppm=-1803 offa_mc=-2458 offb_mc=-9646
+LOOP it=183 st=ok n0=4218 rot=0 margin_x100=1559 tone_ppm=-8740 gain_ppm=-23906 doff_mc=1067 skew_cps=1636 corr_a_ppm=10865 corr_b_ppm=-262 offa_mc=-3761 offb_mc=-10594
+LOOP it=184 st=ok n0=4190 rot=0 margin_x100=1678 tone_ppm=1611 gain_ppm=-4160 doff_mc=-1355 skew_cps=2017 corr_a_ppm=11150 corr_b_ppm=-544 offa_mc=-4813 offb_mc=-12132
+LOOP it=185 st=ok n0=698 rot=0 margin_x100=1591 tone_ppm=8713 gain_ppm=-6591 doff_mc=1705 skew_cps=2471 corr_a_ppm=12692 corr_b_ppm=-2055 offa_mc=-3255 offb_mc=-9958
+LOOP it=186 st=ok n0=4986 rot=0 margin_x100=1701 tone_ppm=-7624 gain_ppm=7612 doff_mc=-554 skew_cps=1735 corr_a_ppm=11341 corr_b_ppm=-713 offa_mc=-3315 offb_mc=-10213
+LOOP it=187 st=ok n0=6142 rot=0 margin_x100=1812 tone_ppm=-8257 gain_ppm=-21403 doff_mc=-613 skew_cps=1531 corr_a_ppm=9879 corr_b_ppm=743 offa_mc=-4492 offb_mc=-11619
+LOOP it=188 st=ok n0=5046 rot=0 margin_x100=1685 tone_ppm=14824 gain_ppm=-3600 doff_mc=487 skew_cps=2659 corr_a_ppm=12499 corr_b_ppm=-1815 offa_mc=-453 offb_mc=-7373
+LOOP it=189 st=ok n0=7394 rot=0 margin_x100=1820 tone_ppm=1211 gain_ppm=1395 doff_mc=178 skew_cps=2193 corr_a_ppm=12714 corr_b_ppm=-2027 offa_mc=-1407 offb_mc=-8279
+LOOP it=190 st=ok n0=5854 rot=0 margin_x100=1686 tone_ppm=-10500 gain_ppm=-1859 doff_mc=-2884 skew_cps=1560 corr_a_ppm=10853 corr_b_ppm=-173 offa_mc=-2937 offb_mc=-10842
+LOOP it=191 st=ok n0=2834 rot=0 margin_x100=1552 tone_ppm=1823 gain_ppm=-18539 doff_mc=847 skew_cps=2016 corr_a_ppm=11175 corr_b_ppm=-492 offa_mc=-2764 offb_mc=-10371
+LOOP it=192 st=ok n0=1150 rot=0 margin_x100=1971 tone_ppm=2766 gain_ppm=6641 doff_mc=2467 skew_cps=2157 corr_a_ppm=11665 corr_b_ppm=-974 offa_mc=-4255 offb_mc=-11016
+LOOP it=193 st=ok n0=6006 rot=0 margin_x100=1709 tone_ppm=5658 gain_ppm=-1041 doff_mc=-314 skew_cps=2366 corr_a_ppm=12666 corr_b_ppm=-1958 offa_mc=-2419 offb_mc=-9266
+LOOP it=194 st=ok n0=7210 rot=0 margin_x100=1642 tone_ppm=-10999 gain_ppm=-4114 doff_mc=99 skew_cps=1532 corr_a_ppm=10717 corr_b_ppm=-15 offa_mc=-2268 offb_mc=-9078
+LOOP it=195 st=ok n0=278 rot=0 margin_x100=1737 tone_ppm=10266 gain_ppm=-16074 doff_mc=1597 skew_cps=2479 corr_a_ppm=12533 corr_b_ppm=-1794 offa_mc=-3381 offb_mc=-9645
+LOOP it=196 st=ok n0=562 rot=0 margin_x100=1790 tone_ppm=-4871 gain_ppm=-12213 doff_mc=1159 skew_cps=1881 corr_a_ppm=11670 corr_b_ppm=-939 offa_mc=-3063 offb_mc=-8915
+LOOP it=197 st=ok n0=28 rot=0 margin_x100=1533 tone_ppm=9143 gain_ppm=-6123 doff_mc=-335 skew_cps=2581 corr_a_ppm=13289 corr_b_ppm=-2522 offa_mc=-1712 offb_mc=-7665
+LOOP it=198 st=ok n0=6610 rot=0 margin_x100=1600 tone_ppm=-11254 gain_ppm=-3402 doff_mc=-671 skew_cps=1557 corr_a_ppm=11293 corr_b_ppm=-536 offa_mc=-4235 offb_mc=-10463
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=15 code_after=14 stage=-
+LOOP it=199 st=ok n0=2070 rot=0 margin_x100=2012 tone_ppm=-734 gain_ppm=-14062 doff_mc=229 skew_cps=1947 corr_a_ppm=11163 corr_b_ppm=-407 offa_mc=-2927 offb_mc=-9060 batch=20/20 bmean_cps=2033 act=move:OK-1 code=14
+LOOP it=200 st=ok n0=4330 rot=0 margin_x100=1750 tone_ppm=-582 gain_ppm=1267 doff_mc=375 skew_cps=1493 corr_a_ppm=11060 corr_b_ppm=-305 offa_mc=-4359 offb_mc=-10377
+LOOP it=201 st=ok n0=4838 rot=0 margin_x100=1701 tone_ppm=1458 gain_ppm=-8190 doff_mc=2152 skew_cps=1596 corr_a_ppm=11318 corr_b_ppm=-560 offa_mc=-5539 offb_mc=-10818
+LOOP it=202 st=ok n0=3744 rot=0 margin_x100=1631 tone_ppm=-9442 gain_ppm=12330 doff_mc=540 skew_cps=1014 corr_a_ppm=9647 corr_b_ppm=1107 offa_mc=-7191 offb_mc=-12300
+LOOP it=203 st=ok n0=2918 rot=0 margin_x100=1389 tone_ppm=4468 gain_ppm=-223 doff_mc=-1278 skew_cps=1607 corr_a_ppm=10436 corr_b_ppm=328 offa_mc=-7462 offb_mc=-13020
+LOOP it=204 st=ok n0=910 rot=0 margin_x100=1817 tone_ppm=-5907 gain_ppm=9484 doff_mc=-2737 skew_cps=1144 corr_a_ppm=9392 corr_b_ppm=1368 offa_mc=-5718 offb_mc=-12216
+LOOP it=205 st=ok n0=4262 rot=0 margin_x100=1737 tone_ppm=5390 gain_ppm=7565 doff_mc=-462 skew_cps=1649 corr_a_ppm=10344 corr_b_ppm=428 offa_mc=-6571 offb_mc=-13238
+LOOP it=206 st=ok n0=1830 rot=0 margin_x100=1905 tone_ppm=-1723 gain_ppm=-19156 doff_mc=1507 skew_cps=1343 corr_a_ppm=10040 corr_b_ppm=731 offa_mc=-4560 offb_mc=-10679
+LOOP it=207 st=ok n0=3154 rot=0 margin_x100=1542 tone_ppm=-6537 gain_ppm=-14572 doff_mc=1260 skew_cps=1038 corr_a_ppm=8884 corr_b_ppm=1883 offa_mc=-6394 offb_mc=-12090
+LOOP it=208 st=ok n0=7214 rot=0 margin_x100=1652 tone_ppm=5763 gain_ppm=2965 doff_mc=1263 skew_cps=1617 corr_a_ppm=9902 corr_b_ppm=878 offa_mc=-5359 offb_mc=-10606
+LOOP it=209 st=ok n0=334 rot=0 margin_x100=1689 tone_ppm=-6784 gain_ppm=5581 doff_mc=-1190 skew_cps=1027 corr_a_ppm=8703 corr_b_ppm=2075 offa_mc=-5875 offb_mc=-11543
+LOOP it=210 st=ok n0=2998 rot=0 margin_x100=1447 tone_ppm=-4607 gain_ppm=-6954 doff_mc=-1481 skew_cps=1019 corr_a_ppm=7889 corr_b_ppm=2886 offa_mc=-7851 offb_mc=-14049
+LOOP it=211 st=ok n0=278 rot=0 margin_x100=1753 tone_ppm=-2767 gain_ppm=4353 doff_mc=1152 skew_cps=1008 corr_a_ppm=7401 corr_b_ppm=3373 offa_mc=-6201 offb_mc=-11989
+LOOP it=212 st=ok n0=3150 rot=0 margin_x100=1551 tone_ppm=241 gain_ppm=-8238 doff_mc=-1704 skew_cps=1140 corr_a_ppm=7444 corr_b_ppm=3331 offa_mc=-1844 offb_mc=-8209
+LOOP it=213 st=ok n0=26 rot=0 margin_x100=1507 tone_ppm=1286 gain_ppm=14208 doff_mc=679 skew_cps=1193 corr_a_ppm=7670 corr_b_ppm=3106 offa_mc=-2268 offb_mc=-8398
+LOOP it=214 st=ok n0=2886 rot=0 margin_x100=1544 tone_ppm=1790 gain_ppm=16136 doff_mc=2188 skew_cps=1249 corr_a_ppm=7986 corr_b_ppm=2792 offa_mc=-3368 offb_mc=-8739
+LOOP it=215 st=ok n0=8002 rot=0 margin_x100=1642 tone_ppm=-3395 gain_ppm=3354 doff_mc=-399 skew_cps=1004 corr_a_ppm=7387 corr_b_ppm=3390 offa_mc=-5212 offb_mc=-10732
+LOOP it=216 st=ok n0=5850 rot=0 margin_x100=1660 tone_ppm=-628 gain_ppm=-11902 doff_mc=-1355 skew_cps=1086 corr_a_ppm=7277 corr_b_ppm=3500 offa_mc=-4191 offb_mc=-10179
+LOOP it=217 st=ok n0=2 rot=0 margin_x100=1502 tone_ppm=-1200 gain_ppm=-7002 doff_mc=-2787 skew_cps=1080 corr_a_ppm=7065 corr_b_ppm=3711 offa_mc=-5006 offb_mc=-11969
+LOOP it=218 st=ok n0=16 rot=0 margin_x100=1500 tone_ppm=4909 gain_ppm=-2143 doff_mc=962 skew_cps=1315 corr_a_ppm=7930 corr_b_ppm=2853 offa_mc=-2794 offb_mc=-9414
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=14 code_after=13 stage=-
+LOOP it=219 st=ok n0=670 rot=0 margin_x100=1609 tone_ppm=5838 gain_ppm=13040 doff_mc=1051 skew_cps=1509 corr_a_ppm=8960 corr_b_ppm=1834 offa_mc=-3938 offb_mc=-10198 batch=20/20 bmean_cps=1257 act=move:OK-1 code=13
+LOOP it=220 st=ok n0=5230 rot=0 margin_x100=1583 tone_ppm=-6957 gain_ppm=-7321 doff_mc=712 skew_cps=513 corr_a_ppm=7731 corr_b_ppm=3063 offa_mc=-6109 offb_mc=-12135
+LOOP it=221 st=ok n0=798 rot=0 margin_x100=1663 tone_ppm=-502 gain_ppm=-2081 doff_mc=-165 skew_cps=647 corr_a_ppm=7643 corr_b_ppm=3151 offa_mc=-5526 offb_mc=-11607
+LOOP it=222 st=ok n0=5038 rot=0 margin_x100=1667 tone_ppm=-1812 gain_ppm=3595 doff_mc=-674 skew_cps=591 corr_a_ppm=7323 corr_b_ppm=3470 offa_mc=-5137 offb_mc=-11451
+LOOP it=223 st=ok n0=6054 rot=0 margin_x100=1819 tone_ppm=-2042 gain_ppm=22484 doff_mc=865 skew_cps=571 corr_a_ppm=6963 corr_b_ppm=3829 offa_mc=-7180 offb_mc=-13200
+LOOP it=224 st=ok n0=4594 rot=0 margin_x100=1744 tone_ppm=-2705 gain_ppm=-2053 doff_mc=560 skew_cps=509 corr_a_ppm=6487 corr_b_ppm=4305 offa_mc=-5059 offb_mc=-10877
+LOOP it=225 st=ok n0=4930 rot=0 margin_x100=1682 tone_ppm=-1398 gain_ppm=12981 doff_mc=-671 skew_cps=505 corr_a_ppm=6241 corr_b_ppm=4551 offa_mc=-3412 offb_mc=-9461
+LOOP it=226 st=ok n0=434 rot=0 margin_x100=1656 tone_ppm=677 gain_ppm=11518 doff_mc=-900 skew_cps=602 corr_a_ppm=6360 corr_b_ppm=4432 offa_mc=-4438 offb_mc=-10802
+LOOP it=227 st=ok n0=3738 rot=0 margin_x100=1626 tone_ppm=3091 gain_ppm=18279 doff_mc=2832 skew_cps=663 corr_a_ppm=6904 corr_b_ppm=3891 offa_mc=-3535 offb_mc=-8910
+LOOP it=228 st=ok n0=1178 rot=0 margin_x100=1962 tone_ppm=-2975 gain_ppm=2268 doff_mc=1612 skew_cps=477 corr_a_ppm=6380 corr_b_ppm=4415 offa_mc=-4756 offb_mc=-9573
+LOOP it=229 st=ok n0=6414 rot=0 margin_x100=1669 tone_ppm=3272 gain_ppm=28084 doff_mc=-905 skew_cps=682 corr_a_ppm=6956 corr_b_ppm=3842 offa_mc=-990 offb_mc=-6115
+LOOP it=230 st=ok n0=1798 rot=0 margin_x100=1852 tone_ppm=-3060 gain_ppm=17366 doff_mc=1693 skew_cps=500 corr_a_ppm=6417 corr_b_ppm=4381 offa_mc=-3676 offb_mc=-8220
+LOOP it=231 st=ok n0=2466 rot=0 margin_x100=1866 tone_ppm=-284 gain_ppm=-7625 doff_mc=-535 skew_cps=548 corr_a_ppm=6367 corr_b_ppm=4431 offa_mc=-1998 offb_mc=-6724
+LOOP it=232 st=ok n0=3140 rot=0 margin_x100=1548 tone_ppm=-1039 gain_ppm=-4909 doff_mc=-458 skew_cps=506 corr_a_ppm=6184 corr_b_ppm=4614 offa_mc=-4616 offb_mc=-9507
+LOOP it=233 st=ok n0=1426 rot=0 margin_x100=1887 tone_ppm=-1127 gain_ppm=-645 doff_mc=223 skew_cps=475 corr_a_ppm=5986 corr_b_ppm=4812 offa_mc=-4726 offb_mc=-9540
+LOOP it=234 st=ok n0=4878 rot=0 margin_x100=1514 tone_ppm=-1222 gain_ppm=744 doff_mc=1111 skew_cps=490 corr_a_ppm=5771 corr_b_ppm=5027 offa_mc=-4987 offb_mc=-9414
+LOOP it=235 st=ok n0=5310 rot=0 margin_x100=1598 tone_ppm=1782 gain_ppm=12597 doff_mc=-373 skew_cps=558 corr_a_ppm=6084 corr_b_ppm=4714 offa_mc=-2916 offb_mc=-7471
+LOOP it=236 st=ok n0=478 rot=0 margin_x100=1818 tone_ppm=-1351 gain_ppm=14769 doff_mc=-189 skew_cps=493 corr_a_ppm=5846 corr_b_ppm=4952 offa_mc=-4746 offb_mc=-9369
+LOOP it=237 st=ok n0=2082 rot=0 margin_x100=2016 tone_ppm=-593 gain_ppm=29660 doff_mc=-1774 skew_cps=499 corr_a_ppm=5742 corr_b_ppm=5056 offa_mc=-4425 offb_mc=-9666
+LOOP it=238 st=ok n0=7122 rot=0 margin_x100=1673 tone_ppm=-102 gain_ppm=78 doff_mc=-583 skew_cps=488 corr_a_ppm=5724 corr_b_ppm=5074 offa_mc=-3466 offb_mc=-8910
+LOOP it=239 st=ok n0=2822 rot=0 margin_x100=1559 tone_ppm=3732 gain_ppm=18633 doff_mc=-824 skew_cps=676 corr_a_ppm=6381 corr_b_ppm=4420 offa_mc=-3608 offb_mc=-9338 batch=20/20 bmean_cps=550 act=inside-deadband code=13
+LOOP it=240 st=ok n0=6218 rot=0 margin_x100=1687 tone_ppm=2300 gain_ppm=4957 doff_mc=334 skew_cps=646 corr_a_ppm=6786 corr_b_ppm=4017 offa_mc=-4262 offb_mc=-9877
+LOOP it=241 st=ok n0=906 rot=0 margin_x100=1818 tone_ppm=-3071 gain_ppm=15099 doff_mc=-1208 skew_cps=488 corr_a_ppm=6245 corr_b_ppm=4558 offa_mc=-4089 offb_mc=-10125
+LOOP it=242 st=ok n0=2106 rot=0 margin_x100=2018 tone_ppm=-2320 gain_ppm=15860 doff_mc=2660 skew_cps=484 corr_a_ppm=5836 corr_b_ppm=4967 offa_mc=-7231 offb_mc=-12345
+LOOP it=243 st=ok n0=5906 rot=0 margin_x100=1577 tone_ppm=3526 gain_ppm=12573 doff_mc=-596 skew_cps=703 corr_a_ppm=6457 corr_b_ppm=4349 offa_mc=-7134 offb_mc=-12456
+LOOP it=244 st=ok n0=1038 rot=0 margin_x100=1919 tone_ppm=-2258 gain_ppm=-4561 doff_mc=441 skew_cps=467 corr_a_ppm=6059 corr_b_ppm=4747 offa_mc=-5790 offb_mc=-10956
+LOOP it=245 st=ok n0=5198 rot=0 margin_x100=1593 tone_ppm=-861 gain_ppm=2374 doff_mc=2047 skew_cps=520 corr_a_ppm=5907 corr_b_ppm=4899 offa_mc=-4860 offb_mc=-9312
+LOOP it=246 st=ok n0=1530 rot=0 margin_x100=1951 tone_ppm=2887 gain_ppm=-2798 doff_mc=417 skew_cps=657 corr_a_ppm=6416 corr_b_ppm=4392 offa_mc=-6004 offb_mc=-10311
+LOOP it=247 st=ok n0=2438 rot=0 margin_x100=1893 tone_ppm=2530 gain_ppm=3040 doff_mc=291 skew_cps=669 corr_a_ppm=6861 corr_b_ppm=3949 offa_mc=-929 offb_mc=-5125
+LOOP it=248 st=ok n0=3716 rot=0 margin_x100=1646 tone_ppm=-1757 gain_ppm=5619 doff_mc=145 skew_cps=545 corr_a_ppm=6552 corr_b_ppm=4258 offa_mc=-596 offb_mc=-4741
+LOOP it=249 st=ok n0=982 rot=0 margin_x100=1845 tone_ppm=796 gain_ppm=22990 doff_mc=-185 skew_cps=590 corr_a_ppm=6692 corr_b_ppm=4118 offa_mc=-1508 offb_mc=-5719
+LOOP it=250 st=ok n0=2470 rot=0 margin_x100=1889 tone_ppm=-1582 gain_ppm=14428 doff_mc=740 skew_cps=520 corr_a_ppm=6413 corr_b_ppm=4397 offa_mc=-3669 offb_mc=-7628
+LOOP it=251 st=ok n0=6202 rot=0 margin_x100=1689 tone_ppm=1415 gain_ppm=7601 doff_mc=-1531 skew_cps=625 corr_a_ppm=6662 corr_b_ppm=4148 offa_mc=-2682 offb_mc=-7173
+LOOP it=252 st=ok n0=7614 rot=0 margin_x100=1774 tone_ppm=-1310 gain_ppm=7205 doff_mc=-370 skew_cps=544 corr_a_ppm=6432 corr_b_ppm=4379 offa_mc=-6072 offb_mc=-10700
+LOOP it=253 st=ok n0=4678 rot=0 margin_x100=1824 tone_ppm=1598 gain_ppm=7116 doff_mc=951 skew_cps=623 corr_a_ppm=6713 corr_b_ppm=4098 offa_mc=-7358 offb_mc=-11657
+LOOP it=254 st=ok n0=2050 rot=0 margin_x100=1989 tone_ppm=-3031 gain_ppm=-10689 doff_mc=898 skew_cps=473 corr_a_ppm=6179 corr_b_ppm=4632 offa_mc=-6524 offb_mc=-10508
+LOOP it=255 st=ok n0=1150 rot=0 margin_x100=1988 tone_ppm=1161 gain_ppm=-6910 doff_mc=-661 skew_cps=608 corr_a_ppm=6384 corr_b_ppm=4429 offa_mc=-6243 offb_mc=-10457
+LOOP it=256 st=ok n0=68 rot=0 margin_x100=1477 tone_ppm=811 gain_ppm=14323 doff_mc=573 skew_cps=572 corr_a_ppm=6527 corr_b_ppm=4286 offa_mc=-3295 offb_mc=-7303
+LOOP it=257 st=ok n0=630 rot=0 margin_x100=1596 tone_ppm=-2732 gain_ppm=7511 doff_mc=504 skew_cps=473 corr_a_ppm=6045 corr_b_ppm=4767 offa_mc=-3458 offb_mc=-7291
+LOOP it=258 st=ok n0=4902 rot=0 margin_x100=1693 tone_ppm=3349 gain_ppm=15299 doff_mc=-949 skew_cps=643 corr_a_ppm=6635 corr_b_ppm=4181 offa_mc=-4752 offb_mc=-8918
+LOOP it=259 st=ok n0=4230 rot=0 margin_x100=1587 tone_ppm=-1412 gain_ppm=-5912 doff_mc=1452 skew_cps=523 corr_a_ppm=6386 corr_b_ppm=4429 offa_mc=-3111 offb_mc=-6767 batch=20/20 bmean_cps=569 act=inside-deadband code=13
+LOOP it=260 st=ok n0=4594 rot=0 margin_x100=1775 tone_ppm=2372 gain_ppm=-10262 doff_mc=-1604 skew_cps=678 corr_a_ppm=6804 corr_b_ppm=4013 offa_mc=-3671 offb_mc=-7887
+LOOP it=261 st=ok n0=6998 rot=0 margin_x100=1618 tone_ppm=-143 gain_ppm=21194 doff_mc=225 skew_cps=600 corr_a_ppm=6779 corr_b_ppm=4038 offa_mc=-3937 offb_mc=-8074
+LOOP it=262 st=ok n0=6634 rot=0 margin_x100=1607 tone_ppm=244 gain_ppm=8138 doff_mc=-984 skew_cps=604 corr_a_ppm=6822 corr_b_ppm=3995 offa_mc=-3424 offb_mc=-7903
+LOOP it=263 st=ok n0=1178 rot=0 margin_x100=1978 tone_ppm=-2275 gain_ppm=-3443 doff_mc=-1665 skew_cps=500 corr_a_ppm=6421 corr_b_ppm=4396 offa_mc=-806 offb_mc=-5858
+LOOP it=264 st=ok n0=5170 rot=0 margin_x100=1598 tone_ppm=2685 gain_ppm=7979 doff_mc=-332 skew_cps=678 corr_a_ppm=6894 corr_b_ppm=3925 offa_mc=543 offb_mc=-4623
+LOOP it=265 st=ok n0=2534 rot=0 margin_x100=1740 tone_ppm=-1776 gain_ppm=10346 doff_mc=-958 skew_cps=539 corr_a_ppm=6581 corr_b_ppm=4238 offa_mc=700 offb_mc=-4799
+LOOP it=266 st=ok n0=1498 rot=0 margin_x100=1812 tone_ppm=-737 gain_ppm=594 doff_mc=-696 skew_cps=565 corr_a_ppm=6451 corr_b_ppm=4367 offa_mc=1832 offb_mc=-3906
+LOOP it=267 st=ok n0=2274 rot=0 margin_x100=1935 tone_ppm=236 gain_ppm=535 doff_mc=1969 skew_cps=586 corr_a_ppm=6493 corr_b_ppm=4326 offa_mc=-457 offb_mc=-5515
+LOOP it=268 st=ok n0=718 rot=0 margin_x100=1514 tone_ppm=-869 gain_ppm=12721 doff_mc=-1992 skew_cps=535 corr_a_ppm=6340 corr_b_ppm=4479 offa_mc=815 offb_mc=-4934
+LOOP it=269 st=ok n0=3138 rot=0 margin_x100=1545 tone_ppm=2553 gain_ppm=18132 doff_mc=1710 skew_cps=685 corr_a_ppm=6789 corr_b_ppm=4031 offa_mc=-3056 offb_mc=-8216
+LOOP it=270 st=ok n0=5354 rot=0 margin_x100=1589 tone_ppm=-2667 gain_ppm=20691 doff_mc=-728 skew_cps=485 corr_a_ppm=6319 corr_b_ppm=4501 offa_mc=-3972 offb_mc=-9388
+LOOP it=271 st=ok n0=14 rot=0 margin_x100=1530 tone_ppm=556 gain_ppm=17245 doff_mc=-4 skew_cps=578 corr_a_ppm=6417 corr_b_ppm=4403 offa_mc=-2761 offb_mc=-8176
+LOOP it=272 st=ok n0=7510 rot=0 margin_x100=1668 tone_ppm=-705 gain_ppm=395 doff_mc=1025 skew_cps=573 corr_a_ppm=6293 corr_b_ppm=4527 offa_mc=-4980 offb_mc=-10043
+LOOP it=273 st=ok n0=8202 rot=0 margin_x100=1553 tone_ppm=3318 gain_ppm=16044 doff_mc=3420 skew_cps=671 corr_a_ppm=6878 corr_b_ppm=3946 offa_mc=-4562 offb_mc=-8433
+LOOP it=274 st=ok n0=470 rot=0 margin_x100=1799 tone_ppm=243 gain_ppm=10537 doff_mc=746 skew_cps=600 corr_a_ppm=6921 corr_b_ppm=3903 offa_mc=-4100 offb_mc=-7709
+LOOP it=275 st=ok n0=2330 rot=0 margin_x100=2035 tone_ppm=-782 gain_ppm=66 doff_mc=-1784 skew_cps=586 corr_a_ppm=6783 corr_b_ppm=4040 offa_mc=-5231 offb_mc=-9465
+LOOP it=276 st=ok n0=1806 rot=0 margin_x100=1899 tone_ppm=-2284 gain_ppm=8599 doff_mc=-450 skew_cps=489 corr_a_ppm=6380 corr_b_ppm=4443 offa_mc=-5643 offb_mc=-10035
+LOOP it=277 st=ok n0=3354 rot=0 margin_x100=1614 tone_ppm=-1843 gain_ppm=-2950 doff_mc=-1046 skew_cps=488 corr_a_ppm=6056 corr_b_ppm=4767 offa_mc=-3148 offb_mc=-7901
+LOOP it=278 st=ok n0=7386 rot=0 margin_x100=1839 tone_ppm=-849 gain_ppm=19141 doff_mc=-1702 skew_cps=510 corr_a_ppm=5906 corr_b_ppm=4917 offa_mc=-2724 offb_mc=-8069
+LOOP it=279 st=ok n0=186 rot=0 margin_x100=1452 tone_ppm=-667 gain_ppm=14115 doff_mc=-2635 skew_cps=514 corr_a_ppm=5789 corr_b_ppm=5034 offa_mc=-495 offb_mc=-6756 batch=20/20 bmean_cps=573 act=inside-deadband code=13
+LOOP it=280 st=ok n0=4658 rot=0 margin_x100=1808 tone_ppm=-479 gain_ppm=12272 doff_mc=237 skew_cps=480 corr_a_ppm=5705 corr_b_ppm=5118 offa_mc=-2181 offb_mc=-8360
+LOOP it=281 st=ok n0=6418 rot=0 margin_x100=1685 tone_ppm=-667 gain_ppm=5297 doff_mc=1211 skew_cps=474 corr_a_ppm=5587 corr_b_ppm=5236 offa_mc=-3825 offb_mc=-9583
+LOOP it=282 st=ok n0=4874 rot=0 margin_x100=1525 tone_ppm=3870 gain_ppm=-11576 doff_mc=758 skew_cps=652 corr_a_ppm=6268 corr_b_ppm=4558 offa_mc=-4909 offb_mc=-10404
+LOOP it=283 st=ok n0=2190 rot=0 margin_x100=2136 tone_ppm=-1486 gain_ppm=-8876 doff_mc=664 skew_cps=479 corr_a_ppm=6006 corr_b_ppm=4819 offa_mc=-4297 offb_mc=-9559
+LOOP it=284 st=ok n0=4602 rot=0 margin_x100=1746 tone_ppm=-853 gain_ppm=7763 doff_mc=-1104 skew_cps=464 corr_a_ppm=5856 corr_b_ppm=4969 offa_mc=-5607 offb_mc=-11255
+LOOP it=285 st=ok n0=5806 rot=0 margin_x100=1696 tone_ppm=3541 gain_ppm=5755 doff_mc=995 skew_cps=642 corr_a_ppm=6480 corr_b_ppm=4349 offa_mc=-4537 offb_mc=-9838
+LOOP it=286 st=ok n0=6790 rot=0 margin_x100=1644 tone_ppm=-919 gain_ppm=-18191 doff_mc=-1727 skew_cps=531 corr_a_ppm=6318 corr_b_ppm=4511 offa_mc=-8264 offb_mc=-14174
+LOOP it=287 st=ok n0=3778 rot=0 margin_x100=1649 tone_ppm=-859 gain_ppm=16206 doff_mc=-3144 skew_cps=470 corr_a_ppm=6166 corr_b_ppm=4662 offa_mc=-6059 offb_mc=-13061
+LOOP it=288 st=ok n0=3096 rot=0 margin_x100=1538 tone_ppm=-1089 gain_ppm=-3678 doff_mc=-519 skew_cps=489 corr_a_ppm=5975 corr_b_ppm=4853 offa_mc=-3885 offb_mc=-11065
+LOOP it=289 st=ok n0=1290 rot=0 margin_x100=1813 tone_ppm=-1112 gain_ppm=25815 doff_mc=673 skew_cps=496 corr_a_ppm=5779 corr_b_ppm=5049 offa_mc=-4442 offb_mc=-11388
+LOOP it=290 st=ok n0=3378 rot=0 margin_x100=1635 tone_ppm=-665 gain_ppm=5589 doff_mc=2969 skew_cps=512 corr_a_ppm=5662 corr_b_ppm=5166 offa_mc=-6861 offb_mc=-12775
+LOOP it=291 st=ok n0=7350 rot=0 margin_x100=1764 tone_ppm=266 gain_ppm=12543 doff_mc=-1007 skew_cps=534 corr_a_ppm=5709 corr_b_ppm=5119 offa_mc=-3358 offb_mc=-9621
+LOOP it=292 st=ok n0=4882 rot=0 margin_x100=1654 tone_ppm=2969 gain_ppm=17289 doff_mc=-1043 skew_cps=676 corr_a_ppm=6231 corr_b_ppm=4598 offa_mc=-2348 offb_mc=-8973
+LOOP it=293 st=ok n0=4222 rot=0 margin_x100=1568 tone_ppm=-359 gain_ppm=16400 doff_mc=-2014 skew_cps=540 corr_a_ppm=6168 corr_b_ppm=4662 offa_mc=-4260 offb_mc=-11590
+LOOP it=294 st=ok n0=2782 rot=0 margin_x100=1532 tone_ppm=-545 gain_ppm=-12426 doff_mc=1033 skew_cps=508 corr_a_ppm=6072 corr_b_ppm=4757 offa_mc=-5162 offb_mc=-12133
+LOOP it=295 st=ok n0=3990 rot=0 margin_x100=1829 tone_ppm=-645 gain_ppm=-1920 doff_mc=2583 skew_cps=484 corr_a_ppm=5959 corr_b_ppm=4871 offa_mc=-5165 offb_mc=-11237
+LOOP it=296 st=ok n0=5998 rot=0 margin_x100=1701 tone_ppm=4827 gain_ppm=19354 doff_mc=920 skew_cps=695 corr_a_ppm=6808 corr_b_ppm=4026 offa_mc=-2393 offb_mc=-8141
+LOOP it=297 st=ok n0=290 rot=0 margin_x100=1725 tone_ppm=2150 gain_ppm=-2652 doff_mc=701 skew_cps=698 corr_a_ppm=7187 corr_b_ppm=3649 offa_mc=-1648 offb_mc=-7150
+LOOP it=298 st=ok n0=2774 rot=0 margin_x100=1663 tone_ppm=138 gain_ppm=1627 doff_mc=-124 skew_cps=600 corr_a_ppm=7212 corr_b_ppm=3625 offa_mc=-2439 offb_mc=-7987
+LOOP it=299 st=ok n0=2366 rot=0 margin_x100=2033 tone_ppm=1233 gain_ppm=16140 doff_mc=921 skew_cps=694 corr_a_ppm=7429 corr_b_ppm=3409 offa_mc=-3056 offb_mc=-8285 batch=20/20 bmean_cps=556 act=inside-deadband code=13
+LOOP-END qualified=300/300 captures=300 rejected=0 code=13 skew_abort=0 elapsed_ms=235358 compute_ms_avg=676
+LOOP-STATUS mode=closed waveform=w06adc_e04_t04_amp5190_tone_m1p5_f399p375 qualified=300 captures=300 rejected=0 polarity=-1 code=13 skew_abort=0 iteration=300 corr_a_ppm=7429 corr_b_ppm=3409 offa_mc=-3056 offb_mc=-8285

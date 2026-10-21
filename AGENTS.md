@@ -45,15 +45,17 @@ The repository mixes four kinds of code that support that bench:
 | `firmware/final_ver_1.0.xsa` | Exported hardware specification for Vitis. |
 | `calibration_sim/` | Host C simulator + test harness (CMake). Reuses production firmware sources. |
 | `calibration_loop/` | Python impulse-dither calibration package (`python -m calibration_loop.run_calibration`). `fix_skew_export.py` repairs pre-2026-08-16 skew CSV labels from recorded board data (does not invent truncated frames). |
+| `calibration_loop_c/` | C port of `calibration_loop` (tone route: de-framing, estimator, block LMS, batch skew decision), BSP-free; compiled into `calibration_sim` and `firmware/thesis_v3_loop_appl`; tested by `calibration_sim --run-loop-tests` and against the Python loop with `export_golden.py` + `--loop-golden`. See its README. |
+| `firmware/thesis_v3_loop_appl/` | Vitis 2025.2 app: the original firmware (most sources referenced from `thesis_v3_500mhz_appl/`) plus `adc -cal loop`, which runs `calibration_loop_c` on the A53. Local files: modified `butils.c`, `butils_loop.c` (board adapter, `#include`d), `loop_waveform.h` (table of known DPG vectors, selected at run time with `adc -cal loop wave K`: 0 = 199.375 MHz, 1 = 399.375 MHz). Bench-validated 2026-10-14: closed loop converged at both tones, all transactions `OK` (see the on-board loop note under Architecture Notes). Overview, code map, logged runs and the 2026-10-14 reference results: its `README.md`. Design, build traps and bench procedure: last section of `calibration_sim/README.md`. |
 | `calibration_out/` | Example output of `calibration_loop` runs (CSV, JSON, plots). |
-| `tools/` | Ad-hoc bench/host diagnostics, run from the repo root with `PYTHONPATH=.` if invoked as a path. `prepare_capture_truth_check.py` and `live_before_after.py` grade de-framing/channel ordering against `BenchModel` truth or live bytes; `half_group_lag_impact.py`, `deframe_rotation_table.py`, `compare_reconstruction.py` quantify extraction errors. `skew_step_characterize.py` measures the actuator's step response, `skew_close_loop.py` converges it with the batch decision, `skew_park.py` returns it to a chosen control code through the ACK-checked firmware transaction, and `loop_direction_check.py` proves the loop's direction guard offline against `BenchModel` for the tone route **and both dither routes**; `timing_route_check.py` compares the two tone-free timing routes against known actuator codes for whichever waveform is loaded (the loop's route choice is made from its output, not assumed). `dither_vs_tone_gain.py` compares the dither and tone routes to the gain mismatch on the same frames (and `--save-frames` archives the captures so a state can be re-analysed without bench time); `dither_raw_evidence.py` reads gain, offset and timing straight off the folded impulse replicas of tone-free captures — folding must be polarity-corrected (the balanced ± train cancels a sign-blind fold) and timing comes from the slope projection, readable as a difference between fixed states, not per frame. `dither_ladder.py` turns a ladder of captured states (16000 → 24000 → 30000 LSB) into the amplitude-linearity answer and a figure, and `dac_vs_adc_plot.py` overlays one capture on the DAC vector it came from. |
+| `tools/` | Ad-hoc bench/host diagnostics, run from the repo root with `PYTHONPATH=.` if invoked as a path. `prepare_capture_truth_check.py` and `live_before_after.py` grade de-framing/channel ordering against `BenchModel` truth or live bytes; `half_group_lag_impact.py`, `deframe_rotation_table.py`, `compare_reconstruction.py` quantify extraction errors. `skew_step_characterize.py` measures the actuator's step response, `skew_close_loop.py` converges it with the batch decision, `skew_park.py` returns it to a chosen control code through the ACK-checked firmware transaction, and `loop_direction_check.py` proves the loop's direction guard offline against `BenchModel` for the tone route **and both dither routes**; `timing_route_check.py` compares the two tone-free timing routes against known actuator codes for whichever waveform is loaded (the loop's route choice is made from its output, not assumed). `dither_vs_tone_gain.py` compares the dither and tone routes to the gain mismatch on the same frames (and `--save-frames` archives the captures so a state can be re-analysed without bench time); `dither_raw_evidence.py` reads gain, offset and timing straight off the folded impulse replicas of tone-free captures — folding must be polarity-corrected (the balanced ± train cancels a sign-blind fold) and timing comes from the slope projection, readable as a difference between fixed states, not per frame. `dither_ladder.py` turns a ladder of captured states (16000 → 24000 → 30000 LSB) into the amplitude-linearity answer and a figure, and `dac_vs_adc_plot.py` overlays one capture on the DAC vector it came from. `board_loop_log.py` runs one `adc -cal loop ...` command on `thesis_v3_loop_appl` (optionally `--wave K` first), echoes the console and saves it as a log, stopping at `LOOP-STATUS` or on a `Command Error`. |
 | `fpga/skew_actuator/` | `adc_channel_skew_actuator_gpio.v` fractional-delay AXI-Stream module + Vivado TCL integration scripts + xsim validation logs. |
 | `axi_lite_wrapper/`, `axi_full_wrapper/` | AXI Lite / AXI Full master wrapper Verilog with SystemVerilog testbenches (Vivado xsim). |
 | `lwip_platform/` | Standalone lwIP Ethernet platform code (`ethernet.c/h`, static IPv4 config) and a minimal Vitis application. |
 | `py_UDP_interface/` | Host UDP capture script (`sampling_clk_config_script.py`, 32 KB captures from the board). |
 | `py_to_matlab_module/` | MATLAB engine bridge experiment (`matlab_engine.py`). |
-| `waveforms/` | Generated DPG DAC vectors (`impulse_dither.txt`, one signed integer per line). |
-| `BOARD_TEST_PLAN.md` | On-board validation plan for the firmware calibration flow. |
+| `waveforms/` | Generated DPG DAC vectors, one signed integer per line, each with a `.json` of its `DitherConfig`. `impulse_dither.txt` is the generator default (edge 16 / top 32 DAC samples, 2000 LSB) — **not** the vector the on-board loop assumes. `tone_dither/` holds the tone+dither vectors the loop uses: `w06adc_e04_t04_amp5190_tone_m1p5` (199.375 MHz) and `..._f399p375` (399.375 MHz, `--sig-cycles 2556`). `pulse_ladder/`, `scale_check/`: dither-only amplitude/width ladders. |
+| `BOARD_TEST_PLAN.md` | **Removed** in `ea96ba9`; recover with `git show ea96ba9~1:BOARD_TEST_PLAN.md`. The current bench procedures are `calibration_loop/BENCH_GUIDE.md` and, for the on-board loop, section 7 of `calibration_sim/README.md`. |
 | `adc_calibration_output_example_log.log` | Example UART log of a full `adc -cal` run. |
 | `xelab.pb`, `xvlog.pb`, `xsim.dir/`, `.Xil/`, `_ide/` | Vivado xsim / IDE leftovers — generated, do not edit. |
 
@@ -154,9 +156,25 @@ adjusted before use.
 
 ### Board testing
 
-Follow `BOARD_TEST_PLAN.md` (staged `adc -cal` flow over UART) and
-`calibration_loop/BENCH_GUIDE.md` (bench bring-up procedure). These are
-manual hardware procedures; do not attempt them without the bench.
+Follow `calibration_loop/BENCH_GUIDE.md` (bench bring-up procedure) and, for the
+on-board loop, section 7 of `calibration_sim/README.md` (`BOARD_TEST_PLAN.md`, the
+old staged `adc -cal` plan, was removed in `ea96ba9`). These are manual hardware
+procedures; do not attempt them without the bench.
+
+The COM port is per machine: the examples say `COM3`/`COM5`, and `tools/` defaults
+to `COM5`, but on another PC the ZCU102 console may enumerate elsewhere (it was
+`COM7`, CP2108 interface 0, on the 2026-10-14 laptop) — pass `--uart` explicitly.
+The host NIC must carry the static `192.168.1.100`; a link-local `169.254.x.x`
+address shows up as every capture failing with `no UDP frame`.
+
+On-board loop runs, with the console disconnected from the port first:
+
+```powershell
+python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/<stem>.log
+python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"     --out calibration_out/closed_loop/<stem>.log
+```
+
+`--wave` must name the vector the DPG is playing (the firmware resets it to 0 at boot).
 
 ## Architecture Notes That Matter
 
@@ -481,6 +499,43 @@ manual hardware procedures; do not attempt them without the bench.
   per-channel ps or raw register values.  The RTL skew actuator
   (`fpga/skew_actuator/`) remains a separate, not-yet-integrated effort (Q8
   fractional delay, AXI GPIO controlled, reset code 256).
+- **On-board loop (`thesis_v3_loop_appl`), bench 2026-10-14**: `calibration_loop_c`
+  run on the A53 against live captures, tone route, `w06` pulse (edge 4 / top 4,
+  5190 LSB).  **Same bring-up, same code 24, same vector, board `loop open 20` against
+  host `probe`**: margin 17.0 / 17.4, skew +171.6 / +172.0 ps, per-frame scatter 18 /
+  17.7 ps, offset B−A −4.2 / −4.7 codes — the port agrees with the Python loop on real
+  data, not only on the golden replay.  Closed runs (logs in `calibration_out/closed_loop/`):
+
+  | run | tone | codes | batch means | after convergence (80 frames) |
+  |---|---|---|---|---|
+  | `run7_board_w06.log` | 199.375 MHz | 23 → 12, 11 moves −1 | +174.6 → +10.9 → **−7.1 ps**, held 4 batches | skew −7.06 ± 0.05 ps, tone ratio 0.999973 ± 0.000049, dOffset +0.01 ± 0.17 codes |
+  | `run8_board_f399.log` | 399.375 MHz | 24 → 13, 11 moves −1 | +83.5 → +12.6 → **+5.6 ps**, held 4 batches | skew +5.62 ± 0.08 ps, tone ratio 0.99989 ± 0.00024, dOffset +0.04 ± 0.15 codes |
+
+  Both 300 qualified from 300 captures, every transaction `result=OK`, `skew_abort=0`,
+  ~236 s per run (A53 compute 0.68 s per frame with the loop source at `-O2`, ~0.79 s
+  per iteration with the capture).  What these runs taught:
+  * **Per-frame scatter scales with |skew|.**  In run7 the skew scatter fell 14.2 →
+    0.45 ps and the tone-ratio scatter 1.2 % → 0.04 % as the skew went +175 → −7 ps
+    (~8 % of the skew per frame), so a noisy-looking open-loop state at large skew is
+    not evidence of a noisy bench.  Likely mechanism (unproven): the skew makes the A
+    and B pulse replicas differ, and which events a capture holds changes how much of
+    that leaks into the tone fit.
+  * **The two tones agree on the zero, not on the scale.**  The null interpolates to
+    code ~12.4 at 199 MHz and ~12.2 at 399 MHz, but the step is 16.5 ps/code against
+    7.1 ps/code, i.e. both read ~0.21 rad at code 24 — a constant *phase*, where a pure
+    delay would give the same ps at both tones.  The firmware was reloaded (a new
+    bring-up) between the runs, so this is not yet separated from bring-up drift; the
+    test is `loop open 20` at one code with `--wave 0` and `--wave 1` in the same
+    bring-up (switch the DPG vector only).  If the radians match, the skew must be
+    calibrated at the tone it is used at.
+  * **The working point moved.**  This bring-up nulls at code ~12 (the loop walks
+    down); September nulled at ~35 (walked up), and the native tone gain is now B/A
+    1.0154 at 199 MHz (1.0020 at 399 MHz) against B smaller by ~1.3 % in `run6`.  Host
+    and board agree on all of it, so it is the bench state; compare across bring-ups
+    with that in mind.
+  * **10 ps deadband vs a 7 ps step.**  run8 stopped at +5.6 ps where one more code
+    would have reached ~−1.5 ps.  At 399 MHz a deadband of about half a step would
+    take it; not changed yet.
 - **Two correction conventions exist**: `calibration.c` documents
   `corrected = raw * gain + offset`; the integrated `butils_calibration.c`
   path uses `final_code = round(gain * (raw + offset))`. The simulator mirrors
@@ -494,6 +549,8 @@ manual hardware procedures; do not attempt them without the bench.
   `timing`, `diagnose`, `offset`, `gain`, `skew`, `skew diagnose`, `status`,
   `export`, `reset`, `help`; also `dma -r/-w/-d/-c`, `adc -ref`, register
   peek/poke. See `butils.c` help printer for the authoritative list.
+  `thesis_v3_loop_appl` adds `adc -cal loop [open] N`, `adc -cal loop status` and
+  `adc -cal loop wave [K]` (help in `butils_loop.c`).
 
 ## Code Style Guidelines
 
@@ -515,6 +572,10 @@ manual hardware procedures; do not attempt them without the bench.
 
 1. Any change to the shared estimator/pipeline modules **must** keep
    `adc_cal_sim --run-all` green (and ideally the sanitizer build).
+   Changes to `calibration_loop_c/` or to the Python code it mirrors must keep
+   `adc_cal_sim --run-loop-tests` green and a fresh
+   `python calibration_loop_c/export_golden.py` replay (`--loop-golden`) at
+   0 failures.
 2. Adding a simulator scenario: add the name to `k_scenarios` in
    `calibration_sim/sim_tests.c`, add its signal configuration in
    `sim_signal_configure_scenario()`. Keep it deterministic via
@@ -548,8 +609,9 @@ manual hardware procedures; do not attempt them without the bench.
    three `calibration_out/professor_update/session_*.png` figures; the full tables stay in
    `BENCH_SESSION_DITHER_ONLY.md` §7 and §F).  If a figure and a doc disagree, the figure
    script is the reproducible side, so fix the doc.
-6. Hardware behavior is validated by `BOARD_TEST_PLAN.md` stages on the bench,
-   not by the host simulator — the simulator explicitly does not cover JESD,
+6. Hardware behavior is validated on the bench (`calibration_loop/BENCH_GUIDE.md`;
+   for the on-board loop, section 7 of `calibration_sim/README.md`), not by the host
+   simulator — the simulator explicitly does not cover JESD,
    DMA hardware state, cache coherency, SPI registers, or analog noise.
 
 ## Known Issues and Gotchas
@@ -578,8 +640,31 @@ manual hardware procedures; do not attempt them without the bench.
   frames (`tools/live_before_after.py`).
 - `python -m calibration_loop ...` hardware modes (`probe`, `bench`) need the
   bench powered and the DPG waveform loaded; use `sim` otherwise.
-- Git: active work happens on `main`; the bench guide references the
-  `HG_Loop` branch for the loop code history.
+- **A wrong DPG vector is not rejected.**  With `impulse_dither.txt` (edge 16 / top 32,
+  2000 LSB) on the DPG while the on-board loop assumed `w06` (edge 4 / top 4, 5190 LSB),
+  every frame was still accepted — the polarity sequence and slot geometry match — but
+  the margin read 7.8 instead of 17 and the skew scattered ±22 ps with the tone ratio
+  moving with it (correlation 0.96).  A wrong `sig_cycles` is worse: the margin stays
+  normal and the tone is fitted at the wrong frequency.  Check `LOOP-START`'s
+  `waveform=`/`tone_mhz=` against the file loaded, and the margin (~17 for `w06`).
+- **Exactly 400 MHz (and 200 MHz) cannot be generated**: `sig_cycles` 2560 advances the
+  tone a whole number of cycles per 130-sample slot, every impulse sees the same phase
+  and `DitherConfig.validate()` refuses it (2557–2563 all fail).  2556 = 399.375 MHz has
+  the same phase step (0.9375), coherence (0.067) and gcd (4) as the bench 1276; 2564 =
+  400.625 MHz is the same on the other side.
+- **`tools/skew_park.py` verifies with the default `DitherConfig()`** (edge 16 / top 32),
+  so with a `w06` vector on the DPG its verification frames are meaningless: park with
+  `--verify-frames 0` and measure with `adc -cal loop open 20` (or a `probe` with the
+  matching `--dither-*`).
+- **After a firmware reload the actuator is uninitialised**: `adc -cal loop open` then
+  reports `code=-1`, and the skew came out bimodal (two clusters 24 ps apart).  Run
+  `adc -cal skew step 0` (expect `neutral_initialized=YES`, code 24) before any loop run.
+- Git: active work happens on `main` (personal branches such as `hans` merge into it
+  by PR); the bench guide references the `HG_Loop` branch for the loop code history.
+  Opening the project in Vitis 2025.2 regenerates the 2025.1 platform
+  `firmware/final_ver_1/` (~1900 modified files) and rewrites the original app's
+  `app.yaml`/`vitis-comp.json` paths — never commit those; stage files explicitly or
+  mark them `--skip-worktree` locally.
 
 ## Security Considerations
 

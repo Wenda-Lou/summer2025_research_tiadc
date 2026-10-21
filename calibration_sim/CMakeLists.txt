@@ -9,6 +9,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 set(PROD_DIR "${CMAKE_CURRENT_LIST_DIR}/../firmware/thesis_v3_500mhz_appl")
+set(LOOP_C_DIR "${CMAKE_CURRENT_LIST_DIR}/../calibration_loop_c")
 
 add_executable(adc_cal_sim
     sim_main.c
@@ -16,6 +17,7 @@ add_executable(adc_cal_sim
     sim_dma.c
     sim_platform.c
     sim_tests.c
+    sim_loop_tests.c
     "${PROD_DIR}/adc_frame.c"
     "${PROD_DIR}/adc_calibration_pipeline.c"
     "${PROD_DIR}/adc_calibration_dither.c"
@@ -24,11 +26,13 @@ add_executable(adc_cal_sim
     "${PROD_DIR}/calibration.c"
     "${PROD_DIR}/timing_alignment.c"
     "${PROD_DIR}/reference_buffer.c"
+    "${LOOP_C_DIR}/adc_calibration_loop.c"
 )
 
 target_include_directories(adc_cal_sim PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${PROD_DIR}"
+    "${LOOP_C_DIR}"
 )
 
 target_compile_definitions(adc_cal_sim PRIVATE
