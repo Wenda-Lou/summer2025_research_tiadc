@@ -71,7 +71,7 @@ def main(argv=None) -> int:
                 log.write(line + "\n")
                 log.flush()
                 if line.startswith(marker):
-                    return "ok"
+                    return "error" if "result=ERROR" in line else "ok"
                 if "Command Error" in line:
                     return "error"
         return "timeout"
@@ -87,7 +87,8 @@ def main(argv=None) -> int:
                 print("no LOOP-WAVE answer: is the ELF with 'adc -cal loop wave' loaded?")
         if ended == "ok":
             send(args.cmd)
-            ended = read_until(log, "LOOP-STATUS", args.timeout)
+            marker = "LOOP-TEST-END" if args.cmd.strip().startswith("adc -cal loop test") else "LOOP-STATUS"
+            ended = read_until(log, marker, args.timeout)
         if ended != "ok":
             log.write(f"# STOPPED: {ended}\n")
     ser.close()

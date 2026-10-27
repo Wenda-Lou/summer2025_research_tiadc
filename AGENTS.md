@@ -554,6 +554,23 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
 
 ## Code Style Guidelines
 
+**Current experiment handoff (2026-10-27):** read
+`calibration_loop/CALIBRATION_LIMIT_HANDOFF.md` before continuing the individual
+offset/gain/skew limit experiments. It records implementation status, waveform,
+verified checks, unverified bench work and the next steps. Detailed procedure:
+`calibration_loop/CALIBRATION_LIMIT_TEST.md`.
+
+Single-axis limits: `adc -cal loop test ...` in `thesis_v3_loop_appl` saves a
+baseline, perturbs one channel, trains one axis and freezes all feedback for
+independent holdout. `tools/board_axis_test.py` plans by default (`--execute`
+enables bench access). Procedure: `calibration_loop/CALIBRATION_LIMIT_TEST.md`.
+Offset ladders are explicitly post-ADC software injections; `dcfilter` only
+toggles the chip filter. IFC writes are bank-scoped/readback-checked; clock
+parking still uses the sanctioned skew transaction. Native command/SPI spies
+are in `calibration_sim/sim_board_axis_tests.c`; grading/protocol tests run with
+`python tools/test_board_axis_test.py`. Keep these green when changing the
+experiment workflow. Never grade training residuals as independent precision.
+
 - **Firmware/simulator C**: C11, no compiler extensions. The simulator builds
   with `-Wall -Wextra -Wpedantic -Wconversion -Wshadow`; keep it warning-clean.
   Hardware-independent modules must not include Xilinx headers.

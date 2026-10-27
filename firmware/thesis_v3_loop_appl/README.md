@@ -248,6 +248,12 @@ All of these are compiled in. Changing one means rebuilding the ELF.
 
 ## 5. Running the loop and recording a log
 
+For isolated offset/gain/skew limits, register perturbations, paired clock steps
+and frozen independent holdout, use `adc -cal loop test help` and
+[`CALIBRATION_LIMIT_TEST.md`](../../calibration_loop/CALIBRATION_LIMIT_TEST.md).
+The experiment configuration is runtime-selectable; ordinary `loop N` and
+`loop open N` retain their defaults. `open` still learns gain and offset.
+
 ### 5.1 Console commands
 
 ```

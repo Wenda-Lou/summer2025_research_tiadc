@@ -352,6 +352,137 @@ static void test_batch_decision(sim_assert_context_t *ctx, FILE *summary, double
     SIM_ASSERT_EQ_INT(ctx, g_loop.act.code, bench.code);
 }
 
+static void test_single_axis_experiments(sim_assert_context_t *ctx)
+{
+    adc_cal_loop_config_t cfg;
+    adc_cal_loop_options_t opt;
+    adc_cal_loop_actuator_t act;
+    adc_cal_loop_state_t frozen;
+    adc_cal_loop_row_t row;
+    lt_bench_t bench;
+    static uint8_t buf[2 * LT_WORDS];
+    adc_cal_loop_default_config(&cfg);
+    adc_cal_loop_default_options(&opt);
+    adc_cal_loop_default_actuator(&act);
+    lt_bench_init(&bench, &cfg, 17U);
+    bench.invert_b = 0;
+    bench.gain_b = 1.0;
+    bench.offset_a = bench.offset_b = 0.0;
+    bench.skew_b_ps = 0.0;
+    bench.noise = 0.0;
+    act.ctx = &bench;
+    act.request_steps = lt_request_steps;
+    opt.update_axes = ADC_CAL_LOOP_AXIS_OFFSET;
+    opt.input_offset[1] = 37.5;
+    opt.reject_clipping = 1;
+    opt.require_tone = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, &act), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 30U, lt_capture, &bench,
+                                          NULL, NULL, buf, sizeof(buf)), 30);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b - g_loop.state.offset_a, 37.5, 0.1);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_a, 1.0, 0.0);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, 1.0, 0.0);
+    SIM_ASSERT_EQ_INT(ctx, bench.moves, 0);
+    /* New samples and a new mismatch must not cause any feedback in HOLD. */
+    frozen = g_loop.state;
+    g_loop.opt.update_axes = 0U;
+    g_loop.opt.input_offset[1] += 17.25;
+    for (unsigned i = 0U; i < 8U; ++i) {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+        SIM_ASSERT_NEAR(ctx, row.est.offset_mismatch_codes, 17.25, 0.15);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.offset_a, frozen.offset_a, 0.0);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, frozen.offset_b, 0.0);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_a, frozen.gain_corr_a, 0.0);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, frozen.gain_corr_b, 0.0);
+        SIM_ASSERT_EQ_INT(ctx, bench.moves, 0);
+    }
+    adc_cal_loop_default_options(&opt);
+    opt.update_axes = ADC_CAL_LOOP_AXIS_GAIN;
+    bench.gain_b = 1.07;
+    adc_cal_loop_default_state(&frozen);
+    frozen.offset_a = 6.25;
+    frozen.offset_b = -4.75;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, &frozen, &act), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 30U, lt_capture, &bench,
+                                          NULL, NULL, buf, sizeof(buf)), 30);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.offset_a, 6.25, 0.0);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, -4.75, 0.0);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b / g_loop.state.gain_corr_a, 1.0 / 1.07, 0.002);
+    SIM_ASSERT_EQ_INT(ctx, bench.moves, 0);
+    /* Skew only: non-unity digital corrections must remain bit-for-bit fixed. */
+    opt.update_axes = ADC_CAL_LOOP_AXIS_SKEW;
+    opt.skew_batch_frames = 5;
+    bench.gain_b = 1.03;
+    bench.offset_a = 14.0;
+    bench.offset_b = -23.0;
+    bench.skew_b_ps = 45.0;
+    bench.noise = 1.0;
+    frozen.offset_a = 14.0;
+    frozen.offset_b = -23.0;
+    frozen.gain_corr_b = 1.0 / 1.03;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, &frozen, &act), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 40U, lt_capture, &bench,
+                                          NULL, NULL, buf, sizeof(buf)), 40);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.offset_a, frozen.offset_a, 0.0);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, frozen.offset_b, 0.0);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_a, frozen.gain_corr_a, 0.0);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, frozen.gain_corr_b, 0.0);
+    SIM_ASSERT_TRUE(ctx, bench.moves >= 2);
+    SIM_ASSERT_TRUE(ctx, fabs(bench.skew_b_ps + bench.skew_cmd_b_ps) <= act.deadband_ps + 2.0);
+    /* Digital rails must be detected before a correction can hide clipping. */
+    {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        for (unsigned i = 0U; i < 64U; ++i) {
+            buf[2U * i] = 0xFCU;
+            buf[2U * i + 1U] = 0x7FU;
+        }
+        g_loop.opt.reject_clipping = 1;
+        frozen = g_loop.state;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_TRUE(ctx, row.clipped_samples > 0U);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_CLIPPING);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.offset_a, frozen.offset_a, 0.0);
+    }
+    /* A small deadband still cannot remove the half-control-step floor. */
+    bench.skew_b_ps = 6.0;
+    bench.skew_cmd_b_ps = 0.0;
+    bench.gain_b = 1.0;
+    bench.offset_a = bench.offset_b = 0.0;
+    bench.code = 24;
+    bench.moves = 0;
+    adc_cal_loop_default_options(&opt);
+    opt.update_axes = ADC_CAL_LOOP_AXIS_SKEW;
+    opt.skew_batch_frames = 5;
+    act.code = 24;
+    act.deadband_ps = 1.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, &act), 0);
+    for (unsigned i = 0U; i < 10U; ++i) {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+    }
+    SIM_ASSERT_EQ_INT(ctx, row.skew_action, ADC_CAL_LOOP_SKEW_ACTION_QUANTIZED_ZERO);
+    SIM_ASSERT_EQ_INT(ctx, bench.moves, 0);
+    /* A tone-free capture must not be graded using a fitted comb/noise tone. */
+    cfg.amp_dbfs = -120.0;
+    bench.skew_b_ps = bench.skew_cmd_b_ps = 0.0;
+    bench.noise = 0.0;
+    adc_cal_loop_default_options(&opt);
+    opt.require_tone = 1;
+    opt.update_axes = 0U;
+    act.request_steps = NULL;
+    act.command_skew_ps = lt_command_skew;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, &act), 0);
+    {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_TONE);
+        SIM_ASSERT_NEAR(ctx, bench.skew_cmd_b_ps, 0.0, 0.0);
+    }
+}
+
 static void test_reject_streak(sim_assert_context_t *ctx)
 {
     adc_cal_loop_config_t cfg;
@@ -381,6 +512,8 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_batch_decision(ctx, summary, +1.0);
     test_batch_decision(ctx, summary, -1.0);
     test_reject_streak(ctx);
+    test_single_axis_experiments(ctx);
+    sim_board_axis_tests_run(ctx, summary);
 }
 
 /* ------------------------------------------------------------------------ */

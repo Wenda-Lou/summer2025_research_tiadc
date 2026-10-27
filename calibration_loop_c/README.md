@@ -62,6 +62,12 @@ It is not the `butils_calibration.c` convention.
 
 ## Test
 
+The board experiment adapter also uses this core. `update_axes` defaults to all
+three axes; zero freezes correction coefficients while continuing measurement.
+Optional post-ADC offset injection, raw-rail rejection and a tone requirement
+are enabled only for experiments. See
+[`CALIBRATION_LIMIT_TEST.md`](../calibration_loop/CALIBRATION_LIMIT_TEST.md).
+
 ```sh
 cd calibration_sim
 cmake -S . -B build && cmake --build build

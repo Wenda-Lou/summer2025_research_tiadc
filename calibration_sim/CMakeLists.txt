@@ -18,6 +18,7 @@ add_executable(adc_cal_sim
     sim_platform.c
     sim_tests.c
     sim_loop_tests.c
+    sim_board_axis_tests.c
     "${PROD_DIR}/adc_frame.c"
     "${PROD_DIR}/adc_calibration_pipeline.c"
     "${PROD_DIR}/adc_calibration_dither.c"

@@ -11,4 +11,6 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary);
  * compares the C loop with the Python loop field by field. */
 void sim_loop_tests_run_golden(sim_assert_context_t *ctx, FILE *summary, const char *path);
 
+void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary);
+
 #endif /* SIM_LOOP_TESTS_H */

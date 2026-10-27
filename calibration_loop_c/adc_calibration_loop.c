@@ -1158,6 +1158,7 @@ void adc_cal_loop_default_options(adc_cal_loop_options_t *options)
     options->skew_direction_tol_ps = 8.0;
     options->skew_min_yield = 0.4;
     options->max_consecutive_rejects = 20;
+    options->update_axes = ADC_CAL_LOOP_AXIS_ALL;
 }
 
 void adc_cal_loop_default_actuator(adc_cal_loop_actuator_t *actuator)
@@ -1433,7 +1434,9 @@ static void skew_decision(adc_cal_loop_t *loop, const adc_cal_loop_block_estimat
     error = batch.mean_ps - loop->state.skew_target_ps;
     row->skew_batch_error_ps = error;
 
-    if (!loop->opt.close_skew_loop || loop->act.request_steps == NULL) {
+    if (!loop->opt.close_skew_loop ||
+        (loop->opt.update_axes & ADC_CAL_LOOP_AXIS_SKEW) == 0U ||
+        loop->act.request_steps == NULL) {
         row->skew_action = ADC_CAL_LOOP_SKEW_ACTION_MEASURE_ONLY;
         return;
     }
@@ -1463,9 +1466,13 @@ static void skew_decision(adc_cal_loop_t *loop, const adc_cal_loop_block_estimat
 
     steps = adc_cal_loop_error_to_steps(&loop->act, error);
     if (steps == 0) {
-        row->skew_action = (fabs(error) <= loop->act.deadband_ps)
-                               ? ADC_CAL_LOOP_SKEW_ACTION_INSIDE_DEADBAND
-                               : ADC_CAL_LOOP_SKEW_ACTION_AT_RANGE_LIMIT;
+        if (fabs(error) <= loop->act.deadband_ps) {
+            row->skew_action = ADC_CAL_LOOP_SKEW_ACTION_INSIDE_DEADBAND;
+        } else if (nearbyint(-error / loop->act.step_ps) == 0.0) {
+            row->skew_action = ADC_CAL_LOOP_SKEW_ACTION_QUANTIZED_ZERO;
+        } else {
+            row->skew_action = ADC_CAL_LOOP_SKEW_ACTION_AT_RANGE_LIMIT;
+        }
         return;
     }
     memset(&ack, 0, sizeof(ack));
@@ -1559,6 +1566,16 @@ static adc_cal_loop_reject_t reject_reason(const adc_cal_loop_t *loop,
     if (est->ch_a.n_events_used < 2 || est->ch_b.n_events_used < 2) {
         return ADC_CAL_LOOP_REJECT_TOO_FEW_EVENTS;
     }
+    if (loop->opt.require_tone &&
+        (!loop_isfinite(est->tone_ratio) ||
+         !loop_isfinite(est->ch_a.tone_amplitude) ||
+         !loop_isfinite(est->ch_b.tone_amplitude) ||
+         !loop_isfinite(est->ch_a.residual_rms) ||
+         !loop_isfinite(est->ch_b.residual_rms) ||
+         fabs(est->ch_a.tone_amplitude) <= fmax(1.0, 3.0 * est->ch_a.residual_rms) ||
+         fabs(est->ch_b.tone_amplitude) <= fmax(1.0, 3.0 * est->ch_b.residual_rms))) {
+        return ADC_CAL_LOOP_REJECT_TONE;
+    }
     if (!loop_isfinite(est->ch_a.gain_codes) || !loop_isfinite(est->ch_a.skew_samples)) {
         return ADC_CAL_LOOP_REJECT_A_NOT_FINITE;
     }
@@ -1586,6 +1603,26 @@ static void row_state(const adc_cal_loop_t *loop, adc_cal_loop_row_t *row)
     row->gain_corr_a = loop->state.gain_corr_a;
     row->gain_corr_b = loop->state.gain_corr_b;
     row->skew_cmd_ps = loop->state.skew_cmd_ps;
+}
+
+/* Keep the public state_update() API and the legacy/golden behaviour intact.
+ * An experiment freezes coefficients, not just their values in the log. */
+static void update_selected_axes(adc_cal_loop_t *loop, adc_cal_loop_row_t *row,
+                                 int integrate_skew)
+{
+    const double mu_offset = loop->state.mu_offset;
+    const double mu_gain = loop->state.mu_gain;
+    if ((loop->opt.update_axes & ADC_CAL_LOOP_AXIS_OFFSET) == 0U) {
+        loop->state.mu_offset = 0.0;
+    }
+    if ((loop->opt.update_axes & ADC_CAL_LOOP_AXIS_GAIN) == 0U) {
+        loop->state.mu_gain = 0.0;
+    }
+    (void)adc_cal_loop_state_update(&loop->state, &row->est, integrate_skew,
+                                    loop->opt.gain_observable,
+                                    row->est.skew_used_ps, row);
+    loop->state.mu_offset = mu_offset;
+    loop->state.mu_gain = mu_gain;
 }
 
 int adc_cal_loop_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes,
@@ -1618,6 +1655,18 @@ int adc_cal_loop_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes,
     row->polarity = loop->polarity;
     n = (int)row->prep.n_samples;
 
+    for (int i = 0; i < n; ++i) {
+        if (loop->ch_a[i] <= -8192.0 || loop->ch_a[i] >= 8191.0) {
+            row->clipped_samples++;
+        }
+        if (loop->ch_b[i] <= -8192.0 || loop->ch_b[i] >= 8191.0) {
+            row->clipped_samples++;
+        }
+        /* After physical de-framing; never use rot+4 to select an ADC. */
+        loop->ch_a[i] += loop->opt.input_offset[0];
+        loop->ch_b[i] += loop->opt.input_offset[1];
+    }
+
     state_apply(&loop->state, loop->ch_a, loop->ch_b, loop->cal_a, loop->cal_b, n);
     rc = adc_cal_loop_estimate_block(
         loop, loop->cal_a, loop->cal_b, (size_t)n, row->prep.n0,
@@ -1630,7 +1679,9 @@ int adc_cal_loop_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes,
     row->est.rotation = row->prep.rotation;
     row->est.skew_used_ps = row->est.skew_mismatch_ps;
 
-    row->rejected = reject_reason(loop, &row->prep, &row->est);
+    row->rejected = (loop->opt.reject_clipping && row->clipped_samples != 0U)
+                        ? ADC_CAL_LOOP_REJECT_CLIPPING
+                        : reject_reason(loop, &row->prep, &row->est);
     if (row->rejected != ADC_CAL_LOOP_REJECT_NONE) {
         row_state(loop, row);
         return 0;
@@ -1638,14 +1689,14 @@ int adc_cal_loop_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes,
 
     if (loop->act.request_steps != NULL) {
         /* hardware: gain/offset per frame, skew as a batch decision */
-        (void)adc_cal_loop_state_update(&loop->state, &row->est, 0, loop->opt.gain_observable,
-                                        NAN, row);
+        update_selected_axes(loop, row, 0);
         skew_decision(loop, &row->est, row);
     } else {
         /* model: per-frame skew integrator */
-        (void)adc_cal_loop_state_update(&loop->state, &row->est, loop->opt.close_skew_loop,
-                                        loop->opt.gain_observable, row->est.skew_used_ps, row);
-        if (loop->opt.close_skew_loop && loop->act.command_skew_ps != NULL) {
+        const int close_skew = loop->opt.close_skew_loop &&
+                              (loop->opt.update_axes & ADC_CAL_LOOP_AXIS_SKEW) != 0U;
+        update_selected_axes(loop, row, close_skew);
+        if (close_skew && loop->act.command_skew_ps != NULL) {
             loop->act.command_skew_ps(loop->act.ctx, loop->state.skew_cmd_ps);
         }
     }
@@ -1716,6 +1767,8 @@ const char *adc_cal_loop_reject_name(adc_cal_loop_reject_t reason)
     case ADC_CAL_LOOP_REJECT_SKEW_RANGE: return "skew mismatch residual out of range";
     case ADC_CAL_LOOP_REJECT_GAIN_RANGE: return "gain ratio out of range";
     case ADC_CAL_LOOP_REJECT_CAPTURE: return "capture could not be de-framed";
+    case ADC_CAL_LOOP_REJECT_CLIPPING: return "raw ADC clipping";
+    case ADC_CAL_LOOP_REJECT_TONE: return "tone required";
     }
     return "?";
 }
@@ -1733,6 +1786,7 @@ const char *adc_cal_loop_skew_action_name(adc_cal_loop_skew_action_t action)
     case ADC_CAL_LOOP_SKEW_ACTION_AT_RANGE_LIMIT: return "at-range-limit";
     case ADC_CAL_LOOP_SKEW_ACTION_MOVE_OK: return "move:OK";
     case ADC_CAL_LOOP_SKEW_ACTION_MOVE_FAILED: return "move:FAILED";
+    case ADC_CAL_LOOP_SKEW_ACTION_QUANTIZED_ZERO: return "quantized-zero";
     }
     return "?";
 }

@@ -29,6 +29,8 @@ static XTime g_board_loop_t_capture_end;
 static uint64_t g_board_loop_compute_ticks;
 static uint64_t g_board_loop_compute_count;
 
+static void board_loop_test_command(void);
+
 /* ---------------------------------------------------------------------------
  * Printing.  xil_printf has no floating point, so values go out as scaled
  * integers ("nan" when not finite).
@@ -59,6 +61,8 @@ static const char *board_loop_reject_tag(adc_cal_loop_reject_t r)
     case ADC_CAL_LOOP_REJECT_SKEW_RANGE: return "skew_range";
     case ADC_CAL_LOOP_REJECT_GAIN_RANGE: return "gain_range";
     case ADC_CAL_LOOP_REJECT_CAPTURE: return "capture";
+    case ADC_CAL_LOOP_REJECT_CLIPPING: return "clipping";
+    case ADC_CAL_LOOP_REJECT_TONE: return "tone";
     }
     return "?";
 }
@@ -85,6 +89,7 @@ static void board_loop_print_row(const adc_cal_loop_row_t *row)
     board_loop_put("corr_b_ppm", row->gain_corr_b - 1.0, 1e6);
     board_loop_put("offa_mc", row->offset_a_state, 1e3);
     board_loop_put("offb_mc", row->offset_b_state, 1e3);
+    xil_printf(" clips=%u gsrc=%s", row->clipped_samples, row->gain_source);
     if (row->skew_action != ADC_CAL_LOOP_SKEW_ACTION_NONE) {
         xil_printf(" batch=%d/%d", row->skew_batch_used, row->skew_batch_n);
         board_loop_put("bmean_cps", row->skew_batch_mean_ps, 100.0);
@@ -176,6 +181,7 @@ static void adc_loop_print_command_help(void)
     xil_printf("  adc -cal loop open N      Same, skew measured only (no actuator writes).\r\n");
     xil_printf("  adc -cal loop status      State of the last loop run.\r\n");
     xil_printf("  adc -cal loop wave [K]    List the known DPG vectors / select K as the one loaded.\r\n");
+    xil_printf("  adc -cal loop test help   Isolated offset/gain/skew experiments and holdout.\r\n");
     xil_printf("      Waveform assumed on the DPG (*):\r\n");
     board_loop_print_waves();
 }
@@ -292,6 +298,10 @@ static void handle_adc_loop_cmd(void)
         board_loop_print_status();
         return;
     }
+    if (strcmp(token, "test") == 0) {
+        board_loop_test_command();
+        return;
+    }
     if (strcmp(token, "wave") == 0) {
         token = strtok(NULL, " ");
         if (token != NULL) {
@@ -326,5 +336,7 @@ static void handle_adc_loop_cmd(void)
     }
     board_loop_run((unsigned)parsed, closed);
 }
+
+#include "butils_loop_test.c"
 
 #endif /* BUTILS_LOOP_FRAGMENT */

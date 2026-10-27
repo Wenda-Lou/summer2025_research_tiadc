@@ -1,0 +1,488 @@
+# Offset / gain / skew 单项校准极限测试
+
+后续 AI/维护者先读 [交接记录](CALIBRATION_LIMIT_HANDOFF.md)，了解当前
+实现、验证和未上板状态；下文是详细原理和操作步骤。
+
+适用程序：`firmware/thesis_v3_loop_appl` 的 A53 闭环，使用
+`calibration_loop_c`。需要重新构建、下载该 ELF；旧 ELF 不包含下面的
+`adc -cal loop test ...` 命令。这里没有自动下载 ELF 或连接台架。
+
+## 首次上板操作顺序（先跑通三个单点）
+
+下面是可直接按顺序操作的首次测试流程。先跑通每项一个测试点，再做
+第 6 节的重复阶梯扫描。串口开启日志保存；每条命令完成后再发下一条，
+不要整段同时粘贴。正常测试命令结束会输出 `LOOP-TEST-END result=OK`。
+`step 0` 则检查 `SKEW-TXN ... result=OK`；波形选择检查 `LOOP-WAVE`。
+
+### 第一步：新固件和固定波形
+
+1. 在 Vitis clean/build `thesis_v3_loop_appl`，下载新 ELF，完成正常 bring-up。
+2. DPG 加载 `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5.txt`，
+   即 199.375 MHz 的主音加平衡正负 dither，不是 JSON，也不是纯正弦。
+3. 保持 DAC 2.6 GS/s、ADC 1.3 GS/s，以及现有接线、幅度。
+
+主音是 -1.5 dBFS（约 27570 DAC codes 峰值），dither 为 5190 DAC codes。
+该 TXT 实际范围为 -32746..32746，已很接近 DAC 满量程，先不要增加数字幅度。
+这些数字不是 ADC 输入电压。先确认原始 ADC 数据未削顶。
+
+### 第二步：建立基准，记录实际控制码 N
+
+在串口终端逐条输入：
+
+```text
+adc -cal skew step 0
+adc -cal loop wave 0
+adc -cal loop test help
+adc -cal loop test baseline 600 100
+adc -cal loop test status
+```
+
+基准阶段包含 600 次三项校准尝试，再全部冻结、进行 100 次独立测量。
+可能需要几分钟，等待完成，不要因没有立即返回而重复发送命令。
+
+确认 `LOOP-TEST-BASELINE valid=1`，记录：
+
+- 基准 `code=N`：本次实验的真实起点，不能预先假设是 12、24 或 35。
+- `LOOP-TEST-SNAPSHOT channel=1 ifc=...`：物理 B 银行的基准 IFC。
+  输出为十进制，例如 `ifc=12` 就是 `0x0C`。
+
+若基准无效、出现错误 ACK 或 clipping，先排查，不进入下一个测试。
+
+### 第三步：Offset 单点
+
+```text
+adc -cal loop test restore
+adc -cal loop test offset B 32
+adc -cal loop test run offset 40 300 100
+adc -cal loop test restore
+```
+
+这里在 B 的采样值上加 32 个原生 ADC codes 的**软件偏置**。
+`40 300 100` 分别表示：40 次全冻结 PRE、300 次 offset-only TRAIN、
+100 次全冻结 HOLD。Gain 和 skew 不参与调整。
+
+先看 PRE 确实有 offset 变化，再看 HOLD 是否接近零。测试成功后，
+再按相同步骤测 -32、正负 4、16、64 等点。硬件 DC 滤波开关对照见 5.3 节；
+不要把这组软件阶梯写成模拟输入 offset 注入。
+
+### 第四步：Gain 单点
+
+**仅当基准 B 的 IFC 为 `0x0C` 时**，下面的 `0x0D` 才构成量程变化：
+
+```text
+adc -cal loop test restore
+adc -cal loop test ifc B 0x0D
+adc -cal loop test run gain 40 300 100
+adc -cal loop test restore
+```
+
+如果基准已是 `0x0D`，改测另一个合法量程，例如 `0x0C`。
+不能把“写入与基准相同的 IFC”当作施加了增益失配。
+
+检查 PRE 幅度比确实变化，随后 HOLD 的 gain 残差应接近零，即
+校正后的 tone 幅度比接近 1。此时 offset 和 skew 校正保持基准状态。
+
+### 第五步：Skew 步长与一个恢复点
+
+使用第二步读出的 N。**下例只是假设 N=12；实际不是 12 时必须替换数字。**
+
+先做配对步长测量：
+
+```text
+adc -cal loop test step 12 55
+adc -cal loop test restore
+```
+
+它依次测 12、13、12、13、12，每个状态尝试 55 帧。
+比较 `step0/step2/step4` 的 skew 均值是否接近，`step1/step3` 是否接近，
+两组差值就是当前工作点的一控制码响应。Gain/offset 始终冻结。
+不要直接套用 19.1 ps/code；这条串口命令提供测量摘要，自动显著性和
+重复性评分可用第 6 节的 Python `step` 模式完成。
+
+然后从 N+1 测单项恢复；仍以 N=12 为例：
+
+```text
+adc -cal loop test park 13
+adc -cal loop test run skew 40 300 100
+adc -cal loop test restore
+```
+
+PRE 测初始 skew，TRAIN 只移动 skew 执行器，HOLD 全冻结测残差。
+这里只设置了初始状态，控制器不知道它需要“退回一码”；它必须根据
+实际采样的误差决定动作。如果初始误差已在死区内，也可能不移动。
+
+### 第六步：读取独立残差，再扩大扫描
+
+重点看 `LOOP-TEST-SUMMARY phase=hold`，不是只看 TRAIN 最后一行。
+
+| 字段 | 换算为实际报告单位 | 例子 |
+|---|---|---|
+| `offset_mc` / `offset_sd_mc` | 除以 1000，校正输出 codes | 100 = 0.100 code |
+| `gain_ppm` / `gain_sd_ppm` | 除以 10000，得到 % | 1000 = 0.100% |
+| `skew_cps` / `skew_sd_cps` | 除以 100，得到 ps | 500 = 5.00 ps |
+
+这些是有符号均值及帧间 SD；SD 不是均值偏差。检查 accepted/attempts，
+保留拒绝原因。单个点 HOLD 均值小也不能代替多次重复的成功率。
+
+三个单点都跑通后，再扩大正、负失配，每个点重复至少 5 次。
+Skew 可测 N±1、±2、±4、±8，绝对控制码必须在 0..48；gain 使用合法 IFC
+阶梯；offset 软件阶梯以 codes 为单位。每次都先恢复同一个基准。
+
+如果使用 Python 自动化，先关闭手动串口终端，避免抢占同一 COM 口。
+自动脚本会自己建立基准和恢复，不需要同时手动发送上述命令。
+发生失败 ACK、方向错误或 clipping 时停止，不反复发写入命令。
+
+## 1. 测试要回答的问题
+
+对每一种失配，分别报告：
+
+1. **捕获/校准范围**：从多大的正、负初始失配，能在固定预算内收敛。
+2. **残差精度**：停止更新后，新的采样还剩多少有符号误差和波动。
+3. **重复性**：同一初始状态重复运行的成功率，以及收敛需要的帧数。
+
+三项同时收敛的历史记录是参考结果，不是单项极限。软件拒绝门限、
+执行器边界、固定采集预算、噪声和算法发散也不是同一种失败。
+
+| 测试项 | 扰动方式 | 实际覆盖的范围 |
+|---|---|---|
+| Offset 软件阶梯 | 在解帧后的一个通道加已知 DC codes | 采样后 offset 算法；不覆盖 ADC 前端过载 |
+| Offset 硬件对照 | 单通道开启/关闭内部 DC 消除滤波器 | 芯片实际 offset 状态变化；不是已知大小的 offset 注入 |
+| Gain | 单通道改 `0x1910` 的 IFC | 已实现的七种硬件量程；不是任意连续增益范围 |
+| Skew | ACK 检查的相对时钟延迟控制码 | 当前执行器、输入频率及上电状态下的校准能力 |
+
+**Offset 的限制需要明确：**现有寄存器接口提供 DC 消除开关，不能
+把它当成一个可以设置任意 `+32 codes` 的 offset DAC。本工具不写未知
+寄存器。`test offset B 32` 明确是软件注入；`test dcfilter B off` 才是
+实际芯片寄存器操作。这两种实验在报告中必须分开。
+
+## 2. 原理、符号和单位
+
+数字校正沿用生产闭环的定义：
+
+```text
+y_cal = (y_raw + injected_offset - offset_state) * gain_corr
+```
+
+软件 offset 加在物理解帧后、校正前，不改变原始 DMA bytes，不通过
+`rotation + 4` 重新切分通道，也不对采样记录翻转符号。
+
+- 注入量、`offset_state`：原生有符号 14-bit ADC codes。
+- Offset 残差：校正输出的 `offset_B - offset_A`，单位是校正后的 codes。
+  若冻结的 `gain_corr` 不等于 1，注入 32 个原生 codes 的初始残差
+  不一定恰好是 32 个输出 codes。不要未经转换就写成实测 µV。
+- Gain 残差：`abs(tone_B) / abs(tone_A) - 1`，乘 100 得到百分比。
+  工具校正的是所选主音处的**通道增益比**，不是绝对 volts/code。
+- Skew：正值表示 B 采样时刻更晚。相位路线给出当前主音频率下的
+  等效时间差。固定频率下输入通路的相位差也会进入这个结果。
+
+修改 B 的 IFC 时，名义幅度变化为：
+
+```text
+amplitude_after / amplitude_before = VFS_B_before / VFS_B_after
+```
+
+例如 `0x0C -> 0x0D` 对应 `1.59 / 1.70 - 1 = -6.47%`。
+这只是名义寄存器比例；实际初始失配以 PRE 采样为准。
+
+Skew 不用固定的标称 ps/code 当作注入真值。先测当前工作点的一码步长：
+
+```text
+N -> N+1 -> N -> N+1 -> N
+```
+
+每个状态都冻结校正、采集新帧。工具比较两次步进的方向、显著性，以及
+两次返回 N 是否恢复到基线。这里是步长/重复性测量，不是独立的绝对
+时间标定；使用同一执行器注入和纠正也不能单独证明时基准确度。
+当前控制模型要求增大控制码使 skew 增大。若两次都测到负方向，结果
+仍会保留，但不标 PASS；先核对通道/测量路线，不自动翻转控制方向。
+
+## 3. PRE / TRAIN / HOLD
+
+一次 `test run AXIS PRE TRAIN HOLD` 包含三个阶段：
+
+| 阶段 | 允许更新 | 作用 |
+|---|---|---|
+| PRE | 无 | 测扰动后的初始失配 |
+| TRAIN | 仅指定项 | 测单项收敛 |
+| HOLD | 无 | 用新采样独立测残差 |
+
+每个测试点都从保存的数字基准系数开始，避免继承上一个测试点的
+学习结果。非待测项冻结在基准值，而不是简单清零。
+
+所有预算均为**尝试帧数**，包含拒绝帧。它与旧命令
+`adc -cal loop 300`（收集 300 个合格帧）不同。新测试不会只挑合格帧
+来隐藏低成功率。连续三次采集失败会提前停止当前阶段。
+
+`loop open` 仍保留原行为：只关闭 skew 执行器，gain/offset 仍在学习。
+严格独立测试应使用本文件的 `test` 命令。
+
+## 4. 上板前准备
+
+1. 在 Vitis 构建并下载 `thesis_v3_loop_appl`，按现有流程完成硬件 bring-up。
+   不需要修改 Vitis 生成的 `src/` 或链接脚本。
+2. DPG 加载与固件选项完全一致的 **tone + dither** 波形：
+
+   | Wave | 文件 | Tone |
+   |---|---|---|
+   | 0 | `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5.txt` | 199.375 MHz |
+   | 1 | `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5_f399p375.txt` | 399.375 MHz |
+
+   纯 function-generator 正弦、dither-only 波形、旧的宽脉冲向量都不能
+   直接替代这里的波形。固件不能可靠地自动识别所有错误向量。
+3. 两通道输入同源，保持接线、幅度、采样率和温度条件一致，不让 ADC 削顶。
+   先确认物理 A/B 寄存器银行与导出的通道标签对应；不要靠储存的 DC
+   数值判断通道，也不要为交换通道把解帧旋转加 4。
+4. 首次使用执行器：`adc -cal skew step 0`。应看到 `result=OK`。
+   首次会进行 neutral 初始化；后续 `step 0` 不会自动回到 neutral。
+5. 选择波形：`adc -cal loop wave 0`。关闭占用串口的其他终端再运行 Python。
+6. 确定实际 COM 端口。以下 `COM7` 只是示例，不能假定每台电脑相同。
+
+Skew 写入必须走固件事务：读回、JESD 重同步、warm-up 和新 DMA 帧检查。
+本工具不直接写 `0x0110/0x0112/0x0114`。遇到失败 ACK 或反方向响应，
+测试锁定停止；不通过再次写寄存器尝试恢复。
+
+## 5. 串口命令
+
+先查看 `adc -cal loop test help`。
+
+### 5.1 建立和保存基准
+
+```text
+adc -cal loop test baseline 600 100
+adc -cal loop test status
+```
+
+前 600 次尝试开启三项校准，后 100 次全部冻结。通过后保存：数字
+校正系数、极性锚、波形编号、实际执行器码，以及 A/B 两银行的
+`0x1910/0x0701/0x073B` 原值。读取或写入本地寄存器都会恢复原通道选择。
+
+基准有效还要求 HOLD 合格率至少 80%，offset 均值在 0.5 输出 code 内、
+gain 均值在 0.2% 内，skew 均值接近当前死区/半步长允许的范围。
+失败时不保存为有效基准。这里的判据只是实验准备条件，不是新测得的极限。
+
+### 5.2 Offset 软件阶梯
+
+```text
+adc -cal loop test restore
+adc -cal loop test offset B 32
+adc -cal loop test run offset 40 300 100
+adc -cal loop test restore
+```
+
+重复 `-64,-16,-4,0,4,16,64` 等正、负注入点。范围支持
+`-4096..4096` 个原生 codes。注入在 ADC 之后以浮点数相加，不模拟
+ADC 饱和、模拟输入偏置或整数截断。
+
+### 5.3 Offset 芯片开关对照
+
+```text
+adc -cal loop test restore
+adc -cal loop test dcfilter B off
+adc -cal loop test run offset 40 300 100
+adc -cal loop test restore
+```
+
+也可用 `on`。这是改变内部 DC 消除状态，保留寄存器的其他位并核对
+读回。开启滤波器时会清除 `0x073B` 的 bit 7。
+使用 PRE 测实际 offset 变化并观察其是否稳定；它不是已知幅度阶梯，
+滤波器在运行时还可能改变被校准对象。
+
+### 5.4 Gain 单通道寄存器阶梯
+
+```text
+adc -cal loop test restore
+adc -cal loop test ifc B 0x0D
+adc -cal loop test run gain 40 300 100
+adc -cal loop test restore
+```
+
+合法 IFC 码：
+
+| Code | 名义差分满量程 |
+|---|---|
+| `0x00` | 2.04 Vpp |
+| `0x0A` | 1.36 Vpp |
+| `0x0B` | 1.47 Vpp |
+| `0x0C` | 1.59 Vpp |
+| `0x0D` | 1.70 Vpp |
+| `0x0E` | 1.81 Vpp |
+| `0x0F` | 1.93 Vpp |
+
+仅改一个银行，保留 `0x1910` 高四位并验证读回。HOLD 只评价该频率下的
+tone 增益比，不把 dither 比例也要求为 1。七个 IFC 点全部通过时，只能
+说覆盖了这些硬件状态；还没找到更大的算法失配边界。
+
+### 5.5 Skew 步长与单项范围
+
+先用 `status` 中的当前基准码 N 进行配对测试。例如 N=12 时：
+
+```text
+adc -cal loop test step 12 55
+adc -cal loop test restore
+```
+
+它测 `12,13,12,13,12`，每个状态尝试 55 帧，结束时停在 12；之后
+`restore` 回到已保存基准。N 不是固定的 12、24 或 35，取决于本次上电。
+
+再测单项恢复，例如假设基准 N=12，先从 N+4=16 开始：
+
+```text
+adc -cal loop test restore
+adc -cal loop test park 16
+adc -cal loop test run skew 40 300 100
+adc -cal loop test restore
+```
+
+分别测试 N±1、±2、±4、±8，并在失败边界细扫。`park` 接受绝对控制码
+`0..48`，通过 ACK 检查的单步事务到达，不会静默截断越界请求。
+`step` 的 N 范围为 `0..47`，因为要测 N+1。
+
+一个周期频率的 phase 残差不是全频带真实时延的独立标定。换到另一主音
+复核时，尽量保持同次上电；重新建立对应波形的基准，不混用两套数字状态。
+
+### 5.6 门限、死区、控制步长
+
+```text
+adc -cal loop test config 200000 250 1000 1910 20
+```
+
+五个参数依次为：
+
+| 参数 | 上例意义 |
+|---|---|
+| Gain gate，ppm | 200000 = 允许幅度比偏离 1 达 20% |
+| Skew gate，千分之一个采样周期 | 250 = ±0.25 个采样周期 |
+| Deadband，0.01 ps | 1000 = ±10 ps |
+| 控制用步长，0.01 ps/code | 1910 = 19.1 ps/code |
+| Batch frames | 20 个合格帧决定一次 skew 移动 |
+
+参数只影响新 `test` 流程，旧 `loop N` 保持默认行为。
+Skew gate 最大允许 0.5 个采样周期。不要为得到通过结果无限放宽门限。
+允许较大失配的扫描可显式改 gain gate，例如 `300000`；报告时保留该设置。
+
+降低 deadband 本身不保证精度提升：控制动作先按 `round(-error/step)`
+量化，再限制为一次最多一控制码，小于半个控制步长可能已经不产生移动。
+当前工作点步长和噪声都应单独测量。
+这种停止会记录为 `quantized-zero`，与实际执行器边界分开。
+
+TRAIN 的尝试预算还必须足够：20 帧一批时，300 次尝试最多只有 15 个
+完整批次；若初始状态需要超过 15 次移动，它失败说明预算不足，不等于
+执行器或算法不能收敛。
+
+## 6. Python 自动扫描和导出
+
+从仓库根目录执行，需要 `pyserial`。默认只显示计划，不连接串口。
+先查看计划，再加 `--execute`。每次使用一个**不存在的新输出目录**，
+脚本拒绝覆盖旧结果。
+
+默认三项扫描共需较长台架时间。先用一个小测试点、一次重复确认流程，
+再运行完整阶梯；例如 `--points=1 --repeats 1` 做一个 skew 点。
+`--timeout` 是每条完整命令的等待上限，默认 1800 秒；增加帧数，尤其
+step 的五个状态都使用大帧数时，需要相应提高这个超时。
+
+```powershell
+# Offset：注入量为软件原生 ADC codes
+python tools/board_axis_test.py sweep --axis offset --uart COM7 --wave 0 --points=-64,-16,-4,0,4,16,64 --repeats 5 --out calibration_out/limits_offset_01
+
+# Gain：这里填的是 IFC 寄存器码，不是百分比
+python tools/board_axis_test.py sweep --axis gain --uart COM7 --wave 0 --points=12,13,11,14,10,15,0 --gain-gate-ppm 300000 --repeats 5 --out calibration_out/limits_gain_01
+
+# Skew：相对于本次收敛基准的控制码偏移
+python tools/board_axis_test.py sweep --axis skew --uart COM7 --wave 0 --points=-8,-4,-2,-1,0,1,2,4,8 --repeats 5 --out calibration_out/limits_skew_01
+
+# 配对步长：默认在本次收敛基准码 N 测 N/N+1；也可指定 --code N
+python tools/board_axis_test.py step --uart COM7 --wave 0 --frames 55 --out calibration_out/limits_step_01
+```
+
+确认硬件和波形就绪后，在所需命令末尾加 `--execute`。
+每次脚本启动先建立基准；每个点/重复开始时 restore，注入后运行
+PRE/TRAIN/HOLD，全部结束后正常 restore。脚本只设置固件假定的波形编号，
+不替用户加载 DPG。换输入连接、重新上电、重载 ELF 或更换波形后，需新基准。
+
+对每个点默认 PRE=40、TRAIN=300、HOLD=100 次尝试；可用
+`--pre/--train/--hold` 修改。基准默认 600+100。一步范围越界会明确报错，
+不会把 N-8 静默改成 0。
+
+默认判据：
+
+- Offset：0.5 个校正输出 code。
+- Gain：0.001，即 0.1% 幅度比残差。
+- Skew：10 ps。
+
+用 `--tolerance` 修改，单位分别为 codes、比例、ps。
+例如 gain 的 0.05% 写 `--tolerance 0.0005`。这些是声明的成功标准，
+不是已经验证的硬件能力。
+
+HOLD 至少要有 80% 合格帧，且 `abs(mean) + 1.96*SE <= tolerance`。
+还检查系数是否冻结、HOLD 是否接续最终训练状态，以及是否碰到执行器边界。
+`convergence_attempt` 来自 TRAIN 的稳定滑动窗口，是辅助读数；最终结果
+以独立 HOLD 为准。SE 是帧间独立假设下的近似值，序列相关会使它偏小，
+因此保留 SD，并用多次独立重复验证，不能仅凭很小的 SE 宣称绝对精度。
+
+输出：
+
+| 文件 | 内容 |
+|---|---|
+| `console.log` | 每条命令、完整串口输出、失败原因和逐点结果 |
+| `frames.csv` | 阶段、尝试序号、三项残差、校正系数、拒绝标签 |
+| `summary.csv` | 初始失配、HOLD 均值/SD/SE、成功率所需逐次结果、收敛帧数 |
+| `meta.json` | 参数、单位、基准码、是否完整结束；step 模式还含步长比较 |
+
+`pre_mean` 只使用 PRE 合格帧。`pre_observed_mean` 还保留被 gain/skew
+门限拒绝帧的有限估计，用来辨认软件门限；这些帧不会参与校正。
+失败事务发生时仍保留 `console.log`，CSV 保留已经完成的测试点。
+
+也可以只记录一次手动运行并离线分析：
+
+```powershell
+python tools/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run skew 40 300 100" --out calibration_out/skew_single_01.log
+python tools/board_axis_test.py analyse --log calibration_out/skew_single_01.log --axis skew --hold 100 --tolerance 10
+```
+
+`analyse` 用于单次 run/step 的日志；不要把完整多点 sweep 日志当成一个点。
+
+## 7. 失败的解释和恢复
+
+| 记录 | 应如何解释 |
+|---|---|
+| `gain_range` / `skew_range` | 当前接收门限阻止捕获，不直接证明估计器失效 |
+| `margin` / `events` / `tone` | 波形、对齐或信噪比不满足条件 |
+| TRAIN 预算用尽且残差仍大 | 本预算下未收敛；先检查最多可完成的控制步数 |
+| `at-range-limit` | 执行器调节范围耗尽 |
+| `quantized-zero` | 校正误差量化为零码，受控制步长限制，未必到硬件边界 |
+| `inside-deadband` | 软件停止条件，不自动等于噪声或精度极限 |
+| `clipping` | 原始 ADC 数据触及数字轨，不能靠校正把过载帧伪装成正常 |
+| `move:FAILED` / `RECOVERY_REQUIRED` | 事务失败；锁定停止，无写入重试 |
+| `abort:direction` | 实测方向与控制模型不一致；锁定停止 |
+
+正常完成可以 `test restore` 回到已保存基准。失败写入后本工具不自动
+恢复；先只读排查，再重启/重载 ELF、完成硬件 bring-up 并建立新基准。
+软件故障锁保持到固件重新启动；只重新执行外设配置不会清除该锁。
+中断或超时也不会自动再发硬件命令，因为最后一个事务可能尚未完成。
+不要在仍有未完成串口命令时重复启动脚本。
+
+最终汇报按项给出“初始实测失配 -> HOLD 残差”，并附 SD、重复成功率、
+输入频率/幅度、门限和预算。若扫描到的所有点都通过，应报告
+“至少覆盖已测范围”，不要把最大已测点写成已经找到的校准极限。
+
+## 8. 离线验证与来源
+
+```powershell
+cmake -S calibration_sim -B calibration_sim/build-axis -G Ninja -DCMAKE_C_COMPILER=C:/Strawberry/c/bin/gcc.exe
+cmake --build calibration_sim/build-axis
+calibration_sim/build-axis/adc_cal_sim.exe --run-loop-tests --output-dir calibration_sim/output/axis_native
+python calibration_loop_c/export_golden.py --out calibration_sim/output/axis_golden.txt
+calibration_sim/build-axis/adc_cal_sim.exe --loop-golden calibration_sim/output/axis_golden.txt --output-dir calibration_sim/output/axis_golden_replay
+calibration_sim/build-axis/adc_cal_sim.exe --run-all --output-dir calibration_sim/output/axis_all
+python tools/test_board_axis_test.py
+```
+
+Native 测试验证真实生产控制器的单项冻结、独立 HOLD、注入和 clipping；
+SPI/UART spies 编译真实板级实验片段并验证单通道选择、读回、恢复及失败锁定。
+Python 测试验证日志解析、缺帧/NaN/边界不能误报通过，以及失败后不重试。
+这些不能替代上板验证，不能证明 JESD、模拟噪声或真实 SPI 时序。
+
+寄存器说明来自 [AD9695 Rev. C datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/ad9695.pdf)：
+第 30 页 DC offset calibration，第 133 页 IFC 和本地控制寄存器。
+现有事务/硬件流程见 `firmware/thesis_v3_loop_appl/README.md` 和
+`calibration_loop/BENCH_GUIDE.md`。

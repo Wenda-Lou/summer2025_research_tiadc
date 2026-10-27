@@ -166,6 +166,13 @@ typedef enum {
     ADC_CAL_LOOP_GAIN_DITHER
 } adc_cal_loop_gain_observable_t;
 
+enum {
+    ADC_CAL_LOOP_AXIS_OFFSET = 1,
+    ADC_CAL_LOOP_AXIS_GAIN = 2,
+    ADC_CAL_LOOP_AXIS_SKEW = 4,
+    ADC_CAL_LOOP_AXIS_ALL = 7
+};
+
 typedef struct {
     int cancel_signal;
     int close_skew_loop;
@@ -177,6 +184,10 @@ typedef struct {
     double skew_direction_tol_ps;
     double skew_min_yield;
     unsigned max_consecutive_rejects;
+    unsigned update_axes;       /* default ALL; zero freezes every correction */
+    double input_offset[2];     /* experiment only: post-ADC, native 14-bit codes */
+    int reject_clipping;        /* experiment guard; legacy default is off */
+    int require_tone;           /* refuse a fallback when grading tone gain */
 } adc_cal_loop_options_t;
 
 void adc_cal_loop_default_state(adc_cal_loop_state_t *state);
@@ -219,7 +230,8 @@ typedef enum {
     ADC_CAL_LOOP_SKEW_ACTION_INSIDE_DEADBAND,
     ADC_CAL_LOOP_SKEW_ACTION_AT_RANGE_LIMIT,
     ADC_CAL_LOOP_SKEW_ACTION_MOVE_OK,
-    ADC_CAL_LOOP_SKEW_ACTION_MOVE_FAILED
+    ADC_CAL_LOOP_SKEW_ACTION_MOVE_FAILED,
+    ADC_CAL_LOOP_SKEW_ACTION_QUANTIZED_ZERO
 } adc_cal_loop_skew_action_t;
 
 typedef enum {
@@ -230,7 +242,9 @@ typedef enum {
     ADC_CAL_LOOP_REJECT_B_NOT_FINITE,
     ADC_CAL_LOOP_REJECT_SKEW_RANGE,
     ADC_CAL_LOOP_REJECT_GAIN_RANGE,
-    ADC_CAL_LOOP_REJECT_CAPTURE
+    ADC_CAL_LOOP_REJECT_CAPTURE,
+    ADC_CAL_LOOP_REJECT_CLIPPING,
+    ADC_CAL_LOOP_REJECT_TONE
 } adc_cal_loop_reject_t;
 
 /* One log row (the fields of loop.py's row that this port produces). */
@@ -258,6 +272,7 @@ typedef struct {
     adc_cal_loop_skew_action_t skew_action;
     int skew_step_codes;
     int skew_code;
+    unsigned clipped_samples;  /* original ADC samples at either digital rail */
 } adc_cal_loop_row_t;
 
 typedef struct {
