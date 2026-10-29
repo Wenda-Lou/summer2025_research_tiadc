@@ -12,10 +12,9 @@ way and both are checked here, because both are invisible in a "did it converge"
    while the true residual grew to -371 ps, and the actuator was being walked off the rail one
    acknowledged transaction at a time.  Checked by putting known delays on channel B and
    requiring the route to read them back, sign and scale.
-2. **Which observable is judged.**  The acceptance filter gated on the estimator's *tone* fields,
-   which on a tone-free capture are a fit of noise: 68 of 84 captures (81 %) were rejected while
-   the loop's own route was fine.  Checked by running the loop and counting what the old gate
-   would have thrown away.
+2. **Which observable is judged.** The acceptance filter must judge dither estimates.
+   Strict mode never computes tone diagnostics; those columns must remain NaN.
+   tools/test_dither_only.py separately makes every tone function raise on any call.
 
     python calibration_out/_tone_free_loop_test.py
 """
@@ -36,7 +35,7 @@ from calibration_loop.estimator import prepare_capture               # noqa: E40
 from calibration_loop.loop import CalibrationLoop, LoopOptions       # noqa: E402
 from calibration_loop.simulate import BenchModel                     # noqa: E402
 
-CFG_KW = dict(amp_dbfs=-120.0, dither_edge_dac=4, dither_top_dac=4, dither_scale_lsb=16000.0)
+CFG_KW = dict(amp_dbfs=-120.0, sig_cycles=0, dither_edge_dac=4, dither_top_dac=4, dither_scale_lsb=16000.0)
 """The bench's best dither-only excitation (2026-09-19): 6-sample pulse, 16000 LSB, no tone."""
 
 BENCH_SCALE = 400.0 / 32000.0
@@ -64,7 +63,7 @@ def route_truth(delays_ps, frames: int = 20, scale: float = BENCH_SCALE,
         bench.command_skew(d)
         slope, fold, mag, dc, phase_a = [], [], [], [], []
         for _ in range(frames):
-            prep = prepare_capture(bench.capture(), cfg)
+            prep = prepare_capture(bench.capture(), cfg, tone_free=True)
             m = measure(prep["ch_a"], prep["ch_b"], cfg)
             slope.append(m.skew_slope_ps)
             fold.append(m.skew_fold_ps)
@@ -100,27 +99,6 @@ def run_loop(skew_ps: float, iterations: int = 40, tone_free: bool = True,
                            else LoopOptions(close_skew_loop=True))
     loop.run(iterations, verbose=False)
     return loop, bench
-
-
-def old_gate_rejections(loop) -> tuple[int, int]:
-    """What the pre-2026-09-20 acceptance filter would have refused.
-
-    The old filter judged the estimator's own fields: a non-finite per-channel gain/skew, and
-    ``skew_mismatch_ps`` inside +-0.25 samples.  On a tone-free capture both are properties of a
-    noise fit, not of the frame.  Counted here over the frames the loop *accepted*, which is the
-    number that matters: every one of them is a frame the loop would have had to retry.
-    """
-    rows = [r for r in loop.log if not r.get("rejected")]
-    old = 0
-    for r in rows:
-        bad = (not np.isfinite(r.get("gain_a_codes", np.nan))
-               or not np.isfinite(r.get("gain_b_codes", np.nan))
-               or not np.isfinite(r.get("skew_a_ps", np.nan)))
-        residual = (r.get("skew_mismatch_ps", np.nan)
-                    - loop.state.skew_target_ps) * 1e-12 * loop.cfg.fs_adc
-        if bad or abs(residual) > 0.25:
-            old += 1
-    return old, len(rows)
 
 
 def main() -> int:
@@ -166,9 +144,8 @@ def main() -> int:
                    f"+- {np.std([c['phase_a'] for c in cases]):.3f} samples across states"))
 
     # ---- 2. the closed loop, on both tone-free routes ------------------------
-    # Both routes have to converge: the fold projection is what --tone-free selects (it is the
-    # quieter one on real bench captures) and the fractional-phase fit is the linear alternative,
-    # so a change that breaks either one has to fail here rather than on the bench.
+    # Both routes must converge; --tone-free selects dither_phase and the fold
+    # projection remains a cross-check. Neither may depend on a carrier fit.
     closed = {}
     for route in ("dither_fold", "dither_phase"):
         loop, bench = run_loop(skew_ps=3.6, route=route)
@@ -192,9 +169,8 @@ def main() -> int:
         print(f"  offset mismatch       {closed[route]['offset']:+.4f} LSB")
         print(f"  skew ({route})   {closed[route]['skew']:+.4f} ps   (true 3.600 ps)")
         print(f"  commanded delay       {loop.state.skew_cmd_ps:+.2f} ps")
-        print(f"  the estimator's tone route on the same frames: "
-              f"{avg('skew_mismatch_ps'):+.2f} ps, source "
-              f"{tail[-1].get('skew_source')}  (no tone: this is a noise fit)")
+        print(f"  pulse phase mismatch {avg('skew_mismatch_ps'):+.2f} ps, source "
+              f"{tail[-1].get('skew_source')}; tone diagnostics disabled")
 
         checks.append((f"[{route}] the gain loop nulls the magnitude ratio",
                        abs(closed[route]["gain"] - 1.0) < 0.002,
@@ -219,12 +195,11 @@ def main() -> int:
 
     loop = closed["dither_fold"]["loop"]
     rows = closed["dither_fold"]["rows"]
-    old, total = old_gate_rejections(loop)
-    checks.append(("the old acceptance filter would have thrown these frames away",
-                   old / max(total, 1) > 0.2,
-                   f"the pre-2026-09-20 gate would have refused {old} of {total} accepted "
-                   f"frames ({100 * old / max(total, 1):.0f} %) -- it judged the estimator's "
-                   "tone fields, which on a tone-free capture are a noise fit"))
+    checks.append(("strict dither calibration does not compute tone diagnostics",
+                   all(not np.isfinite(r["tone_ratio"]) and
+                       not np.isfinite(r["skew_phase_ps"]) and
+                       not np.isfinite(r["cal_sndr_db"]) for r in rows),
+                   "tone_ratio, tone phase and carrier SNDR stay NaN"))
     checks.append(("and the gate that judges the live route keeps them",
                    loop.rejected / max(loop.captures, 1) < 0.1,
                    f"this run rejected {loop.rejected}/{loop.captures} captures "

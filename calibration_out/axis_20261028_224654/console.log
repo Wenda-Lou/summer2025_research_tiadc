@@ -1,0 +1,8 @@
+# arguments: {"axis": "offset", "baseline_hold": 100, "baseline_train": 600, "batch": 20, "channel": "B", "deadband_ps": 10.0, "execute": true, "gain_gate_ppm": 200000, "hold": 100, "min_yield": 0.8, "mode": "sweep", "out": "calibration_out/axis_20261028_224654", "points": "-128,128,-256,256,-512,512", "pre": 40, "repeats": 3, "reuse_baseline": true, "skew_gate_milli": 500, "step_ps": 19.1, "timeout": 1800.0, "tolerance": null, "train": 300, "uart": "COM5", "wave": null, "window": 20}
+# command: adc -cal loop test status
+
+LOOP-TEST-BASELINE valid=0 snapshot=0 wave=-1 code=-1 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=-1
+LOOP-TEST-CONFIG gain_ppm=200000 skew_milli=250 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1
+LOOP-TEST-END result=OK

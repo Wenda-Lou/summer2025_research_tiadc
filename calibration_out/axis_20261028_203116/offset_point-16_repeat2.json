@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "source": "single_axis_test",
+  "axis": "offset",
+  "metadata": {
+    "mode": "single_axis",
+    "feedback_by_phase": {
+      "pre": "frozen",
+      "train": "selected axes",
+      "hold": "frozen"
+    }
+  },
+  "requested": 440,
+  "qualified": 440,
+  "budget_unit": "attempts",
+  "captures": 440,
+  "rejected": 0,
+  "exported_rows": 440,
+  "total_rows": 440,
+  "history_complete": true,
+  "dropped_rows": 0,
+  "run_completed": true,
+  "run_healthy": true,
+  "actuator_code": 12,
+  "phase_statistics": {
+    "pre": {
+      "attempts": 40,
+      "budget": 40,
+      "accepted": 40,
+      "gain_error_ppm": {
+        "n": 40,
+        "mean": -1149.775,
+        "sd": 3330.7982525753455
+      },
+      "offset_error_codes": {
+        "n": 40,
+        "mean": -14.957650000000001,
+        "sd": 0.7939132404320597
+      },
+      "skew_error_ps": {
+        "n": 40,
+        "mean": -2.57525,
+        "sd": 2.651434045945703
+      }
+    },
+    "train": {
+      "attempts": 300,
+      "budget": 300,
+      "accepted": 300,
+      "gain_error_ppm": {
+        "n": 300,
+        "mean": -1442.1066666666666,
+        "sd": 2809.491912185846
+      },
+      "offset_error_codes": {
+        "n": 300,
+        "mean": -0.14411666666666667,
+        "sd": 1.3460480107384476
+      },
+      "skew_error_ps": {
+        "n": 300,
+        "mean": -2.1726,
+        "sd": 3.4342530804726357
+      }
+    },
+    "hold": {
+      "attempts": 100,
+      "budget": 100,
+      "accepted": 100,
+      "gain_error_ppm": {
+        "n": 100,
+        "mean": -1258.64,
+        "sd": 2702.3022003880733
+      },
+      "offset_error_codes": {
+        "n": 100,
+        "mean": -0.19487000000000002,
+        "sd": 0.8016247346810883
+      },
+      "skew_error_ps": {
+        "n": 100,
+        "mean": -1.8768,
+        "sd": 3.5178014483911726
+      }
+    }
+  },
+  "assessment": {
+    "axis": "offset",
+    "tolerance": 0.5,
+    "hold_accepted": 100,
+    "hold_budget": 100,
+    "hold_yield": 1.0,
+    "pre_mean": -14.957650000000001,
+    "pre_observed_mean": -14.957650000000001,
+    "gain_source": "dither_spectrum",
+    "skew_route": "dither_cross_spectrum",
+    "routes_consistent": true,
+    "offset_n": 100,
+    "offset_mean": -0.19487000000000002,
+    "offset_sd": 0.8016247346810883,
+    "offset_se": 0.08016247346810883,
+    "gain_n": 100,
+    "gain_mean": -0.0012586399999999999,
+    "gain_sd": 0.002702302200388073,
+    "gain_se": 0.0002702302200388073,
+    "skew_n": 100,
+    "skew_mean": -1.8768,
+    "skew_sd": 3.5178014483911726,
+    "skew_se": 0.35178014483911724,
+    "reject_reasons": "{}",
+    "hold_frozen": true,
+    "hold_continues_train": true,
+    "inactive_frozen": true,
+    "hold_clock_frozen": true,
+    "inactive_skew_frozen": true,
+    "last_code": "12",
+    "range_limit": false,
+    "quantization_limited": false,
+    "last_train_action": "measure-only",
+    "convergence_attempt": 295,
+    "pass": true,
+    "requested_routes_match": true,
+    "point": -16,
+    "repeat": 1,
+    "baseline_code": 12
+  },
+  "correction": {
+    "gain_corr_a": 1.006285,
+    "gain_corr_b": 0.994953,
+    "offset_a_codes": 10.215,
+    "offset_b_codes": -10.332
+  },
+  "tail": {
+    "window": 20,
+    "feedback": "frozen",
+    "gain_error_ppm": {
+      "n": 20,
+      "mean": -334.25,
+      "sd": 2305.2382426255117
+    },
+    "offset_error_codes": {
+      "n": 20,
+      "mean": -0.37935,
+      "sd": 0.6422782865459653
+    },
+    "skew_error_ps": {
+      "n": 20,
+      "mean": -0.8529999999999999,
+      "sd": 3.2387198575655587
+    }
+  },
+  "precision_validation": "independent_holdout",
+  "plots": {
+    "png": "calibration_out\\axis_20261028_203116\\offset_point-16_repeat2.png",
+    "svg": "calibration_out\\axis_20261028_203116\\offset_point-16_repeat2.svg"
+  }
+}

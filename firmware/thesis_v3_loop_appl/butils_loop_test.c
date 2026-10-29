@@ -25,6 +25,7 @@ static adc_cal_loop_state_t g_loop_test_baseline;
 static bool g_loop_test_baseline_valid;
 static bool g_loop_test_snapshot_valid;
 static bool g_loop_test_fault; /* a failed write is never retried */
+static bool g_loop_test_full_rows; /* per-command PC data mode; default is compact */
 static unsigned g_loop_test_wave;
 static int g_loop_test_code;
 static double g_loop_test_polarity;
@@ -63,6 +64,17 @@ static void loop_test_add(loop_test_stat_t *s, double value)
 static double loop_test_sd(const loop_test_stat_t *s)
 {
     return s->n > 1U ? sqrt(fmax(0.0, s->m2 / (double)(s->n - 1U))) : NAN;
+}
+
+static void loop_test_print_stats(const loop_test_phase_t *p, bool include_sd)
+{
+    board_loop_put("offset_mc", p->offset.n ? p->offset.mean : NAN, 1e3);
+    if (include_sd) board_loop_put("offset_sd_mc", loop_test_sd(&p->offset), 1e3);
+    board_loop_put("gain_ppm", p->gain.n ? p->gain.mean : NAN, 1e6);
+    if (include_sd) board_loop_put("gain_sd_ppm", loop_test_sd(&p->gain), 1e6);
+    board_loop_put("skew_cps", p->skew.n ? p->skew.mean : NAN, 100.0);
+    if (include_sd) board_loop_put("skew_sd_cps", loop_test_sd(&p->skew), 100.0);
+    xil_printf("\r\n");
 }
 
 /* Driver reads have no return code. Two differently initialised readbacks must
@@ -134,6 +146,9 @@ static void loop_test_configure(adc_cal_loop_options_t *opt,
     opt->skew_batch_frames = (int)g_loop_test_batch;
     opt->reject_clipping = 1;
     opt->require_tone = 1;
+    loop_waveform_options(g_board_loop_wave, opt);
+    /* Explicit experiment gates apply to whichever observable was selected. */
+    opt->max_skew_samples = (double)g_loop_test_skew_milli / 1000.0;
     opt->input_offset[0] = g_loop_test_offset[0];
     opt->input_offset[1] = g_loop_test_offset[1];
     act->deadband_ps = (double)g_loop_test_deadband_cps / 100.0;
@@ -162,6 +177,11 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
                            loop_test_phase_t *out)
 {
     unsigned failures = 0U;
+    loop_test_phase_t window = {0};
+    loop_test_stat_t freeze_a = {0}, freeze_b = {0};
+    const bool refine_offset = strcmp(name, "baseline_train") == 0 ||
+        (strcmp(name, "train") == 0 && axes == ADC_CAL_LOOP_AXIS_OFFSET);
+    const unsigned freeze_frames = frames / 2U < 100U ? frames / 2U : 100U;
     const bool quiet = g_quiet_calibration_capture;
     memset(out, 0, sizeof(*out));
     g_board_loop.opt.update_axes = axes;
@@ -172,6 +192,8 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
                name, axes, frames, g_board_loop.act.code);
     for (unsigned i = 0U; i < frames; ++i) {
         adc_cal_loop_row_t row;
+        const adc_cal_loop_state_t before = g_board_loop.state;
+        const int code_before = g_board_loop.act.code;
         const long got = board_loop_capture(NULL, g_board_loop_frame, sizeof(g_board_loop_frame));
         int rc;
         out->attempts++;
@@ -181,21 +203,82 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
             continue;
         }
         rc = adc_cal_loop_step(&g_board_loop, g_board_loop_frame, (size_t)got, &row);
-        xil_printf("LOOP-TEST-ROW phase=%s attempt=%u", name, i);
-        board_loop_put("dcfit_mc", row.est.ch_b.offset_record_codes -
-                       row.est.ch_a.offset_record_codes, 1e3);
-        xil_printf(" ");
-        board_loop_print_row(&row);
+        /* Estimate the input-domain DC from the PRE-update state. Average only
+         * the training tail at one actuator code; HOLD remains independent.
+         * Averaging residuals alone would be wrong because feedback is active. */
+        if (refine_offset && i >= frames - freeze_frames) {
+            if (code_before != g_board_loop.act.code) {
+                memset(&freeze_a, 0, sizeof(freeze_a));
+                memset(&freeze_b, 0, sizeof(freeze_b));
+            } else if (rc == 0 && row.rejected == ADC_CAL_LOOP_REJECT_NONE &&
+                       before.gain_corr_a > 0.0 && before.gain_corr_b > 0.0) {
+                const double a = before.offset_a + row.est.ch_a.offset_codes / before.gain_corr_a;
+                const double b = before.offset_b + row.est.ch_b.offset_codes / before.gain_corr_b;
+                if (board_loop_isfinite(a) && board_loop_isfinite(b)) {
+                    loop_test_add(&freeze_a, a);
+                    loop_test_add(&freeze_b, b);
+                }
+            }
+        }
+        /* Commit on the last accepted training frame, before its post-update
+         * state is exported. HOLD therefore starts at the exact recorded state.
+         * A failed/rejected last attempt keeps the existing state unchanged. */
+        if (refine_offset && i + 1U == frames && rc == 0 &&
+            row.rejected == ADC_CAL_LOOP_REJECT_NONE &&
+            !g_loop_test_fault && !g_board_loop.skew_abort &&
+            freeze_a.n >= 20U && freeze_b.n == freeze_a.n) {
+            g_board_loop.state.offset_a = row.offset_a_state = freeze_a.mean;
+            g_board_loop.state.offset_b = row.offset_b_state = freeze_b.mean;
+            xil_printf("LOOP-TEST-FREEZE source=dither_training_mean samples=%u code=%d phase=%s",
+                       freeze_a.n, g_board_loop.act.code, name);
+            board_loop_put("offa_mc", freeze_a.mean, 1e3);
+            board_loop_put("offb_mc", freeze_b.mean, 1e3);
+            xil_printf("\r\n");
+        }
+        if (g_loop_test_full_rows) {
+            xil_printf("LOOP-TEST-ROW phase=%s attempt=%u code=%d", name, i, g_board_loop.act.code);
+            board_loop_put("dcmean_mc", row.est.ch_b.offset_record_codes -
+                           row.est.ch_a.offset_record_codes, 1e3);
+            xil_printf(" ");
+            board_loop_print_row(&row);
+        }
+        if (rc != 0 || row.rejected != ADC_CAL_LOOP_REJECT_NONE ||
+            (row.skew_action != ADC_CAL_LOOP_SKEW_ACTION_NONE &&
+             row.skew_action != ADC_CAL_LOOP_SKEW_ACTION_INSIDE_DEADBAND &&
+             row.skew_action != ADC_CAL_LOOP_SKEW_ACTION_MEASURE_ONLY)) {
+            xil_printf("LOOP-TEST-EVENT phase=%s attempt=%u st=%s act=%s code=%d clips=%u\r\n",
+                       name, i, board_loop_reject_tag(row.rejected),
+                       row.skew_action == ADC_CAL_LOOP_SKEW_ACTION_NONE ? "none" :
+                           adc_cal_loop_skew_action_name(row.skew_action),
+                       g_board_loop.act.code, row.clipped_samples);
+        }
         if (rc != 0) {
             if (++failures >= 3U) break;
             continue;
         }
         failures = 0U;
         if (row.rejected == ADC_CAL_LOOP_REJECT_NONE) {
+            const double offset = row.est.ch_b.offset_codes - row.est.ch_a.offset_codes;
+            const double gain = g_board_loop.opt.tone_free ? row.est.gain_mag_ratio - 1.0 :
+                                row.est.tone_ratio - 1.0;
             out->accepted++;
-            loop_test_add(&out->offset, row.est.ch_b.offset_codes - row.est.ch_a.offset_codes);
-            loop_test_add(&out->gain, row.est.tone_ratio - 1.0);
+            loop_test_add(&out->offset, offset);
+            loop_test_add(&out->gain, gain);
             loop_test_add(&out->skew, row.est.skew_used_ps);
+            /* All phases report compact progress. These are diagnostics only:
+             * never feed window statistics back into the calibration state. */
+            {
+                window.accepted++;
+                loop_test_add(&window.offset, offset);
+                loop_test_add(&window.gain, gain);
+                loop_test_add(&window.skew, row.est.skew_used_ps);
+                if (window.accepted == 20U) {
+                    xil_printf("LOOP-TEST-WINDOW phase=%s through_attempt=%u accepted=%u",
+                               name, i, window.accepted);
+                    loop_test_print_stats(&window, false);
+                    memset(&window, 0, sizeof(window));
+                }
+            }
         }
         if (row.skew_action == ADC_CAL_LOOP_SKEW_ACTION_MOVE_FAILED ||
             row.skew_action == ADC_CAL_LOOP_SKEW_ACTION_ABORT_DIRECTION) {
@@ -205,30 +288,38 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
             row.rejected == ADC_CAL_LOOP_REJECT_TONE) break;
     }
     g_quiet_calibration_capture = quiet;
+    if (window.accepted != 0U) {
+        xil_printf("LOOP-TEST-WINDOW phase=%s through_attempt=%u accepted=%u",
+                   name, out->attempts - 1U, window.accepted);
+        loop_test_print_stats(&window, false);
+    }
     xil_printf("LOOP-TEST-SUMMARY phase=%s attempts=%u accepted=%u code=%d abort=%d",
                name, out->attempts, out->accepted, g_board_loop.act.code, g_board_loop.skew_abort);
-    board_loop_put("offset_mc", out->offset.n ? out->offset.mean : NAN, 1e3);
-    board_loop_put("offset_sd_mc", loop_test_sd(&out->offset), 1e3);
-    board_loop_put("gain_ppm", out->gain.n ? out->gain.mean : NAN, 1e6);
-    board_loop_put("gain_sd_ppm", loop_test_sd(&out->gain), 1e6);
-    board_loop_put("skew_cps", out->skew.n ? out->skew.mean : NAN, 100.0);
-    board_loop_put("skew_sd_cps", loop_test_sd(&out->skew), 100.0);
-    xil_printf("\r\n");
+    loop_test_print_stats(out, true);
     return out->attempts == frames && out->accepted != 0U &&
            !g_loop_test_fault && !g_board_loop.skew_abort ? 0 : -1;
 }
 
 static void loop_test_status(void)
 {
-    xil_printf("LOOP-TEST-BASELINE valid=%u snapshot=%u wave=%u code=%d fault=%u\r\n",
+    int current_code = -1;
+    if (adc_skew_actuator_read_value(&current_code) != 0) current_code = -1;
+    xil_printf("LOOP-TEST-BASELINE valid=%u snapshot=%u wave=%d code=%d fault=%u\r\n",
                (unsigned)g_loop_test_baseline_valid, (unsigned)g_loop_test_snapshot_valid,
-               g_loop_test_wave, g_loop_test_code, (unsigned)g_loop_test_fault);
+               g_loop_test_baseline_valid ? (int)g_loop_test_wave : -1,
+               g_loop_test_baseline_valid ? g_loop_test_code : -1, (unsigned)g_loop_test_fault);
+    xil_printf("LOOP-TEST-CURRENT wave=%u waveform=%s code=%d\r\n",
+               g_board_loop_wave, "reference_free_dither", current_code);
     xil_printf("LOOP-TEST-CONFIG gain_ppm=%ld skew_milli=%ld deadband_cps=%ld step_cps=%ld batch=%ld",
                g_loop_test_gain_ppm, g_loop_test_skew_milli, g_loop_test_deadband_cps,
                g_loop_test_step_cps, g_loop_test_batch);
     board_loop_put("software_offset_a_mc", g_loop_test_offset[0], 1e3);
     board_loop_put("software_offset_b_mc", g_loop_test_offset[1], 1e3);
     xil_printf("\r\n");
+    xil_printf("LOOP-TEST-ROUTES gain=%s skew=%s tone_free=%u reference_free=1\r\n",
+               "dither_spectrum",
+               "dither_cross_spectrum",
+               1U);
     if (g_loop_test_snapshot_valid) {
         for (unsigned c = 0U; c < 2U; ++c) {
             xil_printf("LOOP-TEST-SNAPSHOT channel=%u ifc=%u dc1=%u dc2=%u\r\n", c,
@@ -237,6 +328,37 @@ static void loop_test_status(void)
                        (unsigned)g_loop_test_registers[c][2]);
         }
     }
+}
+
+static int loop_test_baseline_check(const loop_test_phase_t *p, unsigned hold)
+{
+    const bool yield_ok = p->accepted * 5U >= hold * 4U;
+    const bool complete = p->offset.n == p->accepted && p->gain.n == p->accepted &&
+                          p->skew.n == p->accepted && p->skew.n > 1U;
+    const double skew_limit = complete ?
+        fmax(g_board_loop.act.deadband_ps, 0.5 * g_board_loop.act.step_ps) +
+        3.0 * loop_test_sd(&p->skew) / sqrt((double)p->skew.n) : NAN;
+    const bool offset_ok = complete && fabs(p->offset.mean) <= 0.5;
+    const bool gain_ok = complete && fabs(p->gain.mean) <= 0.002;
+    const bool skew_ok = complete && fabs(p->skew.mean) <= skew_limit;
+    xil_printf("LOOP-TEST-BASELINE-CHECK kind=yield accepted=%u budget=%u required_percent=80 pass=%u\r\n",
+               p->accepted, hold, (unsigned)yield_ok);
+    xil_printf("LOOP-TEST-BASELINE-CHECK kind=finite-statistics pass=%u\r\n", (unsigned)complete);
+    xil_printf("LOOP-TEST-BASELINE-CHECK axis=offset pass=%u", (unsigned)offset_ok);
+    board_loop_put("mean_mc", p->offset.n ? p->offset.mean : NAN, 1e3);
+    xil_printf(" limit_mc=500\r\n");
+    xil_printf("LOOP-TEST-BASELINE-CHECK axis=gain pass=%u", (unsigned)gain_ok);
+    board_loop_put("mean_ppm", p->gain.n ? p->gain.mean : NAN, 1e6);
+    xil_printf(" limit_ppm=2000\r\n");
+    xil_printf("LOOP-TEST-BASELINE-CHECK axis=skew pass=%u", (unsigned)skew_ok);
+    board_loop_put("mean_cps", p->skew.n ? p->skew.mean : NAN, 100.0);
+    board_loop_put("limit_cps", skew_limit, 100.0);
+    xil_printf("\r\n");
+    if (!yield_ok || !complete || !offset_ok || !gain_ok || !skew_ok) {
+        xil_printf("LOOP-TEST-ERROR baseline-hold-out-of-spec; inspect BASELINE-CHECK and WINDOW rows.\r\n");
+        return -1;
+    }
+    return 0;
 }
 
 static int loop_test_baseline(unsigned train, unsigned hold)
@@ -253,13 +375,10 @@ static int loop_test_baseline(unsigned train, unsigned hold)
     if (loop_test_phase("baseline_train", ADC_CAL_LOOP_AXIS_ALL, train, &p) != 0) return -1;
     if (loop_test_phase("baseline_hold", 0U, hold, &p) != 0) return -1;
     /* A baseline is usable, not merely a run that printed an END line. */
-    if (p.accepted * 5U < hold * 4U || p.offset.n != p.accepted ||
-        p.gain.n != p.accepted || p.skew.n != p.accepted ||
-        fabs(p.offset.mean) > 0.5 ||
-        fabs(p.gain.mean) > 0.002 ||
-        fabs(p.skew.mean) > fmax(g_board_loop.act.deadband_ps,
-                                0.5 * g_board_loop.act.step_ps) +
-                            3.0 * loop_test_sd(&p.skew) / sqrt((double)p.skew.n)) return -1;
+    if (loop_test_baseline_check(&p, hold) != 0) {
+        loop_test_status();
+        return -1;
+    }
     g_loop_test_baseline = g_board_loop.state;
     g_loop_test_polarity = g_board_loop.polarity;
     g_loop_test_wave = g_board_loop_wave;
@@ -271,8 +390,16 @@ static int loop_test_baseline(unsigned train, unsigned hold)
 
 static int loop_test_restore(void)
 {
-    if (!g_loop_test_snapshot_valid || !g_loop_test_baseline_valid ||
-        g_loop_test_wave != g_board_loop_wave) return -1;
+    if (!g_loop_test_snapshot_valid || !g_loop_test_baseline_valid) {
+        xil_printf("LOOP-TEST-ERROR restore-no-valid-baseline valid=%u snapshot=%u; establish baseline first.\r\n",
+                   (unsigned)g_loop_test_baseline_valid, (unsigned)g_loop_test_snapshot_valid);
+        return -1;
+    }
+    if (g_loop_test_wave != g_board_loop_wave) {
+        xil_printf("LOOP-TEST-ERROR restore-wave-mismatch saved=%u current=%u\r\n",
+                   g_loop_test_wave, g_board_loop_wave);
+        return -1;
+    }
     for (unsigned c = 0U; c < 2U; ++c) {
         for (unsigned r = 0U; r < 3U; ++r) {
             uint8_t value = g_loop_test_registers[c][r];
@@ -319,7 +446,7 @@ static int loop_test_run(unsigned axes, unsigned pre, unsigned train, unsigned h
 
 static void loop_test_help(void)
 {
-    xil_printf("LOOP-TEST-HELP (requires the selected tone+dither DPG vector)\r\n");
+    xil_printf("LOOP-TEST-HELP (reference-free dither-only; no waveform selection)\r\n");
     xil_printf("  adc -cal loop test baseline TRAIN HOLD   Calibrate all; save state, code and registers.\r\n");
     xil_printf("  adc -cal loop test run offset|gain|skew PRE TRAIN HOLD\r\n");
     xil_printf("  adc -cal loop test offset A|B CODES     SOFTWARE post-ADC offset, -4096..4096.\r\n");
@@ -331,6 +458,7 @@ static void loop_test_help(void)
     xil_printf("  adc -cal loop test restore             Restore baseline IFC/filter/code; clear injection.\r\n");
     xil_printf("  adc -cal loop test status              Show baseline and experiment settings.\r\n");
     xil_printf("  Budgets count attempted frames. HOLD freezes all feedback. Failed writes latch a fault.\r\n");
+    xil_printf("  Compact output by default; append full to baseline/run/step for PC data capture.\r\n");
 }
 
 static void board_loop_test_command(void)
@@ -340,7 +468,14 @@ static void board_loop_test_command(void)
     char *s;
     long a = 0L, b = 0L, c = 0L;
     int rc = -1;
+    g_loop_test_full_rows = false;
     while ((s = strtok(NULL, " ")) != NULL && n < 8U) args[n++] = s;
+    if (n > 1U && strcmp(args[n - 1U], "full") == 0 &&
+        (strcmp(args[0], "baseline") == 0 || strcmp(args[0], "run") == 0 ||
+         strcmp(args[0], "step") == 0)) {
+        g_loop_test_full_rows = true;
+        n--;
+    }
     if (s != NULL || n == 0U || (n == 1U && strcmp(args[0], "help") == 0)) {
         loop_test_help();
         xil_printf("LOOP-TEST-END result=%s\r\n", s == NULL ? "OK" : "ERROR");
@@ -351,6 +486,7 @@ static void board_loop_test_command(void)
         rc = 0;
     } else if (g_loop_test_fault) {
         xil_printf("LOOP-TEST-ERROR recovery-required; restart firmware and repeat bring-up.\r\n");
+
     } else if (n == 3U && strcmp(args[0], "baseline") == 0 &&
                loop_test_number(args[1], 1L, BOARD_LOOP_MAX_SAMPLES, &a) == 0 &&
                loop_test_number(args[2], 2L, BOARD_LOOP_MAX_SAMPLES, &b) == 0) {
@@ -432,6 +568,7 @@ static void board_loop_test_command(void)
     if (rc != 0) {
         xil_printf("LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.\r\n");
     }
+    g_loop_test_full_rows = false;
     xil_printf("LOOP-TEST-END result=%s\r\n", rc == 0 ? "OK" : "ERROR");
 }
 

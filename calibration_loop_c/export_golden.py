@@ -6,12 +6,19 @@ them: de-framing, the block estimate, the controller state after the update and
 the skew decision.  ``adc_cal_sim --run-loop-golden FILE`` replays the same bytes
 through ``adc_calibration_loop.c`` and compares field by field.
 
-Four cases:
+Tone cases:
   model_nominal   model branch (per-frame skew integrator), BenchModel defaults
   model_mismatch  model branch, larger gain / offset / skew mismatch
   batch_honest    hardware branch (batch decision) with an honest stub actuator
   batch_lying     hardware branch with an actuator that moves the wrong way,
                   so the direction latch must fire
+
+Five additional dither-only cases cover nominal convergence, acquisition from
++200 ps, honest batch actuation and the direction latch. Tone gain/phase
+diagnostics are exported as NaN in these cases: only the dither observables are
+meaningful without a carrier. The full-scale case models ADC headroom explicitly.
+Both tone and dither controller states and actions
+are compared.
 
     python calibration_loop_c/export_golden.py [--out FILE]
 
@@ -37,7 +44,7 @@ from calibration_loop.simulate import BenchModel            # noqa: E402
 
 SOURCE_CODES = {
     "none": 0, "phase": 1, "phase+branch(prior)": 2, "phase+branch(centroid)": 3,
-    "profile-fallback": 4, "observables-disagree": 5,
+    "profile-fallback": 4, "observables-disagree": 5, "dither-phase": 6,
 }
 
 
@@ -146,6 +153,9 @@ def run_case(name: str, bench: BenchModel, options: LoopOptions, qualified: int,
                     st.offset_a, st.offset_b, st.gain_corr_a, st.gain_corr_b, st.skew_cmd_ps,
                     action_code(row.get("skew_action", "")),
                     int(row.get("skew_step_codes", 0)),
+                    est.mag_a, est.mag_b, est.gain_mag_ratio,
+                    est.phase_a, est.phase_b, est.skew_slope_ps, est.skew_fold_ps,
+                    est.skew_used_ps,
                 ],
             })
             if rejected:
@@ -181,7 +191,7 @@ def fmt(x) -> str:
 
 def write(cases, path: str) -> None:
     with open(path, "w", encoding="ascii", newline="\n") as fh:
-        fh.write("LOOPGOLDEN 1\n")
+        fh.write("LOOPGOLDEN 2\n")
         fh.write(f"cases {len(cases)}\n")
         for case in cases:
             cfg: DitherConfig = case["cfg"]
@@ -194,12 +204,13 @@ def write(cases, path: str) -> None:
                 cfg.dither_edge_dac, cfg.dither_top_dac, fmt(cfg.dither_scale_lsb),
                 cfg.n_events))
             fh.write("polarity " + " ".join(str(p) for p in pol) + "\n")
-            fh.write("options {} {} {} {} {} {} {} {} {} {} {}\n".format(
+            tone_free = opt.gain_observable == "dither_mag"
+            fh.write("options {} {} {} {} {} {} {} {} {} {} {} {}\n".format(
                 1 if case["batch"] else 0, 1 if opt.cancel_signal else 0,
                 1 if opt.close_skew_loop else 0, opt.skew_batch_frames,
-                fmt(opt.min_align_margin), fmt(opt.max_skew_samples),
+                fmt(opt.min_align_margin), fmt(opt.max_skew_samples_dither if tone_free else opt.max_skew_samples),
                 fmt(opt.max_gain_deviation), fmt(opt.skew_direction_tol_ps),
-                fmt(case["step_ps"]), fmt(case["deadband_ps"]), case["code0"]))
+                fmt(case["step_ps"]), fmt(case["deadband_ps"]), case["code0"], int(tone_free)))
             fh.write(f"frames {len(case['records'])}\n")
             for rec in case["records"]:
                 fh.write(f"frame {len(rec['raw'])}\n")
@@ -229,6 +240,26 @@ def main() -> int:
                  BenchModel(cfg=cfg, skew_b_ps=45.0, noise_rms_codes=2.0, seed=7),
                  LoopOptions(skew_batch_frames=5), 40, -1.0),
     ]
+    cfg_dither = DitherConfig(amp_dbfs=-120.0, sig_cycles=0, dither_edge_dac=4,
+                              dither_top_dac=4, dither_scale_lsb=5190.0)
+    for name, skew, direction, count in (
+            ("dither_model", 3.6, None, 30),
+            ("dither_acquire", 200.0, None, 40),
+            ("dither_honest", 65.0, +1.0, 45),
+            ("dither_lying", 65.0, -1.0, 25)):
+        options = LoopOptions(cancel_signal=False, gain_observable="dither_mag",
+                              skew_observable="dither_phase", skew_batch_frames=5)
+        cases.append(run_case(name, BenchModel(cfg=cfg_dither, skew_b_ps=skew,
+                                              noise_rms_codes=2.0, seed=7),
+                              options, count, direction))
+    # Full DAC swing is independent of ADC full scale: model analog headroom
+    # explicitly, rather than clipping a full-scale ADC plus mismatch/offset.
+    cfg_full = DitherConfig(amp_dbfs=-120.0, sig_cycles=0, dither_edge_dac=4,
+                            dither_top_dac=4, dither_scale_lsb=32767.0)
+    cases.append(run_case("dither_fullscale",
+                          BenchModel(cfg=cfg_full, adc_scale=0.20, noise_rms_codes=2.0, seed=7),
+                          LoopOptions(cancel_signal=False, gain_observable="dither_mag",
+                                      skew_observable="dither_phase"), 30, None))
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     write(cases, args.out)
     print(f"wrote {args.out}")

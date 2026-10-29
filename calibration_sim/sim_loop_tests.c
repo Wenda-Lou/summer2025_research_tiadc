@@ -483,6 +483,157 @@ static void test_single_axis_experiments(sim_assert_context_t *ctx)
     }
 }
 
+static void test_dither_only(sim_assert_context_t *ctx, FILE *summary)
+{
+    adc_cal_loop_config_t cfg;
+    adc_cal_loop_options_t opt;
+    adc_cal_loop_actuator_t act;
+    adc_cal_loop_state_t saved;
+    adc_cal_loop_row_t row;
+    lt_bench_t bench;
+    static uint8_t buf[2 * LT_WORDS];
+    const double delays[] = {-350.0, -200.0, -50.0, 0.0, 50.0, 200.0, 350.0};
+    adc_cal_loop_default_config(&cfg);
+    SIM_ASSERT_TRUE(ctx, adc_cal_loop_test_tone_calls(1) > 0U);
+    cfg.sig_cycles = 0;
+    cfg.amp_dbfs = -120.0;
+    cfg.dither_edge_dac = cfg.dither_top_dac = 4;
+    cfg.dither_scale_lsb = 5190.0;
+    adc_cal_loop_default_options(&opt);
+    opt.tone_free = 1;
+    opt.max_skew_samples = 0.5;
+    opt.update_axes = 0U;
+    lt_bench_init(&bench, &cfg, 41U);
+    bench.invert_b = 0;
+    bench.noise = 0.0;
+    bench.gain_b = 1.0;
+    bench.offset_a = bench.offset_b = 0.0;
+    /* Same captured bytes, different unused carrier metadata: preparation,
+     * pulse estimates and feedback must be exactly identical. */
+    {
+        adc_cal_loop_row_t reference;
+        const int cycles[] = {0, 1280, 2556};
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        memset(&reference, 0, sizeof(reference));
+        for (int i = 0; i < 3; ++i) {
+            cfg.sig_cycles = cycles[i];
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, NULL), 0);
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+            SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+            if (!i) reference = row;
+            SIM_ASSERT_EQ_INT(ctx, row.prep.n0, reference.prep.n0);
+            SIM_ASSERT_EQ_INT(ctx, row.prep.rotation, reference.prep.rotation);
+            SIM_ASSERT_NEAR(ctx, row.est.ch_a.offset_codes, reference.est.ch_a.offset_codes, 0.0);
+            SIM_ASSERT_NEAR(ctx, row.est.gain_mag_ratio, reference.est.gain_mag_ratio, 0.0);
+            SIM_ASSERT_NEAR(ctx, row.est.skew_used_ps, reference.est.skew_used_ps, 0.0);
+            SIM_ASSERT_TRUE(ctx, !lt_isfinite(row.est.tone_ratio));
+        }
+        cfg.sig_cycles = 0;
+    }
+    for (unsigned d = 0U; d < sizeof(delays) / sizeof(delays[0]); ++d) {
+        const long n = (bench.skew_b_ps = delays[d], lt_capture(&bench, buf, sizeof(buf)));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, NULL), 0);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+        SIM_ASSERT_NEAR(ctx, row.est.skew_used_ps, delays[d], 2.5);
+        SIM_ASSERT_TRUE(ctx, strcmp(row.gain_source, "dither_mag") == 0);
+    }
+    /* Use production feedback on one axis; HOLD consumes fresh samples and
+     * leaves the other coefficients and the actuator untouched. */
+    bench.skew_b_ps = 0.0;
+    adc_cal_loop_default_actuator(&act);
+    act.ctx = &bench; act.request_steps = lt_request_steps;
+    opt.update_axes = ADC_CAL_LOOP_AXIS_OFFSET;
+    opt.input_offset[1] = -64.0;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, &act), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 30U, lt_capture, &bench,
+                                           NULL, NULL, buf, sizeof(buf)), 30);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b - g_loop.state.offset_a, -64.0, 0.1);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, 1.0, 0.0);
+    SIM_ASSERT_EQ_INT(ctx, bench.moves, 0);
+    saved = g_loop.state; g_loop.opt.update_axes = 0U;
+    for (unsigned i = 0U; i < 10U; ++i) {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+        SIM_ASSERT_NEAR(ctx, row.est.offset_mismatch_codes, 0.0, 0.1);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, saved.offset_b, 0.0);
+    }
+    opt.input_offset[1] = 0.0; opt.update_axes = ADC_CAL_LOOP_AXIS_GAIN;
+    bench.gain_b = 1.12;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, &act), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 30U, lt_capture, &bench,
+                                           NULL, NULL, buf, sizeof(buf)), 30);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b / g_loop.state.gain_corr_a, 1.0 / 1.12, 0.001);
+    SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, 0.0, 0.0);
+    SIM_ASSERT_EQ_INT(ctx, bench.moves, 0);
+    saved = g_loop.state; g_loop.opt.update_axes = 0U;
+    {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_NEAR(ctx, row.est.gain_mag_ratio, 1.0, 0.001);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, saved.gain_corr_b, 0.0);
+    }
+    for (int lying = 0; lying < 2; ++lying) {
+        bench.gain_b = 1.0; bench.skew_b_ps = 150.0;
+        bench.commanded_ps = bench.skew_cmd_b_ps = 0.0;
+        bench.code = 24; bench.moves = 0; bench.direction = lying ? -1.0 : 1.0;
+        opt.update_axes = ADC_CAL_LOOP_AXIS_SKEW; opt.skew_batch_frames = 5;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, &act), 0);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 60U, lt_capture, &bench,
+                                               NULL, NULL, buf, sizeof(buf)), 60);
+        SIM_ASSERT_EQ_INT(ctx, g_loop.skew_abort, lying);
+        SIM_ASSERT_EQ_INT(ctx, bench.moves, lying ? 1 : 8);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, 1.0, 0.0);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, 0.0, 0.0);
+        if (!lying) SIM_ASSERT_TRUE(ctx, fabs(bench.skew_b_ps + bench.commanded_ps) < 10.0);
+        fprintf(summary, "dither-only batch %s: moves=%d abort=%d residual=%+.2f ps\n",
+                lying ? "lying" : "honest", bench.moves, g_loop.skew_abort,
+                bench.skew_b_ps + bench.commanded_ps);
+    }
+    /* The dither batch must ignore meaningless tone fields, reject outliers,
+     * and respect alignment quality. */
+    {
+        adc_cal_loop_skew_frame_t frames[7];
+        adc_cal_loop_skew_batch_t batch;
+        memset(frames, 0, sizeof(frames));
+        for (int i = 0; i < 7; ++i) {
+            frames[i].phase_ps = 8.0; frames[i].margin = 10.0;
+            frames[i].tone = frames[i].resid = NAN;
+        }
+        frames[0].phase_ps = 500.0; frames[1].margin = 1.0;
+        adc_cal_loop_skew_batch_dither(frames, 7, 6.0, &batch);
+        SIM_ASSERT_EQ_INT(ctx, batch.n_used, 5);
+        SIM_ASSERT_NEAR(ctx, batch.mean_ps, 8.0, 0.0);
+    }
+    /* DAC rail samples are legal. Actual ADC rail samples must still reject
+     * the frame before feedback, even with a full-scale DAC vector. */
+    cfg.dither_scale_lsb = 32767.0;
+    lt_bench_init(&bench, &cfg, 43U);
+    bench.adc_scale = 0.20;
+    opt.update_axes = ADC_CAL_LOOP_AXIS_ALL;
+    opt.reject_clipping = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, NULL), 0);
+    {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+        SIM_ASSERT_EQ_INT(ctx, row.clipped_samples, 0);
+    }
+    saved = g_loop.state;
+    bench.adc_scale = 1.0;
+    {
+        const long n = lt_capture(&bench, buf, sizeof(buf));
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)n, &row), 0);
+        SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_CLIPPING);
+        SIM_ASSERT_TRUE(ctx, row.clipped_samples > 0U);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, saved.gain_corr_b, 0.0);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, saved.offset_b, 0.0);
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_test_tone_calls(0), 0);
+    fprintf(summary, "strict dither audit: zero tone-fit/purity calls; carrier metadata invariance PASS\n");
+}
+
 static void test_reject_streak(sim_assert_context_t *ctx)
 {
     adc_cal_loop_config_t cfg;
@@ -502,6 +653,103 @@ static void test_reject_streak(sim_assert_context_t *ctx)
     SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, 0.0, 0.0);
 }
 
+static void test_reference_free(sim_assert_context_t *ctx)
+{
+    adc_cal_loop_config_t cfg = {0};
+    adc_cal_loop_options_t opt;
+    adc_cal_loop_block_estimate_t est;
+    double a[1024], b[1024];
+    cfg.fs_dac = 1.3e9; cfg.adc_ratio = 1;
+    adc_cal_loop_default_options(&opt); opt.reference_free = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, NULL), 0);
+    SIM_ASSERT_EQ_INT(ctx, g_loop.ref_nz_count, 0);
+    adc_cal_loop_test_tone_calls(1);
+    for (int shape = 0; shape < 3; ++shape) {
+        for (int sign = -1; sign <= 1; sign += 2) {
+            const double dt = sign * 0.15;
+            for (int i = 0; i < 1024; ++i) {
+                a[i] = 3.0; b[i] = -5.0;
+                for (int k = 9; k < 120 + shape * 90; k += 3) {
+                    const double phase = k*k*0.713;
+                    const double w = 2*LT_PI*k/1024;
+                    const double amp = 35.0 / (1.0 + shape*k/250.0);
+                    a[i] += amp*cos(w*i + phase);
+                    b[i] += 1.12*amp*cos(w*(i + dt) + phase);
+                }
+            }
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_estimate_block(&g_loop, a, b, 1024,
+                              -1, 0, 0, 0, &est), 0);
+            SIM_ASSERT_NEAR(ctx, est.gain_mag_ratio, 1.12, 0.0005);
+            SIM_ASSERT_NEAR(ctx, est.skew_used_ps, dt*1e12/1.3e9, 1.0);
+            SIM_ASSERT_NEAR(ctx, est.ch_b.offset_codes*2.0, -8.36, 0.01);
+            SIM_ASSERT_TRUE(ctx, est.dither_margin > 6.0);
+            /* Arbitrary/invalid waveform metadata cannot affect the result. */
+            g_loop.cfg.dither_period_dac = -77; g_loop.cfg.n_events = -1;
+            g_loop.cfg.dither_scale_lsb = NAN; g_loop.cfg.sig_cycles = 777;
+        }
+    }
+    for (int i = 0; i < 1024; ++i) a[i] = b[i] = 7.0;
+    adc_cal_loop_estimate_block(&g_loop, a, b, 1024, -1, 0, 0, 0, &est);
+    SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.skew_used_ps));
+    for (int i = 0; i < 1024; ++i) a[i] = b[i] = 100*cos(2*LT_PI*100*i/1024);
+    adc_cal_loop_estimate_block(&g_loop, a, b, 1024, -1, 0, 0, 0, &est);
+    SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.skew_used_ps));
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_test_tone_calls(0), 0);
+}
+
+static void test_blind_closed_loop(sim_assert_context_t *ctx, FILE *summary)
+{
+    for (int inverted = 0; inverted <= 1; ++inverted) {
+    for (int width = 4; width <= 12; width += 4) {
+        adc_cal_loop_config_t physical, unknown = {0};
+        adc_cal_loop_options_t opt;
+        adc_cal_loop_actuator_t act;
+        lt_bench_t bench;
+        static uint8_t buf[2*LT_WORDS];
+        adc_cal_loop_default_config(&physical);
+        physical.sig_cycles = 0; physical.amp_dbfs = -120.0;
+        physical.dither_edge_dac = physical.dither_top_dac = width;
+        physical.dither_scale_lsb = 6000.0 + width*1000.0;
+        lt_bench_init(&bench, &physical, (unsigned)width);
+        bench.invert_b = inverted; bench.skew_b_ps = 120.0; bench.noise = 1.0;
+        unknown.fs_dac = 1.3e9; unknown.adc_ratio = 1;
+        adc_cal_loop_default_options(&opt); opt.reference_free = 1;
+        opt.max_skew_samples = 0.5;
+        adc_cal_loop_default_actuator(&act);
+        act.ctx = &bench; act.command_skew_ps = lt_command_skew;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &unknown, &opt, NULL, &act), 0);
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 100, lt_capture, &bench,
+                          NULL, NULL, buf, sizeof(buf)), 100);
+        fprintf(summary, "blind inverted=%d width=%d accepted=%u skew_true=%g gain_ratio=%g\n",
+                inverted, width, g_loop.qualified, bench.skew_b_ps + bench.skew_cmd_b_ps,
+                bench.gain_b*g_loop.state.gain_corr_b/g_loop.state.gain_corr_a);
+        SIM_ASSERT_NEAR(ctx, bench.skew_b_ps + bench.skew_cmd_b_ps, 0.0, 5.0);
+        SIM_ASSERT_NEAR(ctx, bench.gain_b*g_loop.state.gain_corr_b/g_loop.state.gain_corr_a,
+                        1.0, 0.002);
+        g_loop.opt.update_axes = 0;
+        double off = 0;
+        for (int j = 0; j < 30; ++j) {
+            adc_cal_loop_row_t row;
+            const long n = lt_capture(&bench, buf, sizeof(buf));
+            adc_cal_loop_step(&g_loop, buf, (size_t)n, &row);
+            SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+            SIM_ASSERT_TRUE(ctx, inverted ? row.prep.corr < -0.9 : row.prep.corr > 0.9);
+            off += row.est.offset_mismatch_codes;
+        }
+        SIM_ASSERT_NEAR(ctx, off/30, 0.0, 0.5);
+        bench.noise_only = 1;
+        g_loop.opt.update_axes = ADC_CAL_LOOP_AXIS_ALL;
+        const adc_cal_loop_state_t saved = g_loop.state;
+        adc_cal_loop_row_t rejected;
+        const long noise_n = lt_capture(&bench, buf, sizeof(buf));
+        adc_cal_loop_step(&g_loop, buf, (size_t)noise_n, &rejected);
+        SIM_ASSERT_TRUE(ctx, rejected.rejected != ADC_CAL_LOOP_REJECT_NONE);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, saved.offset_b, 0.0);
+        SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, saved.gain_corr_b, 0.0);
+    }
+    }
+}
+
 void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
 {
     fprintf(summary, "\n== calibration_loop_c native tests ==\n");
@@ -513,6 +761,9 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_batch_decision(ctx, summary, -1.0);
     test_reject_streak(ctx);
     test_single_axis_experiments(ctx);
+    test_dither_only(ctx, summary);
+    test_reference_free(ctx);
+    test_blind_closed_loop(ctx, summary);
     sim_board_axis_tests_run(ctx, summary);
 }
 
@@ -525,7 +776,9 @@ enum {
     G_OFFSET_A, G_OFFSET_B, G_GAIN_A, G_GAIN_B, G_GAIN_RATIO, G_TONE_RATIO,
     G_TONE_AMP_A, G_RESID_A, G_SKEW_PHASE, G_SKEW_DIFF, G_SKEW_CENTROID, G_SKEW_MISMATCH,
     G_SKEW_SOURCE, G_ST_OFFSET_A, G_ST_OFFSET_B, G_ST_GAIN_A, G_ST_GAIN_B, G_ST_SKEW_CMD,
-    G_SKEW_ACTION, G_SKEW_STEP, G_COUNT
+    G_SKEW_ACTION, G_SKEW_STEP,
+    G_MAG_A, G_MAG_B, G_MAG_RATIO, G_PHASE_A, G_PHASE_B, G_DITHER_PHASE, G_DITHER_FOLD,
+    G_SKEW_USED, G_COUNT
 };
 
 static const char *const k_field_names[G_COUNT] = {
@@ -533,7 +786,9 @@ static const char *const k_field_names[G_COUNT] = {
     "offset_a", "offset_b", "gain_a", "gain_b", "gain_ratio", "tone_ratio",
     "tone_amp_a", "resid_rms_a", "skew_phase_ps", "skew_diff_route_ps", "skew_centroid_ps",
     "skew_mismatch_ps", "skew_source", "state.offset_a", "state.offset_b", "state.gain_corr_a",
-    "state.gain_corr_b", "state.skew_cmd_ps", "skew_action", "skew_step_codes"
+    "state.gain_corr_b", "state.skew_cmd_ps", "skew_action", "skew_step_codes",
+    "mag_a", "mag_b", "gain_mag_ratio", "phase_a", "phase_b", "dither_phase_ps",
+    "dither_fold_ps", "skew_used_ps"
 };
 
 static int is_exact_field(int f)
@@ -581,6 +836,14 @@ static void row_values(const adc_cal_loop_t *loop, const adc_cal_loop_row_t *row
     v[G_ST_SKEW_CMD] = loop->state.skew_cmd_ps;
     v[G_SKEW_ACTION] = action_code(row->skew_action);
     v[G_SKEW_STEP] = row->skew_step_codes;
+    v[G_MAG_A] = row->est.mag_a;
+    v[G_MAG_B] = row->est.mag_b;
+    v[G_MAG_RATIO] = row->est.gain_mag_ratio;
+    v[G_PHASE_A] = row->est.phase_a;
+    v[G_PHASE_B] = row->est.phase_b;
+    v[G_DITHER_PHASE] = row->est.skew_slope_ps;
+    v[G_DITHER_FOLD] = row->est.skew_fold_ps;
+    v[G_SKEW_USED] = row->est.skew_used_ps;
 }
 
 typedef struct {
@@ -638,7 +901,7 @@ static int parse_numbers(const char *text, double *out, int max)
     return n;
 }
 
-static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp)
+static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp, int version)
 {
     char name[128];
     double num[ADC_CAL_LOOP_MAX_EVENTS + 16];
@@ -653,6 +916,8 @@ static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp)
     int frames_done = 0;
     int reported = 0;
     int n0_ties = 0;
+    const int n_fields = version == 1 ? G_MAG_A : G_COUNT;
+    const int n_options = version == 1 ? 11 : 12;
 
     if (read_line(fp) != 0 || sscanf(g_line, "case %127s", name) != 1) return -1;
 
@@ -678,7 +943,7 @@ static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp)
     }
 
     if (read_line(fp) != 0 || strncmp(g_line, "options ", 8) != 0 ||
-        parse_numbers(g_line + 8, num, 11) != 11) return -1;
+        parse_numbers(g_line + 8, num, n_options) != n_options) return -1;
     adc_cal_loop_default_options(&opt);
     adc_cal_loop_default_actuator(&act);
     batch = (int)num[0];
@@ -692,6 +957,7 @@ static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp)
     act.step_ps = num[8];
     act.deadband_ps = num[9];
     act.code = (int)num[10];
+    if (version >= 2) opt.tone_free = (int)num[11];
     replay.code = act.code;
     if (batch) {
         act.ctx = &replay;
@@ -724,7 +990,7 @@ static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp)
             g_raw[b] = (uint8_t)(hi * 16 + lo);
         }
         if (read_line(fp) != 0 || strncmp(g_line, "expect ", 7) != 0 ||
-            parse_numbers(g_line + 7, expect, G_COUNT) != G_COUNT) return -1;
+            parse_numbers(g_line + 7, expect, n_fields) != n_fields) return -1;
         if (read_line(fp) != 0) return -1; /* "# reason" */
 
         /* Replay on the host's loop position; the C must show that position is
@@ -751,7 +1017,7 @@ static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp)
                     got[G_OFFSET_A], expect[G_OFFSET_A], got[G_TONE_AMP_A], expect[G_TONE_AMP_A]);
             reported++;
         }
-        for (int f = 0; f < G_COUNT; ++f) {
+        for (int f = 0; f < n_fields; ++f) {
             const int e_fin = lt_isfinite(expect[f]);
             const int g_fin = lt_isfinite(got[f]);
             if (e_fin != g_fin) {
@@ -777,7 +1043,7 @@ static int golden_case(sim_assert_context_t *ctx, FILE *summary, FILE *fp)
 
     fprintf(summary, "loop golden %-15s %d frames (%s branch), %d n0 ties resolved to the host\n",
             name, frames_done, batch ? "batch" : "model", n0_ties);
-    for (int f = 0; f < G_COUNT; ++f) {
+    for (int f = 0; f < n_fields; ++f) {
         if (is_exact_field(f)) {
             fprintf(summary, "    %-20s mismatches %d\n", k_field_names[f], mismatches[f]);
             SIM_ASSERT_EQ_INT(ctx, mismatches[f], 0);
@@ -795,20 +1061,22 @@ void sim_loop_tests_run_golden(sim_assert_context_t *ctx, FILE *summary, const c
 {
     FILE *fp = fopen(path, "r");
     int n_cases = 0;
+    int version = 0;
 
     fprintf(summary, "\n== calibration_loop_c golden replay: %s ==\n", path);
     SIM_ASSERT_TRUE(ctx, fp != NULL);
     if (fp == NULL) {
         return;
     }
-    if (read_line(fp) != 0 || strcmp(g_line, "LOOPGOLDEN 1") != 0 ||
+    if (read_line(fp) != 0 || sscanf(g_line, "LOOPGOLDEN %d", &version) != 1 ||
+        (version != 1 && version != 2) ||
         read_line(fp) != 0 || sscanf(g_line, "cases %d", &n_cases) != 1) {
         SIM_ASSERT_TRUE(ctx, 0 && "golden header");
         fclose(fp);
         return;
     }
     for (int c = 0; c < n_cases; ++c) {
-        const int rc = golden_case(ctx, summary, fp);
+        const int rc = golden_case(ctx, summary, fp, version);
         SIM_ASSERT_EQ_INT(ctx, rc, 0);
         if (rc != 0) {
             break;

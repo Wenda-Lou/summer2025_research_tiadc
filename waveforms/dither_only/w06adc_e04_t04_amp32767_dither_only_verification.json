@@ -1,0 +1,36 @@
+{
+  "txt": "w06adc_e04_t04_amp32767_dither_only.txt",
+  "required_wave_index": 3,
+  "sha256": "8e9fb0cafdde2cc0213e4a89f84547aa2d1b27d2734e8f5b5ae314b7a7af6e19",
+  "dac_rate_hz": 2600000000.0,
+  "adc_rate_hz": 1300000000.0,
+  "dac_samples": 16640,
+  "sample_range": [
+    -32767,
+    32767
+  ],
+  "mean_sample": 0.0,
+  "peak_fraction_of_dac_full_scale": 1.0,
+  "rms_dac_codes": 5376.467840005684,
+  "positive_events": 32,
+  "negative_events": 32,
+  "main_tone_hz": 0,
+  "main_tone_amplitude_lsb": 0,
+  "touches_dac_rails": true,
+  "dac_rail_samples": 320,
+  "digital_overflow": false,
+  "bench_validated": false,
+  "adc_full_scale_verified": false,
+  "preflight": {
+    "qualified": 60,
+    "rejected": 0,
+    "model_adc_codes_per_dac_code": 0.2,
+    "adc_rail_samples": 0,
+    "tail_mean_residual": {
+      "gain_magnitude_ratio": 0.9999654336835367,
+      "offset_codes": -0.008408325325520272,
+      "skew_ps": -0.013782332236770787
+    }
+  },
+  "note": "Full-scale DAC peak does not imply full-scale ADC input. The model explicitly retains analog headroom; actual ADC clipping guard remains enabled."
+}

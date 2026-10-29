@@ -23,7 +23,7 @@ static adc_cal_loop_t g_board_loop;                  /* ~570 KB: .bss, never the
 static uint8_t g_board_loop_frame[DMA_CMD_BUF_SIZE + 1U];
 static bool g_board_loop_valid;                     /* g_board_loop holds a finished run */
 static bool g_board_loop_closed;                    /* that run was allowed to move skew */
-static unsigned g_board_loop_wave;                  /* k_loop_waveforms[] row assumed on the DPG */
+static unsigned g_board_loop_wave = 3U;             /* legacy log ID only; no waveform selection */
 static unsigned g_board_loop_run_wave;              /* row the last run used */
 static XTime g_board_loop_t_capture_end;
 static uint64_t g_board_loop_compute_ticks;
@@ -69,7 +69,8 @@ static const char *board_loop_reject_tag(adc_cal_loop_reject_t r)
 
 /* One line per capture:
  *   LOOP it=<n> st=<ok|reason> n0= rot= margin_x100=
- *        tone_ppm=(|B|/|A| tone - 1)e6  gain_ppm=(g_B/g_A dither - 1)e6
+ *        gain_ppm=(g_B/g_A pulse-window - 1)e6
+ *        mag_ppm=used_gain_ppm=(dither magnitude B/A - 1)e6
  *        doff_mc=(off_B - off_A)e3 codes  skew_cps=skew_used e2 ps
  *        corr_a_ppm= corr_b_ppm= (gain_corr - 1)e6  offa_mc= offb_mc= (state offset)e3
  *        [batch=<used>/<frames> bmean_cps= act=<action> code=<code>]   on a batch decision
@@ -81,15 +82,21 @@ static void board_loop_print_row(const adc_cal_loop_row_t *row)
     xil_printf("LOOP it=%u st=%s n0=%d rot=%d", row->iteration,
                board_loop_reject_tag(row->rejected), row->prep.n0, row->prep.rotation);
     board_loop_put("margin_x100", row->prep.align_margin, 100.0);
-    board_loop_put("tone_ppm", e->tone_ratio - 1.0, 1e6);
+    if (g_board_loop.opt.reference_free)
+        board_loop_put("corr_ppm", row->prep.corr, 1e6);
     board_loop_put("gain_ppm", e->gain_ratio - 1.0, 1e6);
+    board_loop_put("mag_ppm", e->gain_mag_ratio - 1.0, 1e6);
+    board_loop_put("used_gain_ppm", g_board_loop.opt.tone_free ? e->gain_mag_ratio - 1.0 :
+                   e->tone_ratio - 1.0, 1e6);
     board_loop_put("doff_mc", e->ch_b.offset_codes - e->ch_a.offset_codes, 1e3);
     board_loop_put("skew_cps", e->skew_used_ps, 100.0);
     board_loop_put("corr_a_ppm", row->gain_corr_a - 1.0, 1e6);
     board_loop_put("corr_b_ppm", row->gain_corr_b - 1.0, 1e6);
     board_loop_put("offa_mc", row->offset_a_state, 1e3);
     board_loop_put("offb_mc", row->offset_b_state, 1e3);
-    xil_printf(" clips=%u gsrc=%s", row->clipped_samples, row->gain_source);
+    xil_printf(" clips=%u gsrc=%s skew_route=%s", row->clipped_samples,
+               g_board_loop.opt.reference_free ? "dither_spectrum" : row->gain_source,
+               g_board_loop.opt.tone_free ? "dither_cross_spectrum" : "phase");
     if (row->skew_action != ADC_CAL_LOOP_SKEW_ACTION_NONE) {
         xil_printf(" batch=%d/%d", row->skew_batch_used, row->skew_batch_n);
         board_loop_put("bmean_cps", row->skew_batch_mean_ps, 100.0);
@@ -105,6 +112,8 @@ static void board_loop_print_row(const adc_cal_loop_row_t *row)
 /* ---------------------------------------------------------------------------
  * Hooks handed to the loop.
  * ------------------------------------------------------------------------ */
+
+#include "butils_loop_results.c"
 
 static long board_loop_capture(void *ctx, uint8_t *buf, size_t capacity)
 {
@@ -159,31 +168,34 @@ static void board_loop_on_row(void *ctx, const adc_cal_loop_row_t *row)
         g_board_loop_compute_ticks += (uint64_t)(now - g_board_loop_t_capture_end);
         g_board_loop_compute_count++;
     }
-    board_loop_print_row(row);
+    board_loop_results_record(row, g_board_loop.captures);
+    if (row->rejected != ADC_CAL_LOOP_REJECT_NONE) {
+        board_loop_print_row(row);
+    } else if (row->skew_action != ADC_CAL_LOOP_SKEW_ACTION_NONE &&
+               row->skew_action != ADC_CAL_LOOP_SKEW_ACTION_INSIDE_DEADBAND &&
+               row->skew_action != ADC_CAL_LOOP_SKEW_ACTION_MEASURE_ONLY) {
+        xil_printf("LOOP-EVENT it=%u act=%s steps=%d code=%d\r\n", row->iteration,
+                   adc_cal_loop_skew_action_name(row->skew_action), row->skew_step_codes,
+                   row->skew_code);
+    }
 }
 
 /* ---------------------------------------------------------------------------
  * Commands.
  * ------------------------------------------------------------------------ */
 
-static void board_loop_print_waves(void)
-{
-    for (unsigned i = 0U; i < LOOP_WAVEFORM_COUNT; ++i) {
-        xil_printf("      %c %u  %s  (%s MHz)\r\n", i == g_board_loop_wave ? '*' : ' ', i,
-                   k_loop_waveforms[i].name, k_loop_waveforms[i].tone_mhz);
-    }
-}
-
 static void adc_loop_print_command_help(void)
 {
     xil_printf("  adc -cal loop N           On-board impulse-dither loop: N qualified samples,\r\n");
     xil_printf("                            gain/offset per frame, skew batch decision (ACK-checked).\r\n");
+    xil_printf("  adc -cal loop N stream    PC mode: full per-frame data; PC saves CSV/plots.\r\n");
     xil_printf("  adc -cal loop open N      Same, skew measured only (no actuator writes).\r\n");
     xil_printf("  adc -cal loop status      State of the last loop run.\r\n");
-    xil_printf("  adc -cal loop wave [K]    List the known DPG vectors / select K as the one loaded.\r\n");
+    xil_printf("  adc -cal loop export      Export saved results/rows to the PC; no new calibration.\r\n");
+    xil_printf("  adc -cal loop wave [K]    Legacy no-op; no waveform reference is used.\r\n");
     xil_printf("  adc -cal loop test help   Isolated offset/gain/skew experiments and holdout.\r\n");
-    xil_printf("      Waveform assumed on the DPG (*):\r\n");
-    board_loop_print_waves();
+    xil_printf("      Reference-free dither: shared A/B excitation, no waveform setup.\r\n");
+    xil_printf("      Hardware ADC sample rate: 1300000000 Hz.\r\n");
 }
 
 static void board_loop_print_status(void)
@@ -196,7 +208,7 @@ static void board_loop_print_status(void)
     }
     xil_printf("LOOP-STATUS mode=%s waveform=%s qualified=%u captures=%u rejected=%u polarity=%d "
                "code=%d skew_abort=%d iteration=%u",
-               g_board_loop_closed ? "closed" : "open", k_loop_waveforms[g_board_loop_run_wave].name,
+               g_board_loop_closed ? "closed" : "open", "reference_free_dither",
                L->qualified, L->captures, L->rejected,
                (int)L->polarity, L->act.code, L->skew_abort, L->state.iteration);
     board_loop_put("corr_a_ppm", L->state.gain_corr_a - 1.0, 1e6);
@@ -206,12 +218,11 @@ static void board_loop_print_status(void)
     xil_printf("\r\n");
 }
 
-static void board_loop_run(unsigned n_qualified, bool closed)
+static void board_loop_run(unsigned n_qualified, bool closed, bool streaming)
 {
     adc_cal_loop_config_t cfg;
     adc_cal_loop_options_t opt;
     adc_cal_loop_actuator_t act;
-    const char *why = NULL;
     const bool quiet_before = g_quiet_calibration_capture;
     XTime t_start;
     XTime t_end;
@@ -219,11 +230,8 @@ static void board_loop_run(unsigned n_qualified, bool closed)
     int code = -1;
 
     loop_waveform_config(g_board_loop_wave, &cfg);
-    if (adc_cal_loop_config_validate(&cfg, &why) != 0) {
-        ERR("Loop waveform config invalid: %s", why != NULL ? why : "?");
-        return;
-    }
     adc_cal_loop_default_options(&opt);
+    loop_waveform_options(g_board_loop_wave, &opt);
     opt.close_skew_loop = closed ? 1 : 0;
     adc_cal_loop_default_actuator(&act);
     act.request_steps = board_loop_request_steps;
@@ -256,10 +264,13 @@ static void board_loop_run(unsigned n_qualified, bool closed)
     g_board_loop_run_wave = g_board_loop_wave;
     g_board_loop_compute_ticks = 0U;
     g_board_loop_compute_count = 0U;
+    board_loop_results_begin(g_board_loop_wave, n_qualified, closed, streaming);
 
-    xil_printf("LOOP-START mode=%s samples=%u waveform=%s tone_mhz=%s sig_cycles=%d code=%d\r\n",
-               closed ? "closed" : "open", n_qualified, k_loop_waveforms[g_board_loop_wave].name,
-               k_loop_waveforms[g_board_loop_wave].tone_mhz, cfg.sig_cycles, code);
+    xil_printf("LOOP-START mode=%s samples=%u waveform=%s code=%d "
+               "gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 reject_clipping=%u export=1 stream=%u run_id=%u\r\n",
+               closed ? "closed" : "open", n_qualified, "reference_free_dither",
+               code, (unsigned)opt.reject_clipping, (unsigned)streaming, g_board_loop_result.run_id);
+    board_loop_results_stream_begin();
 
     g_quiet_calibration_capture = true;
     XTime_GetTime(&t_start);
@@ -269,6 +280,10 @@ static void board_loop_run(unsigned n_qualified, bool closed)
     XTime_GetTime(&t_end);
     g_quiet_calibration_capture = quiet_before;
     g_board_loop_valid = true;
+    board_loop_results_finish(&g_board_loop,
+        (unsigned long)((t_end - t_start) * 1000ULL / COUNTS_PER_SECOND),
+        (unsigned long)(g_board_loop_compute_count ? g_board_loop_compute_ticks * 1000ULL /
+            (g_board_loop_compute_count * (uint64_t)COUNTS_PER_SECOND) : 0ULL));
 
     xil_printf("LOOP-END qualified=%u/%u captures=%u rejected=%u code=%d skew_abort=%d "
                "elapsed_ms=%lu compute_ms_avg=%lu\r\n",
@@ -289,6 +304,7 @@ static void handle_adc_loop_cmd(void)
     bool closed = true;
     char *endptr = NULL;
     unsigned long parsed;
+    char *option;
 
     if (token == NULL || strcmp(token, "help") == 0 || strcmp(token, "?") == 0) {
         adc_loop_print_command_help();
@@ -296,6 +312,14 @@ static void handle_adc_loop_cmd(void)
     }
     if (strcmp(token, "status") == 0) {
         board_loop_print_status();
+        return;
+    }
+    if (strcmp(token, "export") == 0) {
+        if (strtok(NULL, " ") != NULL) {
+            ERR("Use adc -cal loop export.");
+            return;
+        }
+        board_loop_results_export();
         return;
     }
     if (strcmp(token, "test") == 0) {
@@ -306,18 +330,14 @@ static void handle_adc_loop_cmd(void)
         token = strtok(NULL, " ");
         if (token != NULL) {
             parsed = strtoul(token, &endptr, 0);
-            if (endptr == token || *endptr != '\0' || parsed >= LOOP_WAVEFORM_COUNT ||
+            if (endptr == token || *endptr != '\0' || parsed > 3U ||
                 strtok(NULL, " ") != NULL) {
-                ERR("Use adc -cal loop wave K with K = 0..%u.", (unsigned)LOOP_WAVEFORM_COUNT - 1U);
+                ERR("wave is obsolete; run adc -cal loop N without waveform selection.");
                 return;
             }
-            g_board_loop_wave = (unsigned)parsed;
+            /* Legacy command accepted for old scripts, never selects a reference. */
         }
-        xil_printf("LOOP-WAVE selected=%u name=%s tone_mhz=%s sig_cycles=%d\r\n",
-                   g_board_loop_wave, k_loop_waveforms[g_board_loop_wave].name,
-                   k_loop_waveforms[g_board_loop_wave].tone_mhz,
-                   k_loop_waveforms[g_board_loop_wave].sig_cycles);
-        board_loop_print_waves();
+        xil_printf("LOOP-WAVE reference_free=1 selection=unused sample_rate_hz=1300000000\r\n");
         return;
     }
     if (strcmp(token, "open") == 0) {
@@ -329,12 +349,14 @@ static void handle_adc_loop_cmd(void)
         }
     }
     parsed = strtoul(token, &endptr, 0);
+    option = strtok(NULL, " ");
     if (endptr == token || *endptr != '\0' || parsed == 0UL ||
-        parsed > BOARD_LOOP_MAX_SAMPLES || strtok(NULL, " ") != NULL) {
-        ERR("Use adc -cal loop [open] N with N = 1..%u.", BOARD_LOOP_MAX_SAMPLES);
+        parsed > BOARD_LOOP_MAX_SAMPLES || (option != NULL && strcmp(option, "stream") != 0) ||
+        strtok(NULL, " ") != NULL) {
+        ERR("Use adc -cal loop [open] N [stream] with N = 1..%u.", BOARD_LOOP_MAX_SAMPLES);
         return;
     }
-    board_loop_run((unsigned)parsed, closed);
+    board_loop_run((unsigned)parsed, closed, option != NULL);
 }
 
 #include "butils_loop_test.c"

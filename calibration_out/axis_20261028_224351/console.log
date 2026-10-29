@@ -1,0 +1,24 @@
+# arguments: {"axis": "offset", "baseline_hold": 100, "baseline_train": 600, "batch": 20, "channel": "B", "deadband_ps": 10.0, "execute": true, "gain_gate_ppm": 200000, "hold": 100, "min_yield": 0.8, "mode": "sweep", "out": "calibration_out/axis_20261028_224351", "points": "-128,128,-256,256,-512,512", "pre": 40, "repeats": 3, "reuse_baseline": true, "skew_gate_milli": 500, "step_ps": 19.1, "timeout": 1800.0, "tolerance": null, "train": 300, "uart": "COM5", "wave": null, "window": 20}
+# command: adc -cal loop test status
+
+LOOP-TEST-BASELINE valid=1 snapshot=1 wave=3 code=12 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=12
+LOOP-TEST-CONFIG gain_ppm=200000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1
+LOOP-TEST-SNAPSHOT channel=0 ifc=12 dc1=2 dc2=191
+LOOP-TEST-SNAPSHOT channel=1 ifc=12 dc1=2 dc2=191
+LOOP-TEST-END result=OK
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000081
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000081
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+Command Error: DMA capture timeout. S2MM status: 0x00000000
+LOOP-SKEW-TXN steps=0 result=RECOVERY_REQUIRED code_before=12 code_after=12 stage=warmup-capture
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR

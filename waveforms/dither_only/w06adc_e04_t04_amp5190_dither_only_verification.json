@@ -1,0 +1,31 @@
+{
+  "txt": "w06adc_e04_t04_amp5190_dither_only.txt",
+  "sha256": "d4d10f46bf0aa261de34cd25bff84954648e698d99b7ce4ec5c7cb741f03e3c1",
+  "dac_samples": 16640,
+  "dpg_length_multiple_of_256": true,
+  "dac_rate_hz": 2600000000.0,
+  "adc_rate_hz": 1300000000.0,
+  "pulse_support_dac_samples": 12,
+  "pulse_support_adc_samples": 6.0,
+  "event_period_seconds": 1e-07,
+  "positive_events": 32,
+  "negative_events": 32,
+  "sample_range": [
+    -5190,
+    5190
+  ],
+  "mean_sample": 0.0,
+  "digital_clipping": false,
+  "seam_samples_zero": true,
+  "exactly_matches_rounded_pure_dither": true,
+  "tone_note": "sig_cycles=0; no sinusoid is generated. Both metadata carrier frequency and amplitude are zero. TXT samples are unchanged from the verified rounded pure-dither vector.",
+  "on_board_axis_test_compatible": true,
+  "compatibility_note": "Updated firmware requires wave 2 and uses only dither calibration; rebuild/download the ELF. No tone fit, purity or carrier metric is called in the strict path. Not bench-validated.",
+  "requires_updated_firmware": true,
+  "required_wave_index": 2,
+  "bench_validated": false,
+  "same_pulse_geometry_amplitude_and_polarity_as_tone_dither": true,
+  "main_tone_hz": 0,
+  "main_tone_amplitude_lsb": 0,
+  "calibration_algorithm_reference_commit": "d22d23ff6753b4503c54157529ad8396483cb006"
+}

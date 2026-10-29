@@ -1,0 +1,46 @@
+{
+  "arguments": {
+    "mode": "sweep",
+    "uart": "COM5",
+    "wave": null,
+    "out": "calibration_out/axis_20261028_224654",
+    "execute": true,
+    "reuse_baseline": true,
+    "timeout": 1800.0,
+    "pre": 40,
+    "train": 300,
+    "hold": 100,
+    "baseline_train": 600,
+    "baseline_hold": 100,
+    "gain_gate_ppm": 200000,
+    "skew_gate_milli": 500,
+    "deadband_ps": 10.0,
+    "step_ps": 19.1,
+    "batch": 20,
+    "tolerance": null,
+    "min_yield": 0.8,
+    "window": 20,
+    "axis": "offset",
+    "channel": "B",
+    "points": "-128,128,-256,256,-512,512",
+    "repeats": 3
+  },
+  "tolerance": 0.5,
+  "points": [
+    -128,
+    128,
+    -256,
+    256,
+    -512,
+    512
+  ],
+  "started_utc": "2026-10-29T02:46:54.755725+00:00",
+  "completed": false,
+  "units": {
+    "offset": "calibrated output codes",
+    "gain": "B/A - 1",
+    "skew": "ps"
+  },
+  "stop_reason": "ValueError: No valid saved baseline; establish baseline first. No test writes sent.",
+  "ended_utc": "2026-10-29T02:46:54.858031+00:00"
+}

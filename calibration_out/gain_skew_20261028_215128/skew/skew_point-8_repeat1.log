@@ -1,0 +1,45 @@
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=4
+LOOP-TEST-EVENT phase=pre attempt=0 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=1 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=2 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=3 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=4 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=5 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=6 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=7 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=8 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=9 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=10 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=11 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=12 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=13 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=14 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=15 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=16 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=17 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=18 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=19 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=20 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=21 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=22 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=23 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=24 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=25 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=26 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=27 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=28 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=29 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=30 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=31 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=32 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=33 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=34 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=35 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=36 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=37 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=38 st=margin act=none code=4 clips=0
+LOOP-TEST-EVENT phase=pre attempt=39 st=margin act=none code=4 clips=0
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=4 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR

@@ -1,0 +1,64 @@
+{
+  "arguments": {
+    "mode": "sweep",
+    "uart": "COM5",
+    "wave": null,
+    "out": "calibration_out/axis_20261028_200726",
+    "execute": true,
+    "reuse_baseline": true,
+    "timeout": 1800.0,
+    "pre": 40,
+    "train": 300,
+    "hold": 100,
+    "baseline_train": 600,
+    "baseline_hold": 100,
+    "gain_gate_ppm": 200000,
+    "skew_gate_milli": 500,
+    "deadband_ps": 10.0,
+    "step_ps": 19.1,
+    "batch": 20,
+    "tolerance": null,
+    "min_yield": 0.8,
+    "window": 20,
+    "axis": "offset",
+    "channel": "B",
+    "points": null,
+    "repeats": 5
+  },
+  "tolerance": 0.5,
+  "points": [
+    -64,
+    -16,
+    -4,
+    0,
+    4,
+    16,
+    64
+  ],
+  "started_utc": "2026-10-29T00:07:26.748332+00:00",
+  "completed": false,
+  "units": {
+    "offset": "calibrated output codes",
+    "gain": "B/A - 1",
+    "skew": "ps"
+  },
+  "reused_baseline": true,
+  "board_config": {
+    "gain_ppm": "200000",
+    "skew_milli": "500",
+    "deadband_cps": "1000",
+    "step_cps": "1910",
+    "batch": "20",
+    "software_offset_a_mc": "0",
+    "software_offset_b_mc": "16000"
+  },
+  "baseline": {
+    "valid": "1",
+    "snapshot": "1",
+    "wave": "3",
+    "code": "12",
+    "fault": "0"
+  },
+  "stop_reason": "KeyboardInterrupt: ",
+  "ended_utc": "2026-10-29T00:21:12.954859+00:00"
+}

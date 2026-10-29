@@ -1,0 +1,18 @@
+{
+  "completed": true,
+  "uart": "COM5",
+  "repeats": 3,
+  "runs": {
+    "gain": {
+      "exit_code": 1,
+      "completed": true,
+      "stop_reason": null
+    },
+    "skew": {
+      "exit_code": 1,
+      "completed": true,
+      "stop_reason": null
+    }
+  },
+  "active_axis": null
+}

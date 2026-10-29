@@ -1,0 +1,45 @@
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-EVENT phase=pre attempt=0 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=1 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=2 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=3 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=4 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=5 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=6 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=7 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=8 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=9 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=10 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=11 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=12 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=13 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=14 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=15 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=16 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=17 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=18 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=19 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=20 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=21 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=22 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=23 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=24 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=25 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=26 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=27 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=28 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=29 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=30 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=31 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=32 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=33 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=34 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=35 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=36 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=37 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=38 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=39 st=gain_range act=none code=12 clips=0
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=12 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR

@@ -1,0 +1,1097 @@
+# arguments: {"axis": "gain", "baseline_hold": 100, "baseline_train": 600, "batch": 20, "channel": "B", "deadband_ps": 10.0, "execute": true, "gain_gate_ppm": 200000, "hold": 100, "min_yield": 0.8, "mode": "sweep", "out": "C:\\TIDIAC\\summer2025_research_tiadc\\calibration_out\\gain_skew_20261028_215128\\gain", "points": null, "pre": 40, "repeats": 3, "reuse_baseline": true, "skew_gate_milli": 500, "step_ps": 19.1, "timeout": 1800.0, "tolerance": null, "train": 300, "uart": "COM5", "wave": null, "window": 20}
+# command: adc -cal loop test status
+
+LOOP-TEST-BASELINE valid=1 snapshot=1 wave=3 code=12 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=12
+LOOP-TEST-CONFIG gain_ppm=200000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1
+LOOP-TEST-SNAPSHOT channel=0 ifc=12 dc1=2 dc2=191
+LOOP-TEST-SNAPSHOT channel=1 ifc=12 dc1=2 dc2=191
+LOOP-TEST-END result=OK
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 12
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=12
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-420 gain_ppm=-788 skew_cps=-305
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-679 gain_ppm=1374 skew_cps=-206
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-550 offset_sd_mc=810 gain_ppm=293 gain_sd_ppm=2927 skew_cps=-255 skew_sd_cps=317
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-571 gain_ppm=266 skew_cps=-155
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-795 gain_ppm=-395 skew_cps=-343
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-1021 gain_ppm=381 skew_cps=-263
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-154 gain_ppm=-84 skew_cps=-301
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-281 gain_ppm=82 skew_cps=-362
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=114 gain_ppm=-266 skew_cps=-307
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-458 gain_ppm=-20 skew_cps=-195
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-20 gain_ppm=-110 skew_cps=-298
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=466 gain_ppm=139 skew_cps=-315
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=172 gain_ppm=61 skew_cps=-313
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=120 gain_ppm=96 skew_cps=-267
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=112 gain_ppm=260 skew_cps=-334
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=855 gain_ppm=54 skew_cps=-407
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=600 gain_ppm=-485 skew_cps=-194
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=328 gain_ppm=2 skew_cps=-211
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-36 offset_sd_mc=891 gain_ppm=-1 gain_sd_ppm=3017 skew_cps=-284 skew_sd_cps=334
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=335 gain_ppm=1538 skew_cps=-328
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=33 gain_ppm=1878 skew_cps=-268
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=11 gain_ppm=617 skew_cps=-278
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=85 gain_ppm=-73 skew_cps=-416
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-40 gain_ppm=362 skew_cps=-234
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=85 offset_sd_mc=709 gain_ppm=864 gain_sd_ppm=2941 skew_cps=-305 skew_sd_cps=381
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.0008644299999999999, "gain_n": 100, "gain_sd": 0.002940934250842371, "gain_se": 0.00029409342508423706, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 0.08499, "offset_n": 100, "offset_sd": 0.7090357728434562, "offset_se": 0.07090357728434563, "pass": false, "point": 12, "pre_mean": 0.000292875, "pre_observed_mean": 0.000292875, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.0485, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.8116409613422166, "skew_se": 0.38116409613422164, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 13
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=13
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-3620 gain_ppm=-66609 skew_cps=-145
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-3580 gain_ppm=-66122 skew_cps=-190
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-3600 offset_sd_mc=763 gain_ppm=-66365 gain_sd_ppm=2941 skew_cps=-168 skew_sd_cps=326
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-3820 gain_ppm=-9677 skew_cps=-324
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-3168 gain_ppm=-153 skew_cps=-117
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-3582 gain_ppm=400 skew_cps=-437
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-3211 gain_ppm=-178 skew_cps=-240
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-3423 gain_ppm=80 skew_cps=-157
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-3305 gain_ppm=-26 skew_cps=-205
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-3358 gain_ppm=376 skew_cps=-374
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-3752 gain_ppm=-196 skew_cps=-38
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-3428 gain_ppm=-100 skew_cps=-150
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-3467 gain_ppm=-380 skew_cps=-295
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-3471 gain_ppm=163 skew_cps=-195
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-4049 gain_ppm=68 skew_cps=-139
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-4060 gain_ppm=-284 skew_cps=-311
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-3224 gain_ppm=417 skew_cps=-278
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-3542 gain_ppm=-103 skew_cps=-331
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-3524 offset_sd_mc=714 gain_ppm=-639 gain_sd_ppm=5841 skew_cps=-239 skew_sd_cps=376
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-3474 gain_ppm=-1 skew_cps=-337
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-3978 gain_ppm=12 skew_cps=-357
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-4045 gain_ppm=-89 skew_cps=-305
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-3811 gain_ppm=-1157 skew_cps=-219
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-3756 gain_ppm=-275 skew_cps=-144
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-3813 offset_sd_mc=759 gain_ppm=-302 gain_sd_ppm=2850 skew_cps=-272 skew_sd_cps=285
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -0.00030209, "gain_n": 100, "gain_sd": 0.0028496646022564717, "gain_se": 0.0002849664602256472, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -3.81283, "offset_n": 100, "offset_sd": 0.7586685446933138, "offset_se": 0.07586685446933138, "pass": true, "point": 13, "pre_mean": -0.0663652, "pre_observed_mean": -0.0663652, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.7237, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 2.847031647526982, "skew_se": 0.2847031647526982, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 11
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=11
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=776 gain_ppm=77861 skew_cps=-262
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=722 gain_ppm=77335 skew_cps=-255
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=749 offset_sd_mc=697 gain_ppm=77598 gain_sd_ppm=2756 skew_cps=-258 skew_sd_cps=346
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=1213 gain_ppm=11044 skew_cps=-399
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=1029 gain_ppm=-2 skew_cps=-84
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=1076 gain_ppm=-278 skew_cps=-185
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=1160 gain_ppm=360 skew_cps=-357
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=1391 gain_ppm=-61 skew_cps=-295
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=461 gain_ppm=393 skew_cps=-321
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=1081 gain_ppm=-449 skew_cps=-351
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=1208 gain_ppm=74 skew_cps=-253
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=1090 gain_ppm=266 skew_cps=-349
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=1410 gain_ppm=-385 skew_cps=-294
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=1471 gain_ppm=83 skew_cps=-181
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=1234 gain_ppm=158 skew_cps=-296
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=1361 gain_ppm=-22 skew_cps=-205
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=1628 gain_ppm=160 skew_cps=-252
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=1404 gain_ppm=-164 skew_cps=-252
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=1214 offset_sd_mc=791 gain_ppm=745 gain_sd_ppm=6655 skew_cps=-272 skew_sd_cps=321
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=1463 gain_ppm=492 skew_cps=-325
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=1349 gain_ppm=-851 skew_cps=-243
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=1339 gain_ppm=332 skew_cps=-277
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=1551 gain_ppm=-340 skew_cps=-368
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=1904 gain_ppm=-1532 skew_cps=-177
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=1521 offset_sd_mc=749 gain_ppm=-380 gain_sd_ppm=2687 skew_cps=-278 skew_sd_cps=332
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -0.00037978999999999997, "gain_n": 100, "gain_sd": 0.002687527530683512, "gain_se": 0.0002687527530683512, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 1.52135, "offset_n": 100, "offset_sd": 0.7486684931438364, "offset_se": 0.07486684931438364, "pass": true, "point": 11, "pre_mean": 0.07759762499999999, "pre_observed_mean": 0.07759762499999999, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.7787, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.318335549365347, "skew_se": 0.33183355493653466, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 14
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=14
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=917 gain_ppm=-124328 skew_cps=-287
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=1110 gain_ppm=-123529 skew_cps=-169
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=1013 offset_sd_mc=767 gain_ppm=-123928 gain_sd_ppm=2619 skew_cps=-228 skew_sd_cps=386
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=1188 gain_ppm=-18156 skew_cps=-316
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=1232 gain_ppm=143 skew_cps=-244
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=742 gain_ppm=54 skew_cps=-244
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=1124 gain_ppm=-33 skew_cps=-379
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=1050 gain_ppm=-48 skew_cps=-158
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=777 gain_ppm=58 skew_cps=-266
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=1044 gain_ppm=-103 skew_cps=-389
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=1191 gain_ppm=94 skew_cps=-218
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=1517 gain_ppm=-66 skew_cps=-327
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=1035 gain_ppm=-49 skew_cps=-247
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=1504 gain_ppm=286 skew_cps=-412
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=1210 gain_ppm=-204 skew_cps=-227
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=1239 gain_ppm=177 skew_cps=-250
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=1189 gain_ppm=-94 skew_cps=-270
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=1732 gain_ppm=57 skew_cps=-424
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=1185 offset_sd_mc=719 gain_ppm=-1192 gain_sd_ppm=10077 skew_cps=-291 skew_sd_cps=344
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=979 gain_ppm=-1700 skew_cps=-195
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=1242 gain_ppm=-1578 skew_cps=-326
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=1681 gain_ppm=-247 skew_cps=-307
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=1259 gain_ppm=-1315 skew_cps=-287
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=1951 gain_ppm=-1505 skew_cps=-171
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=1422 offset_sd_mc=759 gain_ppm=-1269 gain_sd_ppm=2554 skew_cps=-257 skew_sd_cps=330
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -0.00126911, "gain_n": 100, "gain_sd": 0.002554140298524232, "gain_se": 0.0002554140298524232, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 1.42232, "offset_n": 100, "offset_sd": 0.7586539632530737, "offset_se": 0.07586539632530737, "pass": false, "point": 14, "pre_mean": -0.123928125, "pre_observed_mean": -0.123928125, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.5706, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.297271237881654, "skew_se": 0.32972712378816543, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 10
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=10
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=228 gain_ppm=172997 skew_cps=-275
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=532 gain_ppm=172233 skew_cps=-310
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=380 offset_sd_mc=687 gain_ppm=172615 gain_sd_ppm=3430 skew_cps=-292 skew_sd_cps=274
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=516 gain_ppm=23693 skew_cps=-220
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=868 gain_ppm=323 skew_cps=-261
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=792 gain_ppm=41 skew_cps=-263
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=117 gain_ppm=-425 skew_cps=-341
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-285 gain_ppm=441 skew_cps=-253
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=272 gain_ppm=30 skew_cps=-247
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=249 gain_ppm=-141 skew_cps=-208
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-182 gain_ppm=-19 skew_cps=-279
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-20 gain_ppm=85 skew_cps=-405
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-110 gain_ppm=-206 skew_cps=-106
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=84 gain_ppm=135 skew_cps=-104
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-126 gain_ppm=34 skew_cps=-315
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-27 gain_ppm=-177 skew_cps=-217
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=67 gain_ppm=160 skew_cps=-292
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=256 gain_ppm=5 skew_cps=-113
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=165 offset_sd_mc=929 gain_ppm=1599 gain_sd_ppm=13266 skew_cps=-242 skew_sd_cps=346
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-88 gain_ppm=-863 skew_cps=-213
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=275 gain_ppm=-1593 skew_cps=-292
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-119 gain_ppm=703 skew_cps=-358
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-241 gain_ppm=-460 skew_cps=-281
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-26 gain_ppm=-125 skew_cps=-480
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-40 offset_sd_mc=856 gain_ppm=-468 gain_sd_ppm=2926 skew_cps=-325 skew_sd_cps=323
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -0.0004676, "gain_n": 100, "gain_sd": 0.0029258175443848686, "gain_se": 0.00029258175443848687, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -0.039869999999999996, "offset_n": 100, "offset_sd": 0.8556249019449369, "offset_se": 0.08556249019449369, "pass": false, "point": 10, "pre_mean": 0.17261469999999998, "pre_observed_mean": 0.17261469999999998, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.2486, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.2265984277783026, "skew_se": 0.3226598427778303, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 15
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=15
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-1531 gain_ppm=-175516 skew_cps=-261
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-1456 gain_ppm=-175205 skew_cps=-184
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-1494 offset_sd_mc=667 gain_ppm=-175360 gain_sd_ppm=2238 skew_cps=-223 skew_sd_cps=321
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-1571 gain_ppm=-25900 skew_cps=-348
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-1575 gain_ppm=-298 skew_cps=-389
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-1859 gain_ppm=217 skew_cps=-311
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-1815 gain_ppm=86 skew_cps=-160
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-1845 gain_ppm=140 skew_cps=-336
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-1333 gain_ppm=-500 skew_cps=-215
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-1765 gain_ppm=158 skew_cps=-173
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-1796 gain_ppm=140 skew_cps=-145
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-1933 gain_ppm=-341 skew_cps=-255
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-1350 gain_ppm=509 skew_cps=-176
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-1800 gain_ppm=-450 skew_cps=-263
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-1637 gain_ppm=246 skew_cps=-290
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-1735 gain_ppm=-96 skew_cps=-341
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-1563 gain_ppm=158 skew_cps=-308
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-1887 gain_ppm=-210 skew_cps=-307
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-1698 offset_sd_mc=679 gain_ppm=-1743 gain_sd_ppm=13798 skew_cps=-268 skew_sd_cps=320
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-2213 gain_ppm=731 skew_cps=-268
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-2300 gain_ppm=1134 skew_cps=-391
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-1816 gain_ppm=733 skew_cps=-152
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-2286 gain_ppm=639 skew_cps=-419
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-2200 gain_ppm=1232 skew_cps=-397
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-2163 offset_sd_mc=770 gain_ppm=894 gain_sd_ppm=2758 skew_cps=-325 skew_sd_cps=354
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00089397, "gain_n": 100, "gain_sd": 0.002758031630318692, "gain_se": 0.0002758031630318692, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -2.16297, "offset_n": 100, "offset_sd": 0.7697027165199444, "offset_se": 0.07697027165199444, "pass": false, "point": 15, "pre_mean": -0.17536022499999998, "pre_observed_mean": -0.17536022499999998, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.2535000000000003, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.5374876592567697, "skew_se": 0.35374876592567694, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 0
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-EVENT phase=pre attempt=0 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=1 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=2 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=3 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=4 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=5 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=6 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=7 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=8 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=9 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=10 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=11 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=12 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=13 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=14 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=15 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=16 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=17 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=18 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=19 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=20 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=21 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=22 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=23 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=24 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=25 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=26 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=27 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=28 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=29 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=30 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=31 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=32 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=33 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=34 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=35 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=36 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=37 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=38 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=39 st=gain_range act=none code=12 clips=0
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=12 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": NaN, "gain_n": 0, "gain_sd": NaN, "gain_se": NaN, "gain_source": "", "hold_accepted": 0, "hold_budget": 100, "hold_clock_frozen": false, "hold_continues_train": false, "hold_frozen": false, "hold_yield": 0.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": null, "offset_mean": NaN, "offset_n": 0, "offset_sd": NaN, "offset_se": NaN, "pass": false, "point": 0, "pre_mean": NaN, "pre_observed_mean": -0.2218626, "quantization_limited": false, "range_limit": false, "reject_reasons": "{\"gain_range\": 40}", "repeat": 0, "requested_routes_match": false, "routes_consistent": true, "skew_mean": NaN, "skew_n": 0, "skew_route": "", "skew_sd": NaN, "skew_se": NaN, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 12
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=12
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=526 gain_ppm=275 skew_cps=-97
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=231 gain_ppm=-1120 skew_cps=-307
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=378 offset_sd_mc=792 gain_ppm=-422 gain_sd_ppm=3054 skew_cps=-202 skew_sd_cps=343
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=365 gain_ppm=35 skew_cps=-289
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=178 gain_ppm=-143 skew_cps=-320
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=755 gain_ppm=499 skew_cps=-289
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=245 gain_ppm=-337 skew_cps=-183
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=490 gain_ppm=-26 skew_cps=-386
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=410 gain_ppm=7 skew_cps=-273
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=315 gain_ppm=81 skew_cps=-375
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=30 gain_ppm=59 skew_cps=-308
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=39 gain_ppm=-121 skew_cps=-336
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-246 gain_ppm=59 skew_cps=-496
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-62 gain_ppm=107 skew_cps=-311
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-46 gain_ppm=2 skew_cps=-172
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-63 gain_ppm=-117 skew_cps=-310
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-408 gain_ppm=-255 skew_cps=-253
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-335 gain_ppm=325 skew_cps=-185
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=111 offset_sd_mc=751 gain_ppm=12 gain_sd_ppm=3147 skew_cps=-299 skew_sd_cps=344
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-230 gain_ppm=-1005 skew_cps=-376
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-815 gain_ppm=361 skew_cps=-330
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-524 gain_ppm=-642 skew_cps=-351
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=97 gain_ppm=-209 skew_cps=-331
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-501 gain_ppm=-1318 skew_cps=-223
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-395 offset_sd_mc=761 gain_ppm=-563 gain_sd_ppm=2892 skew_cps=-322 skew_sd_cps=323
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -0.00056264, "gain_n": 100, "gain_sd": 0.0028915232591109822, "gain_se": 0.0002891523259110982, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -0.39468000000000003, "offset_n": 100, "offset_sd": 0.7613938159916346, "offset_se": 0.07613938159916346, "pass": false, "point": 12, "pre_mean": -0.00042235, "pre_observed_mean": -0.00042235, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 1, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.2209000000000003, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.2297084006973997, "skew_se": 0.32297084006974, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 13
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=13
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-3956 gain_ppm=-66922 skew_cps=-176
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-4407 gain_ppm=-66279 skew_cps=-241
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-4181 offset_sd_mc=854 gain_ppm=-66601 gain_sd_ppm=3082 skew_cps=-208 skew_sd_cps=370
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-4241 gain_ppm=-9655 skew_cps=-252
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-3905 gain_ppm=-142 skew_cps=-295
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-3474 gain_ppm=165 skew_cps=-377
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-4250 gain_ppm=13 skew_cps=-238
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-3863 gain_ppm=-11 skew_cps=-283
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-3616 gain_ppm=17 skew_cps=-250
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-3945 gain_ppm=112 skew_cps=-250
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-3717 gain_ppm=-327 skew_cps=-223
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-3998 gain_ppm=204 skew_cps=-298
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-4050 gain_ppm=327 skew_cps=-103
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-3535 gain_ppm=-348 skew_cps=-254
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-3657 gain_ppm=-133 skew_cps=-243
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-3138 gain_ppm=394 skew_cps=-402
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-2932 gain_ppm=-122 skew_cps=-204
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-2632 gain_ppm=172 skew_cps=-327
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-3664 offset_sd_mc=857 gain_ppm=-622 gain_sd_ppm=5832 skew_cps=-267 skew_sd_cps=346
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-3172 gain_ppm=-1205 skew_cps=-177
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-3010 gain_ppm=-1529 skew_cps=-291
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-2493 gain_ppm=-1212 skew_cps=-251
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-2729 gain_ppm=-2289 skew_cps=-81
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-3193 gain_ppm=-2099 skew_cps=-219
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-2919 offset_sd_mc=687 gain_ppm=-1667 gain_sd_ppm=2630 skew_cps=-204 skew_sd_cps=346
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -0.00166676, "gain_n": 100, "gain_sd": 0.0026296291712296273, "gain_se": 0.00026296291712296275, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -2.9194400000000003, "offset_n": 100, "offset_sd": 0.6869579746897906, "offset_se": 0.06869579746897905, "pass": false, "point": 13, "pre_mean": -0.066600625, "pre_observed_mean": -0.066600625, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 1, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.0383, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.463309579350977, "skew_se": 0.3463309579350977, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 11
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=11
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=1515 gain_ppm=78860 skew_cps=-197
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=1358 gain_ppm=78822 skew_cps=-222
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=1436 offset_sd_mc=772 gain_ppm=78841 gain_sd_ppm=2736 skew_cps=-209 skew_sd_cps=376
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=1436 gain_ppm=10778 skew_cps=-293
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=1424 gain_ppm=290 skew_cps=-380
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=1356 gain_ppm=236 skew_cps=-303
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=1494 gain_ppm=-414 skew_cps=-328
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=1448 gain_ppm=-4 skew_cps=-316
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=1722 gain_ppm=463 skew_cps=-446
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=985 gain_ppm=-399 skew_cps=-300
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=1390 gain_ppm=235 skew_cps=-236
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=1644 gain_ppm=-235 skew_cps=-370
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=1656 gain_ppm=316 skew_cps=-282
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=1150 gain_ppm=-189 skew_cps=-454
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=1135 gain_ppm=91 skew_cps=-333
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=952 gain_ppm=-215 skew_cps=-207
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=1612 gain_ppm=204 skew_cps=-281
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=1596 gain_ppm=-153 skew_cps=-236
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=1400 offset_sd_mc=851 gain_ppm=734 gain_sd_ppm=6581 skew_cps=-318 skew_sd_cps=349
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=1844 gain_ppm=735 skew_cps=-310
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=1793 gain_ppm=8 skew_cps=-299
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=1813 gain_ppm=849 skew_cps=-390
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=1831 gain_ppm=1938 skew_cps=-286
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=2209 gain_ppm=1128 skew_cps=-231
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=1898 offset_sd_mc=756 gain_ppm=932 gain_sd_ppm=2784 skew_cps=-303 skew_sd_cps=327
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00093162, "gain_n": 100, "gain_sd": 0.0027841591726382774, "gain_se": 0.00027841591726382773, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 1.89815, "offset_n": 100, "offset_sd": 0.7555110702516061, "offset_se": 0.07555110702516062, "pass": false, "point": 11, "pre_mean": 0.078841075, "pre_observed_mean": 0.078841075, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 1, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.0332, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.274308279174505, "skew_se": 0.3274308279174505, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 14
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=14
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=615 gain_ppm=-123958 skew_cps=-403
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=867 gain_ppm=-123271 skew_cps=-288
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=741 offset_sd_mc=815 gain_ppm=-123615 gain_sd_ppm=2581 skew_cps=-345 skew_sd_cps=354
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=1161 gain_ppm=-18244 skew_cps=-248
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=1399 gain_ppm=61 skew_cps=-371
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=1100 gain_ppm=-177 skew_cps=-272
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=1023 gain_ppm=326 skew_cps=-326
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=1227 gain_ppm=-286 skew_cps=-357
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=1041 gain_ppm=433 skew_cps=-340
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=1128 gain_ppm=-633 skew_cps=-340
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=753 gain_ppm=310 skew_cps=-332
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=1423 gain_ppm=722 skew_cps=-310
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=1086 gain_ppm=-731 skew_cps=-358
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=1278 gain_ppm=345 skew_cps=-277
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=918 gain_ppm=-191 skew_cps=-381
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=970 gain_ppm=-341 skew_cps=-314
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=926 gain_ppm=163 skew_cps=-314
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=1093 gain_ppm=49 skew_cps=-268
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=1102 offset_sd_mc=666 gain_ppm=-1213 gain_sd_ppm=9802 skew_cps=-321 skew_sd_cps=326
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=1165 gain_ppm=460 skew_cps=-284
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=1100 gain_ppm=475 skew_cps=-318
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=1127 gain_ppm=900 skew_cps=-385
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=1380 gain_ppm=-711 skew_cps=-464
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=729 gain_ppm=865 skew_cps=-355
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=1100 offset_sd_mc=805 gain_ppm=398 gain_sd_ppm=3004 skew_cps=-361 skew_sd_cps=364
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00039788, "gain_n": 100, "gain_sd": 0.0030037191703189254, "gain_se": 0.00030037191703189255, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 1.10018, "offset_n": 100, "offset_sd": 0.8055127782720743, "offset_se": 0.08055127782720743, "pass": true, "point": 14, "pre_mean": -0.12361475, "pre_observed_mean": -0.12361475, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 1, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.6138, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.639883386965449, "skew_se": 0.3639883386965449, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 10
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=10
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-702 gain_ppm=173344 skew_cps=-240
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-658 gain_ppm=173834 skew_cps=-294
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-680 offset_sd_mc=586 gain_ppm=173589 gain_sd_ppm=3480 skew_cps=-267 skew_sd_cps=320
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-282 gain_ppm=23876 skew_cps=-287
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-159 gain_ppm=-61 skew_cps=-97
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-317 gain_ppm=-44 skew_cps=-236
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-223 gain_ppm=-38 skew_cps=-341
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-378 gain_ppm=-125 skew_cps=-262
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-187 gain_ppm=103 skew_cps=-328
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-489 gain_ppm=177 skew_cps=-203
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-822 gain_ppm=-166 skew_cps=-403
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-300 gain_ppm=-62 skew_cps=-337
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-703 gain_ppm=-10 skew_cps=-180
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-600 gain_ppm=255 skew_cps=-356
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-288 gain_ppm=109 skew_cps=-258
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-763 gain_ppm=-350 skew_cps=-307
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-1096 gain_ppm=340 skew_cps=-204
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-725 gain_ppm=-238 skew_cps=-291
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-489 offset_sd_mc=773 gain_ppm=1584 gain_sd_ppm=13012 skew_cps=-273 skew_sd_cps=348
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-810 gain_ppm=1820 skew_cps=-245
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-465 gain_ppm=1402 skew_cps=-258
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=504 gain_ppm=1171 skew_cps=-356
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-545 gain_ppm=335 skew_cps=-320
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-210 gain_ppm=1528 skew_cps=-270
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-305 offset_sd_mc=969 gain_ppm=1251 gain_sd_ppm=2814 skew_cps=-290 skew_sd_cps=317
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00125119, "gain_n": 100, "gain_sd": 0.002814492496710624, "gain_se": 0.0002814492496710624, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -0.30511, "offset_n": 100, "offset_sd": 0.9694540366577052, "offset_se": 0.09694540366577052, "pass": false, "point": 10, "pre_mean": 0.17358859999999998, "pre_observed_mean": 0.17358859999999998, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 1, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.8967, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.1687750732177986, "skew_se": 0.3168775073217799, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 15
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=15
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-1718 gain_ppm=-176278 skew_cps=-212
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-1645 gain_ppm=-175856 skew_cps=-383
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-1682 offset_sd_mc=562 gain_ppm=-176067 gain_sd_ppm=2572 skew_cps=-298 skew_sd_cps=375
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-1461 gain_ppm=-26015 skew_cps=-312
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-2042 gain_ppm=-108 skew_cps=-305
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-1490 gain_ppm=246 skew_cps=-281
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-1882 gain_ppm=-554 skew_cps=-355
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-2311 gain_ppm=656 skew_cps=-288
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-1878 gain_ppm=-350 skew_cps=-269
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-2086 gain_ppm=-53 skew_cps=-296
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-2160 gain_ppm=345 skew_cps=-192
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-2344 gain_ppm=125 skew_cps=-209
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-1734 gain_ppm=-284 skew_cps=-312
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-1386 gain_ppm=-224 skew_cps=-279
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-1863 gain_ppm=184 skew_cps=-372
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-2169 gain_ppm=361 skew_cps=-386
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-1783 gain_ppm=-384 skew_cps=-367
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-1824 gain_ppm=123 skew_cps=-269
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-1894 offset_sd_mc=764 gain_ppm=-1729 gain_sd_ppm=13872 skew_cps=-299 skew_sd_cps=329
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-1786 gain_ppm=-1119 skew_cps=-287
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-2764 gain_ppm=-169 skew_cps=-314
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-1975 gain_ppm=-655 skew_cps=-267
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-2111 gain_ppm=-797 skew_cps=-353
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-1766 gain_ppm=-453 skew_cps=-128
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-2080 offset_sd_mc=766 gain_ppm=-639 gain_sd_ppm=2431 skew_cps=-270 skew_sd_cps=367
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -0.00063869, "gain_n": 100, "gain_sd": 0.0024305978966609274, "gain_se": 0.00024305978966609275, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -2.08032, "offset_n": 100, "offset_sd": 0.7661007117905978, "offset_se": 0.07661007117905978, "pass": false, "point": 15, "pre_mean": -0.17606734999999998, "pre_observed_mean": -0.17606734999999998, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 1, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.6962, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.6730805555659636, "skew_se": 0.36730805555659635, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 0
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-EVENT phase=pre attempt=0 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=1 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=2 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=3 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=4 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=5 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=6 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=7 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=8 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=9 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=10 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=11 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=12 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=13 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=14 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=15 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=16 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=17 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=18 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=19 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=20 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=21 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=22 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=23 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=24 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=25 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=26 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=27 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=28 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=29 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=30 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=31 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=32 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=33 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=34 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=35 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=36 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=37 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=38 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=39 st=gain_range act=none code=12 clips=0
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=12 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": NaN, "gain_n": 0, "gain_sd": NaN, "gain_se": NaN, "gain_source": "", "hold_accepted": 0, "hold_budget": 100, "hold_clock_frozen": false, "hold_continues_train": false, "hold_frozen": false, "hold_yield": 0.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": null, "offset_mean": NaN, "offset_n": 0, "offset_sd": NaN, "offset_se": NaN, "pass": false, "point": 0, "pre_mean": NaN, "pre_observed_mean": -0.221852475, "quantization_limited": false, "range_limit": false, "reject_reasons": "{\"gain_range\": 40}", "repeat": 1, "requested_routes_match": false, "routes_consistent": true, "skew_mean": NaN, "skew_n": 0, "skew_route": "", "skew_sd": NaN, "skew_se": NaN, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 12
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=12
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=498 gain_ppm=-595 skew_cps=-282
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=902 gain_ppm=764 skew_cps=-265
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=700 offset_sd_mc=747 gain_ppm=85 gain_sd_ppm=2909 skew_cps=-274 skew_sd_cps=366
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=292 gain_ppm=-31 skew_cps=-335
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=509 gain_ppm=-96 skew_cps=-195
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=88 gain_ppm=168 skew_cps=-237
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=472 gain_ppm=-373 skew_cps=-145
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=692 gain_ppm=272 skew_cps=-383
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=407 gain_ppm=74 skew_cps=-432
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=343 gain_ppm=49 skew_cps=-307
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=227 gain_ppm=235 skew_cps=-151
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=424 gain_ppm=-106 skew_cps=-156
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=131 gain_ppm=-568 skew_cps=-358
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=581 gain_ppm=526 skew_cps=-360
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=567 gain_ppm=38 skew_cps=-272
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=311 gain_ppm=-92 skew_cps=-285
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=85 gain_ppm=-30 skew_cps=-275
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=524 gain_ppm=-263 skew_cps=-323
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=377 offset_sd_mc=774 gain_ppm=-13 gain_sd_ppm=3394 skew_cps=-281 skew_sd_cps=352
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=535 gain_ppm=1475 skew_cps=-267
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=245 gain_ppm=2332 skew_cps=-332
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=567 gain_ppm=2153 skew_cps=-235
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=356 gain_ppm=2222 skew_cps=-272
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=64 gain_ppm=2189 skew_cps=-275
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=353 offset_sd_mc=788 gain_ppm=2074 gain_sd_ppm=2589 skew_cps=-276 skew_sd_cps=358
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.0020740299999999997, "gain_n": 100, "gain_sd": 0.0025893515605536098, "gain_se": 0.000258935156055361, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 0.35341, "offset_n": 100, "offset_sd": 0.7875034724310167, "offset_se": 0.07875034724310168, "pass": false, "point": 12, "pre_mean": 8.467499999999998e-05, "pre_observed_mean": 8.467499999999998e-05, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 2, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.7647, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.5809672117623714, "skew_se": 0.35809672117623714, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 13
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=13
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-3296 gain_ppm=-66205 skew_cps=-127
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-4058 gain_ppm=-67162 skew_cps=-267
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-3677 offset_sd_mc=782 gain_ppm=-66683 gain_sd_ppm=2436 skew_cps=-197 skew_sd_cps=400
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-3474 gain_ppm=-9569 skew_cps=-219
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-3424 gain_ppm=-34 skew_cps=-210
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-2954 gain_ppm=87 skew_cps=-228
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-3281 gain_ppm=-107 skew_cps=-349
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-3460 gain_ppm=-314 skew_cps=-246
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-3260 gain_ppm=173 skew_cps=-265
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-3392 gain_ppm=210 skew_cps=-254
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-3236 gain_ppm=-133 skew_cps=-155
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-3451 gain_ppm=-102 skew_cps=-229
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-3309 gain_ppm=539 skew_cps=-204
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-3514 gain_ppm=-332 skew_cps=-437
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-3840 gain_ppm=-52 skew_cps=-266
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-3789 gain_ppm=-10 skew_cps=-431
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-3185 gain_ppm=140 skew_cps=-333
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-3489 gain_ppm=-167 skew_cps=-132
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-3404 offset_sd_mc=733 gain_ppm=-645 gain_sd_ppm=5962 skew_cps=-264 skew_sd_cps=332
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-3849 gain_ppm=522 skew_cps=-92
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-3371 gain_ppm=2097 skew_cps=-76
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-3147 gain_ppm=614 skew_cps=-224
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-3219 gain_ppm=465 skew_cps=-166
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-3052 gain_ppm=940 skew_cps=-224
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-3327 offset_sd_mc=766 gain_ppm=928 gain_sd_ppm=2658 skew_cps=-156 skew_sd_cps=353
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00092773, "gain_n": 100, "gain_sd": 0.0026579698786590084, "gain_se": 0.00026579698786590084, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -3.3274, "offset_n": 100, "offset_sd": 0.7656058273212677, "offset_se": 0.07656058273212676, "pass": false, "point": 13, "pre_mean": -0.06668339999999999, "pre_observed_mean": -0.06668339999999999, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 2, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -1.5616, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.5253087034393817, "skew_se": 0.35253087034393815, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 11
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=11
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=743 gain_ppm=78701 skew_cps=-218
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=1000 gain_ppm=78486 skew_cps=-246
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=871 offset_sd_mc=691 gain_ppm=78594 gain_sd_ppm=3803 skew_cps=-232 skew_sd_cps=347
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=983 gain_ppm=11098 skew_cps=-205
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=450 gain_ppm=-66 skew_cps=-242
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=751 gain_ppm=-227 skew_cps=-352
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=589 gain_ppm=333 skew_cps=-334
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=708 gain_ppm=271 skew_cps=-305
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=1322 gain_ppm=-139 skew_cps=-309
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=1057 gain_ppm=-371 skew_cps=-134
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=1361 gain_ppm=169 skew_cps=-182
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=954 gain_ppm=-184 skew_cps=-262
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=787 gain_ppm=308 skew_cps=-284
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=1006 gain_ppm=-353 skew_cps=-223
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=873 gain_ppm=446 skew_cps=-269
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=803 gain_ppm=130 skew_cps=-351
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=817 gain_ppm=-366 skew_cps=-250
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=1130 gain_ppm=27 skew_cps=-256
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=906 offset_sd_mc=758 gain_ppm=738 gain_sd_ppm=6609 skew_cps=-264 skew_sd_cps=326
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=736 gain_ppm=-455 skew_cps=-283
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=860 gain_ppm=411 skew_cps=-223
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=647 gain_ppm=925 skew_cps=-280
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=800 gain_ppm=25 skew_cps=-407
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=1000 gain_ppm=-994 skew_cps=-373
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=808 offset_sd_mc=826 gain_ppm=-18 gain_sd_ppm=2790 skew_cps=-313 skew_sd_cps=370
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": -1.7660000000000007e-05, "gain_n": 100, "gain_sd": 0.002789586035036146, "gain_se": 0.0002789586035036146, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 0.8084600000000001, "offset_n": 100, "offset_sd": 0.8264480822939048, "offset_se": 0.08264480822939048, "pass": true, "point": 11, "pre_mean": 0.07859365, "pre_observed_mean": 0.07859365, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 2, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.1304, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.702438704912799, "skew_se": 0.37024387049127994, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 14
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=14
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=700 gain_ppm=-123684 skew_cps=-307
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=539 gain_ppm=-124495 skew_cps=-379
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=619 offset_sd_mc=790 gain_ppm=-124089 gain_sd_ppm=2265 skew_cps=-343 skew_sd_cps=413
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=252 gain_ppm=-18410 skew_cps=-246
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=140 gain_ppm=81 skew_cps=-275
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=544 gain_ppm=26 skew_cps=-316
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=546 gain_ppm=19 skew_cps=-211
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=577 gain_ppm=482 skew_cps=-306
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=1045 gain_ppm=59 skew_cps=-313
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=939 gain_ppm=-495 skew_cps=-390
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=261 gain_ppm=228 skew_cps=-328
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=491 gain_ppm=-68 skew_cps=-310
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=991 gain_ppm=-276 skew_cps=-332
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=896 gain_ppm=344 skew_cps=-294
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=873 gain_ppm=24 skew_cps=-391
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=876 gain_ppm=-289 skew_cps=-334
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=1055 gain_ppm=452 skew_cps=-474
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=1126 gain_ppm=-308 skew_cps=-319
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=707 offset_sd_mc=808 gain_ppm=-1209 gain_sd_ppm=10063 skew_cps=-322 skew_sd_cps=343
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=888 gain_ppm=220 skew_cps=-292
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=913 gain_ppm=492 skew_cps=-325
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=1479 gain_ppm=1237 skew_cps=-264
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=1152 gain_ppm=59 skew_cps=-347
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=1032 gain_ppm=349 skew_cps=-267
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=1093 offset_sd_mc=660 gain_ppm=471 gain_sd_ppm=2483 skew_cps=-299 skew_sd_cps=336
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00047132, "gain_n": 100, "gain_sd": 0.0024827431264468724, "gain_se": 0.00024827431264468725, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": 1.09273, "offset_n": 100, "offset_sd": 0.6603286273217345, "offset_se": 0.06603286273217344, "pass": true, "point": 14, "pre_mean": -0.12408915, "pre_observed_mean": -0.12408915, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 2, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -2.9915000000000003, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.3647421366970525, "skew_se": 0.33647421366970526, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 10
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=10
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=87 gain_ppm=171497 skew_cps=-290
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-95 gain_ppm=172573 skew_cps=-133
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-4 offset_sd_mc=594 gain_ppm=172035 gain_sd_ppm=2666 skew_cps=-211 skew_sd_cps=434
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=435 gain_ppm=23801 skew_cps=-371
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=416 gain_ppm=45 skew_cps=-405
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=469 gain_ppm=48 skew_cps=-190
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-175 gain_ppm=-35 skew_cps=-300
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-122 gain_ppm=-103 skew_cps=-348
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-363 gain_ppm=68 skew_cps=-293
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-113 gain_ppm=238 skew_cps=-315
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-504 gain_ppm=-429 skew_cps=-306
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-691 gain_ppm=173 skew_cps=-239
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-334 gain_ppm=67 skew_cps=-241
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=333 gain_ppm=-129 skew_cps=-330
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-106 gain_ppm=-233 skew_cps=-408
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-556 gain_ppm=269 skew_cps=-372
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-619 gain_ppm=133 skew_cps=-307
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-80 gain_ppm=-111 skew_cps=-259
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-134 offset_sd_mc=869 gain_ppm=1587 gain_sd_ppm=13253 skew_cps=-312 skew_sd_cps=317
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-819 gain_ppm=-94 skew_cps=-429
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-592 gain_ppm=-371 skew_cps=-203
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-833 gain_ppm=410 skew_cps=-296
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-716 gain_ppm=1353 skew_cps=-321
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-626 gain_ppm=399 skew_cps=-331
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-717 offset_sd_mc=898 gain_ppm=339 gain_sd_ppm=2984 skew_cps=-316 skew_sd_cps=367
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00033939999999999996, "gain_n": 100, "gain_sd": 0.0029837053331640364, "gain_se": 0.00029837053331640363, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -0.71691, "offset_n": 100, "offset_sd": 0.8978553920033532, "offset_se": 0.08978553920033532, "pass": true, "point": 10, "pre_mean": 0.17203495, "pre_observed_mean": 0.17203495, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 2, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.1595, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.6665105683026127, "skew_se": 0.3666510568302613, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 15
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=15
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-2244 gain_ppm=-175716 skew_cps=-263
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-2702 gain_ppm=-175038 skew_cps=-332
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-2473 offset_sd_mc=720 gain_ppm=-175377 gain_sd_ppm=2749 skew_cps=-297 skew_sd_cps=370
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-2229 gain_ppm=-25999 skew_cps=-276
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-2254 gain_ppm=-112 skew_cps=-265
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-2540 gain_ppm=37 skew_cps=-217
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-2339 gain_ppm=-35 skew_cps=-277
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-2234 gain_ppm=221 skew_cps=-266
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-1972 gain_ppm=-236 skew_cps=-266
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-2077 gain_ppm=203 skew_cps=-264
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-1759 gain_ppm=-66 skew_cps=-370
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-1462 gain_ppm=97 skew_cps=-402
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-1344 gain_ppm=53 skew_cps=-217
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-1469 gain_ppm=-350 skew_cps=-164
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-1574 gain_ppm=105 skew_cps=-415
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-2019 gain_ppm=266 skew_cps=-400
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-1811 gain_ppm=-319 skew_cps=-418
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-2065 gain_ppm=81 skew_cps=-289
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-1943 offset_sd_mc=732 gain_ppm=-1737 gain_sd_ppm=13933 skew_cps=-301 skew_sd_cps=351
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-1853 gain_ppm=836 skew_cps=-381
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-2219 gain_ppm=1354 skew_cps=-351
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-2044 gain_ppm=296 skew_cps=-255
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-1725 gain_ppm=1101 skew_cps=-252
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-2126 gain_ppm=-204 skew_cps=-411
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-1993 offset_sd_mc=674 gain_ppm=677 gain_sd_ppm=2934 skew_cps=-330 skew_sd_cps=371
+LOOP-TEST-END result=OK
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.00067662, "gain_n": 100, "gain_sd": 0.002933644776097343, "gain_se": 0.0002933644776097343, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": "measure-only", "offset_mean": -1.99336, "offset_n": 100, "offset_sd": 0.6739018679872966, "offset_se": 0.06739018679872966, "pass": false, "point": 15, "pre_mean": -0.175377075, "pre_observed_mean": -0.175377075, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 2, "requested_routes_match": true, "routes_consistent": true, "skew_mean": -3.3007, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 3.7080668967955677, "skew_se": 0.37080668967955677, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 0
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-EVENT phase=pre attempt=0 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=1 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=2 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=3 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=4 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=5 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=6 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=7 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=8 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=9 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=10 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=11 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=12 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=13 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=14 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=15 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=16 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=17 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=18 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=19 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=20 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=21 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=22 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=23 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=24 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=25 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=26 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=27 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=28 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=29 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=30 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=31 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=32 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=33 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=34 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=35 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=36 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=37 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=38 st=gain_range act=none code=12 clips=0
+LOOP-TEST-EVENT phase=pre attempt=39 st=gain_range act=none code=12 clips=0
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=12 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": NaN, "gain_n": 0, "gain_sd": NaN, "gain_se": NaN, "gain_source": "", "hold_accepted": 0, "hold_budget": 100, "hold_clock_frozen": false, "hold_continues_train": false, "hold_frozen": false, "hold_yield": 0.0, "inactive_frozen": true, "inactive_skew_frozen": true, "last_code": "12", "last_train_action": null, "offset_mean": NaN, "offset_n": 0, "offset_sd": NaN, "offset_se": NaN, "pass": false, "point": 0, "pre_mean": NaN, "pre_observed_mean": -0.221527025, "quantization_limited": false, "range_limit": false, "reject_reasons": "{\"gain_range\": 40}", "repeat": 2, "requested_routes_match": false, "routes_consistent": true, "skew_mean": NaN, "skew_n": 0, "skew_route": "", "skew_sd": NaN, "skew_se": NaN, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK

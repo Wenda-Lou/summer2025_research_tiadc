@@ -3,7 +3,225 @@
 记录日期：2026-10-27。入口已写入仓库根目录 `AGENTS.md`。
 详细原理与全部命令：[`CALIBRATION_LIMIT_TEST.md`](CALIBRATION_LIMIT_TEST.md)。
 
-## 用户当前目标
+## 2026-10-28 最新要求：无 reference 的板端校准
+
+首轮实测新模式 0/300，20 帧全部 margin=0，尚无校准更新。
+检查发现 reference_free 提前返回绕过原 de-framer 的 B 通道反相处理，
+负相关直接得到 margin=0，互谱也带入了额外的 pi 相位。
+已把原有极性归一化放到两个估计路径之前，质量门控使用 |corr|，
+同时保留原始有符号 corr 并在逐帧诊断打印 corr_ppm；不使用参考或 tone。
+无效估计的 gain_ratio 改为 NaN，避免出现误导的 -1000000 ppm。
+回归覆盖两种相对极性、三种脉冲宽度、闭环和独立 HOLD、独立噪声拒绝。
+原日志未记录 corr，硬件是否确为反相仍需用新 ELF 重跑确认，不能宣布实测修复。
+
+用户明确禁止任何 reference，此要求取代之前按 d22d23f 的模板 dither_phase 路径。
+板端普通 loop 和 loop test 现在默认 reference_free=1，只保留 ADC 1.3 GHz 硬件采样率。
+loop_waveform.h 已移除波形表；旧 wave 命令仅兼容、不选择模板，不再需要调用。
+核心新分支 adc_calibration_loop_blind.h 使用 A/B 共同宽带 dither 的频谱幅度比、
+互谱相位斜率、去除增益影响的 DC 截距，估计通道间相对 gain/skew/offset。
+不构造 loop_ref，不用周期、幅度、脉宽、极性表、tone 拟合或 pulse template。
+UART 路由为 dither_spectrum / dither_cross_spectrum，导出和绘图支持这些路由。
+仅能确定相对误差；无参考不能恢复共同绝对增益、共同 DC 或绝对延时。
+需要 A/B 看到同一宽带 dither，模拟传递形状可用增益和相对延时描述；
+常量、单频、弱激励和不一致数据拒绝，不能承诺任意波形必过。
+Python 原有校准入口与 C 历史模式仍保留模板实现，不代表无参考路径。
+新板端模式尚未上板验证；此前 dither_phase 的实测通过结果不等于新模式已验证。
+
+## 2026-10-28 baseline offset 冻结修正
+
+后续 offset 自动扫描完成 14 次，8 PASS、6 FAIL（随后 KeyboardInterrupt），
+所有失败均为 offset HOLD 判据，采集、轴隔离和冻结检查正常。
+现将同样的训练末段输入域平均扩展到 `test run offset`，不改变阈值。
+平均系数在最后一个合格 TRAIN 帧输出前提交，并同步该行的 post-update 状态，
+确保 HOLD 与最后 TRAIN 记录一致。最后一次尝试失败/拒绝、样本不足 20 或故障时不应用。
+日志 `LOOP-TEST-FREEZE ... phase=train` 标明单轴平均；HOLD 数据从不参与计算。
+新 ELF 下载后基准清空，自动扫描不带 --reuse-baseline 即会先重新建立基准。
+旧扫描数据保留，新策略尚需上板重测，不能把旧结果改判为通过。
+
+用户基准 HOLD offset +0.612 codes 超过 ±0.5，训练结束原先直接冻结
+mu_offset=0.35 的末帧状态。现在 baseline_train 使用最后 min(100, TRAIN/2)
+个尝试中合格帧的输入域 offset 估计均值：更新前 offset + 残差 / 更新前 gain。
+skew 控制码变化时清空累积并跳过移动帧，至少 20 帧才应用均值；不足则保留原状态。
+打印 LOOP-TEST-FREEZE，随后使用全新 baseline_hold 验收，阈值不变。
+仅基准冻结策略改变；普通 loop、单轴 TRAIN、核心 dither 估计器和学习率不变。
+没有使用 HOLD 数据修正系数，也没有失败后自动重试。硬件通过率仍需上板验证。
+
+## 2026-10-28 全部逐帧记录与自动生图（当前入口）
+
+最新修正：用户实际使用 `loop test`。该入口现在默认也只打印阶段、20 帧
+窗口、总结和异常；PC 工具对 baseline/run/step 自动追加一次性 `full`，
+保存完整数据并按 PRE/TRAIN/HOLD 作图，不再持续刷逐帧 UART 日志。
+`tools/axis_result_export.py` 输出每个测试点/重复的 CSV、JSON、PNG、SVG，
+HOLD 统计和判断使用独立冻结数据。普通 loop 的功能保留，校准算法未改。
+验证：native 432 通过，Python 单项协议 12 项及导出/绘图 17 项通过；
+实际 Vitis 2025.1 构建通过。新 ELF 下载会清掉 RAM 基准，必须重建一次。
+
+用户明确：后续测试导出全部逐帧校准记录并自动生图；UART 日志简化；
+不需要导出刚跑完的旧记录，不包含 ADC 原始采样波形。估计公式、反馈
+参数、dither 路线和时钟事务保持不变。
+
+下载新 ELF、正常上电/加载匹配满量程 dither TXT 后，关闭占用串口的
+终端，在仓库根目录运行一条电脑指令（COM7 按实际修改）：
+
+```powershell
+python tools/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+```
+
+PC 用一条 `adc -cal loop 300 stream` 完成校准和全程传输。每条校准记录
+（含拒帧）实时写入 CSV，不受板上 4000 条事后 RAM 快照限制。UART .log
+只留每 20 个合格帧的进度、异常和结果，不复制数据包。完成时校验 run_id、
+行数和合格数，再生成 JSON、PNG、SVG。图保留全程三项残差、A/B gain/
+offset 系数和执行器码，区分每个合格点、20 帧均值和拒帧标记；标明反馈
+仍开启，不代表独立冻结精度。复用输出名前缀自动加时间后缀；通信中断
+保留已收到的 CSV 行。刚跑日志的临时末段导出已经移除，不继续处理旧数据。
+
+普通 `adc -cal loop 300` 仍为简洁串口模式；`loop test` 保持详细实验日志。
+可选 `loop export` 只读快照功能保留，但不是当前全程工作流的必要步骤。
+新增源码：`firmware/thesis_v3_loop_appl/butils_loop_results.c`、
+`tools/loop_result_export.py`、`tools/loop_result_plot.py`。
+
+验证：native 424 项通过、0 失败，包含超出 RAM 容量仍逐条发送的检查；
+PC 协议/绘图测试验证真实 C stream、全部行数、单位、拒帧标记和全程生图。
+实际 Vitis 2025.1 构建通过；结果在
+`calibration_sim/output/full_trace_plot_native/`。protocol_fixture 图为离线
+测试数据，不是真实台架测量。新日志/导出接口尚未上板，本代理未连接串口。
+
+## 2026-10-28 首轮用户台架日志：基准因 offset 被拒绝
+
+用户进一步明确：当前重点是用一条命令校准 dither-only 波形。DPG 加载匹配的
+满量程 dither TXT、正常 bring-up 后，只需 `adc -cal loop 300`；启动默认
+wave 3。wave/status 是配置/查询，不是必需校准步骤；不要求先通过单项实验
+的 `test baseline`。板端输出移除了无关载波元数据和 `tone_ppm`，波形选择
+只允许 dither 配置，历史 tone 表项仅保留作源码/离线参考。
+普通闭环启动现明确打印三条 dither 路线，波形选项也对普通入口启用 ADC
+clipping 拒绝。Gain/offset 是数字系数，skew 是 ACK 检查的硬件延迟事务。
+
+用户已构建并运行本次固件；本代理没有连接或操作台架。三项路线标签是
+`gsrc=dither_mag skew_route=dither_phase`、`tone_ppm=nan`。TRAIN 600/600，
+offset 均值 −0.018 codes；随后冻结 HOLD 100/100，offset −1.623±1.398 codes
+（均值±逐帧 SD）、gain +1768 ppm、skew −1.88 ps，clips=0、abort=0、fault=0。
+基准 ±0.5-code 门限正确拒绝了 offset；gain 和 skew 通过各自基准门限。
+
+从用户逐帧 HOLD 转录的分析在
+`calibration_out/diagnostics/baseline_hold_20261028/hold.csv` 和 `analysis.json`。
+20 帧分段 offset 均值为 −1.089/−1.176/−1.610/−2.067/−2.171 codes。
+冻结期间偏差增长，不能只归因于最后一帧噪声；没有 TRAIN 末段系数或原始
+DMA 采样，物理原因未确定。不能把 TRAIN 平均值当成已保存基准精度，不能
+反复筛选直到偶然通过，也不能用 HOLD 调参、放宽门限或改回 tone。
+
+本次仅改诊断：基准逐项 CHECK、冻结阶段 20 个合格帧的独立 WINDOW 统计；
+无效基准的 wave/code 输出 −1，并通过 CURRENT 另报当前选择和执行器码。
+旧 `valid=0 wave=0 code=0` 是尚未写入的保存字段，并非实际当前波形/控制码。
+估计公式、学习率、冻结方式、时钟事务和验收门限保持不变。
+下一步需要检查 TRAIN 最后 20–40 行的系数演变，区分冻结末态与后续偏移。
+本次诊断版仍需用户重新下载；不会宣称台架问题已经解决或基准已通过。
+
+最终单命令版已用本机 Vitis 2025.1 A53 工具链重新构建成功，无新增警告。
+输出 `firmware/thesis_v3_loop_appl/build/thesis_v3_loop_appl.elf`，SHA-256：
+`98313d7a9edfc3ca0d1ca2b87f12c08bed6f2f0403d59a8fb0710ec398e2c4bc`。
+C native 406 项通过、0 失败（`calibration_sim/output/dither_single_command_native/`）；
+Python dither 专项 5 项、扫描协议 12 项通过。另核对 `dither_raw.py` 与指定
+commit 的内容一致（仅忽略工作区 CRLF 差异）。没有修改原始 dither 公式，
+没有下载 ELF、执行新的台架命令或宣称独立冻结精度通过。
+
+## 2026-10-28 Vitis 2025.1 构建修复
+
+用户机器是 Vitis 2025.1，应用模板来自 2025.2，缺少 `print_build_info_target`
+导致配置阶段失败。通过用户可编辑的 `src/UserConfig.cmake` include 应用本地
+`cmake/vitis_compat.cmake`，加载当前 BSP 后仅补齐缺失的构建信息打印函数。
+没有手改生成的主 CMakeLists、导出的 BSP、平台或链接脚本。实际用本机
+2025.1 A53 GCC 13.3 完成了配置、编译和链接，输出
+`firmware/thesis_v3_loop_appl/build/thesis_v3_loop_appl.elf`。
+后文“尚未构建”的记录已过时；仍未下载 ELF 或进行本次硬件测试。
+
+## 2026-10-28 满量程更新（优先于下方幅度配置）
+
+用户指出 5190 codes 不是满量程。本次改用 **DAC 数字峰值满量程 ±32767**：
+`waveforms/dither_only/w06adc_e04_t04_amp32767_dither_only.txt`。
+新增 `wave 3` 并设为固件和扫描脚本默认；wave 2 保留 5190 codes 对照。
+两者都只用 dither 校准，tone 0/1 仍禁用。脉冲形状、周期、极性和采样率不变。
+重新构建/下载 ELF 后必须选择 `adc -cal loop wave 3` 并加载匹配 TXT。
+
+向量均值为零，正负各 32 脉冲，320 个样本合法到达 DAC 轨，无数字越界。
+生成器元数据现区分 `touches_dac_rails` 和 `clipping`；ADC 原始轨检测没有放宽。
+DAC 满量程不代表 ADC 输入满量程，不能把这个文件当作模拟输入满量程的证明。
+历史台架只验证到 30000 codes，32767 尚未上板。满量程模型预检显式采用
+0.20 ADC codes/DAC code 的链路比例以留出 ADC 余量，60/60 帧合格、无 ADC 触轨；
+末段残差：gain ratio 0.999965、offset -0.0084 codes、skew -0.0138 ps。
+这只是软件预检，实际链路仍须检查 clipping。生成器/纯 dither 测试 5 项、
+扫描协议 12 项通过；C 原生加 9 个 golden 场景共 939 项通过、0 失败，输出见
+`calibration_sim/output/fullscale_dither_verified/test_summary.txt`。
+
+## 2026-10-28 最终约束：校准必须基于 dither
+
+用户已再次确认：calibration 必须用 dither，不能依赖 tone。
+指定基准 commit `d22d23ff6753b4503c54157529ad8396483cb006` 的 C 默认实现
+使用 tone；当前采用的是该 commit 的 Python dither 分支公式。
+`calibration_loop/dither_raw.py` 与该 commit 完全一致，未改其幅度比、分数
+相位拟合和差分时序公式。外层处理已进一步去掉隐含的 tone 依赖。
+
+本次有效路径：
+
+- 解帧：时域 A/B 相关和半组 lag 检查，无 tone 纯度评分。
+- 对齐：直接与已知 dither 模板相关，无预先的 tone 拟合/减除。
+- Offset：脉冲窗口的极性解耦平顶统计，无 tone-fit DC。
+- Gain：dither_mag，逐事件峰峰值幅度比，无 tone 回退。
+- Skew：dither_phase，折叠脉冲的分数采样相位差，不用正弦相位。
+- 筛选、批次、反馈和日志均跟随 dither 路线；载波指标不计算。
+
+固件启动默认 wave 2；`loop` 和 `loop test` 在任何采集或校准写入前拒绝
+非 dither 配置。扫描脚本也只允许 wave 2。历史 tone 代码仅作离线回归参考，
+不接入当前板端校准入口。Wave 2 已设 `sig_cycles=0`，生成器不产生正弦分量，
+JSON 中主音频率和幅度均为 0；TXT 的 SHA-256 与此前的纯 dither 样本一致。
+
+专项验证：原生测试对每次 tone fit/purity 调用计数，dither 路径计数为 0；
+Python 将所有 tone helper 设为调用即报错，闭环仍收敛。两者均验证相同采样
+改变无关 tone 参数时结果不变；无 dither、只有正弦的输入不会触发反馈。
+原生独立测试 375 项通过；Python 专项 4 项、扫描/协议 12 项通过。
+完整 C + golden 回归 6601 项通过、0 失败，18 scenarios、14 pipelines；
+tone-free 和 direction 两份离线证明均 PASS。
+结果在 `calibration_sim/output/strict_dither_final/test_summary.txt`。
+
+仍未进行本次 Vitis 构建/ELF 下载和上板测量。下面的初期验证记录保留为历史；
+涉及路线选择时以本节及当前测试文档为准。
+
+## 2026-10-28 初期适配记录（已由上节严格路径取代）
+
+用户已明确要求用 dither-only 跑相同的单项极限测试。当前工作区已给
+`calibration_loop_c` 增加 `tone_free` 路线：dither_mag 增益、分数模板
+相位 dither_phase 时序、无主音抵消、无 tone 回退、按路线门限和批次 MAD
+剔除。Offset 保留平顶估计；PRE/TRAIN/HOLD、单步 ACK 和故障锁规则不变。
+固件 `wave 2` 对应
+`waveforms/dither_only/w06adc_e04_t04_amp5190_dither_only.txt`，幅度 ±5190，
+edge/top=4/4 DAC samples，采样率和种子不变。旧 wave 0/1 保留供对照。
+
+`test status` 应显示 `gain=dither_mag skew=dither_phase tone_free=1`。
+逐帧 `used_gain_ppm` 为被控制的增益残差，`mag_ppm` 为 dither 比，
+`tone_ppm=nan` 表示主音不存在；脚本评分当前路线并核对路线标签一致性。
+Python 扫描用 `--wave 2`，仍默认 PLAN ONLY。
+
+新增原生测试覆盖正负已知延迟、单项更新、HOLD 冻结、诚实/反方向执行器和
+批次异常值；golden 文件新增四个 dither-only 场景，比较所驱动的估计值、
+系数和动作。历史 tone 诊断在 dither-only 输出中记 NaN，不解释为有效测量。
+
+尚未进行本次固件的 Vitis 完整构建/下载或硬件测试。上板前按完整测试文档
+开头的 wave 2 流程重新构建并下载 ELF。以下 2026-10-27 内容保留为历史交接，
+涉及 excitation 时以本节为准。
+
+本次离线验证（2026-10-28，Windows GCC 14.2，CMake RelWithDebInfo）：
+
+- `adc_cal_sim --run-all`：6077 通过、0 失败，18 scenarios、14 pipelines。
+- 新生成的 Python golden，8 个场景共 280 帧，C replay：489 通过、0 失败。
+- `python tools/test_board_axis_test.py`：11 项通过；wave 2 的 PLAN ONLY
+  输出确认默认 skew gate 为 500，不打开串口。
+- 原生 dither-only 时钟批次：诚实执行器 8 步后残差 -2.80 ps，无锁定；
+  反方向执行器只走 1 步后锁定。正负已知延迟及冻结测试均通过。
+- 输出：`calibration_sim/output/dither_only_all/test_summary.txt` 和
+  `calibration_sim/output/dither_only_replay/test_summary.txt`；构建目录
+  `calibration_sim/build-dither/`。测试产物不作为源码提交。
+- 旧 `timing_alignment.c` 仍有两处 float-conversion 警告，新代码无新增警告。
+
+## 用户当前目标（2026-10-27 历史记录）
 
 教授要求分别测 offset、gain、skew 的校准范围和校准后残差。
 用户希望通过改变单通道寄存器制造失配，skew 通过采样时钟延迟制造失配。

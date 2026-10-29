@@ -212,7 +212,7 @@ class DitherConfig:
 
     @property
     def a_sine(self) -> float:
-        return 10.0 ** (self.amp_dbfs / 20.0)
+        return 0.0 if self.sig_cycles == 0 else 10.0 ** (self.amp_dbfs / 20.0)
 
     @property
     def a_dither(self) -> float:
@@ -280,7 +280,7 @@ class DitherConfig:
                 f"{self.max_dither_lsb(self.amp_dbfs):.0f} LSB for the dither at this drive; lower "
                 "the tone (--amp-dbfs) or the dither (--dither-scale)."
             )
-        coherence = self.tone_phase_coherence()
+        coherence = self.tone_phase_coherence() if self.a_sine * DAC_FULL_SCALE >= 0.5 else 0.0
         if coherence > 0.3:
             raise ValueError(
                 f"sig_cycles={self.sig_cycles} advances the tone by "
@@ -354,7 +354,7 @@ def build_dac_waveform(cfg: DitherConfig) -> tuple[np.ndarray, np.ndarray]:
     j = np.arange(cfg.n_dac, dtype=np.float64)
     t_adc = j / cfg.adc_ratio  # DAC index expressed on the ADC time grid
 
-    wave = (cfg.a_sine * DAC_FULL_SCALE) * np.sin(
+    wave = np.zeros(cfg.n_dac) if cfg.a_sine == 0.0 else (cfg.a_sine * DAC_FULL_SCALE) * np.sin(
         2.0 * np.pi * cfg.sig_cycles * j / cfg.n_dac
     )
 
@@ -406,7 +406,9 @@ def write_dac_files(cfg: DitherConfig, out_dir: str | Path, stem: str = "impulse
             "min_sample": int(wave.min()),
             "max_sample": int(wave.max()),
             "mean_sample": float(wave.mean()),
-            "clipping": bool(np.max(np.abs(wave)) >= DAC_FULL_SCALE),
+            "clipping": bool(np.max(np.abs(wave.astype(np.int64))) > DAC_FULL_SCALE),
+            "touches_dac_rails": bool(np.any(np.abs(wave.astype(np.int64)) == DAC_FULL_SCALE)),
+            "dac_rail_samples": int(np.count_nonzero(np.abs(wave.astype(np.int64)) == DAC_FULL_SCALE)),
             "seamless_loop": True,
             "polarity_sum": float(signs.sum()),
         },

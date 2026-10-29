@@ -1,0 +1,30 @@
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-420 gain_ppm=-788 skew_cps=-305
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-679 gain_ppm=1374 skew_cps=-206
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-550 offset_sd_mc=810 gain_ppm=293 gain_sd_ppm=2927 skew_cps=-255 skew_sd_cps=317
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-571 gain_ppm=266 skew_cps=-155
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-795 gain_ppm=-395 skew_cps=-343
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-1021 gain_ppm=381 skew_cps=-263
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-154 gain_ppm=-84 skew_cps=-301
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-281 gain_ppm=82 skew_cps=-362
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=114 gain_ppm=-266 skew_cps=-307
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-458 gain_ppm=-20 skew_cps=-195
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-20 gain_ppm=-110 skew_cps=-298
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=466 gain_ppm=139 skew_cps=-315
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=172 gain_ppm=61 skew_cps=-313
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=120 gain_ppm=96 skew_cps=-267
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=112 gain_ppm=260 skew_cps=-334
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=855 gain_ppm=54 skew_cps=-407
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=600 gain_ppm=-485 skew_cps=-194
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=328 gain_ppm=2 skew_cps=-211
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-36 offset_sd_mc=891 gain_ppm=-1 gain_sd_ppm=3017 skew_cps=-284 skew_sd_cps=334
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=335 gain_ppm=1538 skew_cps=-328
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=33 gain_ppm=1878 skew_cps=-268
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=11 gain_ppm=617 skew_cps=-278
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=85 gain_ppm=-73 skew_cps=-416
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-40 gain_ppm=362 skew_cps=-234
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=85 offset_sd_mc=709 gain_ppm=864 gain_sd_ppm=2941 skew_cps=-305 skew_sd_cps=381
+LOOP-TEST-END result=OK

@@ -95,6 +95,10 @@ def check_waveform(json_path: str | Path, adc_rate_hz: float) -> list[dict]:
 
     # 4. The tone must be coherent over the loop.
     tone_hz = float(_get(meta, "actual_tone_hz", "main_tone_hz", default=0.0))
+    if tone_hz == 0.0:
+        add("dither-only excitation has no carrier requirements", True,
+            "main_tone_hz=0; carrier coherence and phase-spread checks do not apply")
+        return results
     cycles = tone_hz * n_dac / fs_dac if fs_dac else 0.0
     add("tone is coherent over the loop",
         abs(cycles - round(cycles)) < 1e-6,

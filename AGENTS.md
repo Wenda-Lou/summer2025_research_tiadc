@@ -3,6 +3,14 @@
 Guidance for AI coding agents working in this repository. Read this before
 touching anything.
 
+Latest user requirement (2026-10-28): board calibration must use dither only,
+with NO supplied reference, waveform parameters, template or polarity sequence.
+The board now enables `reference_free` in `calibration_loop_c`; details and scope
+are at the top of `calibration_loop/CALIBRATION_LIMIT_HANDOFF.md`. `wave` is a
+legacy no-op. Older template/tone defaults in this document are historical and
+must not be restored to the board. The new relative A/B spectral estimator has
+offline validation only; do not claim the older bench results validate it.
+
 ## Project Overview
 
 This is a research repository (University of Toronto, summer 2025) for the
@@ -554,7 +562,33 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
 
 ## Code Style Guidelines
 
-**Current experiment handoff (2026-10-27):** read
+**Dither-only update (2026-10-28):** the C loop now implements `tone_free`
+(`dither_mag` gain, fractional-template `dither_phase` timing, no tone fitting,
+purity, phase, cancellation or carrier metrics anywhere in this path).
+Offset uses polarity-decoupled pulse windows and alignment uses dither templates.
+The dither equations match commit `d22d23ff6753b4503c54157529ad8396483cb006`'s
+unchanged `dither_raw.py`. Firmware wave 3 is the boot default and matches
+`waveforms/dither_only/w06adc_e04_t04_amp32767_dither_only.txt` (sig_cycles=0,
+DAC peak full scale). Wave 2 retains the 5190-code dither comparison.
+Board loop/test commands refuse tone configurations before capture or actuation.
+`board_axis_test.py` accepts dither-only waves 2/3 and defaults to 3, grades `used_gain_ppm` and checks route
+tags. Offset stays polarity-decoupled flat-top. Rebuild/download the ELF before
+bench use. The user subsequently completed 300/300 dither-only frames with no
+rejects or skew abort; frozen offset precision remains unresolved. Follow the updated limit
+test procedure below. Older tone-only scope statements are historical.
+Native tests count zero tone-fit/purity calls. `python tools/test_dither_only.py`
+forbids every tone helper and verifies convergence, missing-dither rejection and
+invariance under changes of unused carrier metadata.
+DAC rail samples are legal in a full-scale reference; waveform metadata records
+`touches_dac_rails` separately from overflow (`clipping`). The ADC clipping guard
+is unchanged. Full DAC scale does not establish full-scale ADC input voltage.
+Vitis 2025.1 app build is now verified (2026-10-28). The user-editable
+`firmware/thesis_v3_loop_appl/src/UserConfig.cmake` includes the app-local
+`cmake/vitis_compat.cmake`, which supplies the missing 2025.2 build-info printer
+only when the selected BSP lacks it. Do not hand-edit the generated main
+CMakeLists or regenerate the platform to resolve that helper mismatch.
+
+Read
 `calibration_loop/CALIBRATION_LIMIT_HANDOFF.md` before continuing the individual
 offset/gain/skew limit experiments. It records implementation status, waveform,
 verified checks, unverified bench work and the next steps. Detailed procedure:
@@ -564,6 +598,38 @@ Single-axis limits: `adc -cal loop test ...` in `thesis_v3_loop_appl` saves a
 baseline, perturbs one channel, trains one axis and freezes all feedback for
 independent holdout. `tools/board_axis_test.py` plans by default (`--execute`
 enables bench access). Procedure: `calibration_loop/CALIBRATION_LIMIT_TEST.md`.
+Test baseline/run/step now also default to compact phase/window/summary output.
+PC tools automatically append per-command `full`, retain all rows in CSV, and
+generate PNG/SVG with PRE/TRAIN/HOLD phases and frozen HOLD statistics.
+The flag resets after each command; estimator/feedback are unchanged.
+`tools/axis_result_export.py` handles single-axis export/plots. Each sweep point
+and repetition gets its own CSV/JSON/PNG/SVG; Console retains partial records
+on faults and sends no automatic recovery writes. A new ELF clears RAM baseline.
+The immediate user priority is single-command dither-only calibration: load the
+wave 3 TXT, complete bring-up, then run only `adc -cal loop 300` (boot default
+wave 3). Wave/status commands are optional configuration/queries. A test baseline
+is not a prerequisite. Both board entry points reject ADC clipping. Board output
+omits unused carrier metadata and tone_ppm; waveform selection accepts only
+dither configurations. The user's
+first test baseline was rejected for a -1.623-code frozen offset mean, with an
+increasing offset bias across HOLD windows; its physical cause is unresolved.
+Baseline CHECK/WINDOW diagnostics do not update feedback or relax thresholds.
+Regular loop logs now show 20-accepted-frame progress and a last-20 RESULT.
+`adc -cal loop export` reads the last regular run's saved metadata/rows without
+capture or writes. `butils_loop_results.c` keeps a separate RAM snapshot and
+the latest 4000 rows, with explicit dropped-row accounting. Reboot or a new
+regular run clears it; test commands do not overwrite the saved snapshot.
+`python tools/board_loop_log.py --uart COM7 --out calibration_out/run.log`
+runs one `adc -cal loop 300 stream` command, incrementally saves ALL records
+in CSV, then creates JSON and full-run PNG/SVG curves. Bulk data is excluded
+from the compact human UART log; streaming is not limited by the RAM snapshot.
+Plot every accepted point, mark rejects, and show A/B correction histories and
+actuator code. Reused stems become unique; interrupted CSV data is retained.
+The user explicitly does not want the already-completed old run exported;
+`--cmd "adc -cal loop export"` only downloads. Tests: native board spies plus
+`tools/test_loop_result_export.py` (LOOP_C_EXPORT_FIXTURE points to a native
+test_summary.txt for actual C-packet decoding). This logging/export revision
+is built and offline-tested, not yet bench-tested. Estimator/feedback unchanged.
 Offset ladders are explicitly post-ADC software injections; `dcfilter` only
 toggles the chip filter. IFC writes are bank-scoped/readback-checked; clock
 parking still uses the sanctioned skew transaction. Native command/SPI spies

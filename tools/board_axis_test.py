@@ -1,6 +1,6 @@
 """Isolated on-board calibration experiments. No hardware access without --execute.
 
-Requires the new 'adc -cal loop test' firmware and the selected tone+dither DPG
+Requires the new 'adc -cal loop test' firmware and the selected DPG
 vector. Budgets count attempts, not just qualified frames. The waveform is loaded
 manually. Logs, per-frame CSV and independent holdout summaries are retained.
 """
@@ -53,9 +53,28 @@ def rows_from(lines):
     return [fields(line) for line in lines if line.startswith("LOOP-TEST-ROW ")]
 
 
+def audit_routes(rows):
+    accepted = [r for r in rows if r.get("st") == "ok"]
+    sources = {r.get("gsrc", "") for r in accepted}
+    routes = {r.get("skew_route", "") for r in accepted}
+    legacy = (not any("skew_route" in r or "used_gain_ppm" in r for r in accepted) and
+              sources <= {"", "tone"})
+    consistent = legacy or (
+        len(sources) == len(routes) == 1 and
+        (next(iter(sources)), next(iter(routes))) in
+        (("tone", "phase"), ("dither_mag", "dither_phase"),
+         ("dither_spectrum", "dither_cross_spectrum")) and
+        (routes == {"phase"} or all("used_gain_ppm" in r for r in accepted)))
+    return {"gain_source": ",".join(sorted(sources)),
+            "skew_route": ",".join(sorted(routes)), "routes_consistent": consistent}
+
+
 def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20):
     rows = rows_from(lines)
-    key, scale = AXIS_FIELDS[axis]
+    metrics = dict(AXIS_FIELDS)
+    if any("used_gain_ppm" in r for r in rows):
+        metrics["gain"] = ("used_gain_ppm", 1e-6)
+    key, scale = metrics[axis]
     hold_all = [r for r in rows if r.get("phase") == "hold"]
     hold = [r for r in hold_all if r.get("st") == "ok"]
     pre = [r for r in rows if r.get("phase") == "pre" and r.get("st") == "ok"]
@@ -67,7 +86,10 @@ def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20)
     result["pre_observed_mean"] = stats(
         number(r, key, scale) for r in rows if r.get("phase") == "pre" and
         r.get("st") in ("ok", "gain_range", "skew_range"))["mean"]
-    for metric, (field, unit) in AXIS_FIELDS.items():
+    # Audit the observable throughout PRE/TRAIN/HOLD; a fallback must not look
+    # like convergence. Old tone-only logs without route fields remain readable.
+    result.update(audit_routes(rows))
+    for metric, (field, unit) in metrics.items():
         for name, value in stats(number(r, field, unit) for r in hold).items():
             result[f"{metric}_{name}"] = value
     rejected = {}
@@ -122,7 +144,7 @@ def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20)
                       within(selected, tolerance) and result["hold_frozen"] and
                       result["hold_continues_train"] and result["inactive_frozen"] and
                       result["hold_clock_frozen"] and result["inactive_skew_frozen"] and
-                      not result["range_limit"])
+                      not result["range_limit"] and result["routes_consistent"])
     return result
 
 
@@ -146,6 +168,7 @@ def summarise_step(lines, frame_budget=None, min_yield=0.8):
         restore.append({"delta_ps": delta, "se_ps": se,
                         "consistent": states[i]["n"] >= 2 and abs(delta) <= max(0.02, 1.96 * se)})
     result = {"states": states, "repeats": repeats, "restores": restore}
+    result.update(audit_routes(rows))
     result["repeats_consistent"] = abs(repeats[0]["step_ps"] - repeats[1]["step_ps"]) <= max(
         0.02, 1.96 * math.hypot(repeats[0]["se_ps"], repeats[1]["se_ps"]))
     result["coefficients_frozen"] = bool(rows) and all(
@@ -157,7 +180,7 @@ def summarise_step(lines, frame_budget=None, min_yield=0.8):
                       result["control_sign_ok"] and
                       all(r["significant"] for r in repeats) and
                       repeats[0]["step_ps"] * repeats[1]["step_ps"] > 0 and
-                      all(r["consistent"] for r in restore))
+                      all(r["consistent"] for r in restore) and result["routes_consistent"])
     return result
 
 
@@ -171,32 +194,65 @@ class Console:
         self.log = log
         self.timeout = timeout
         self.pending = ""
+        self.records = []
+        self.context = {}
 
     def command(self, command, marker="LOOP-TEST-END"):
+        if command.startswith(('adc -cal loop test baseline ', 'adc -cal loop test run ',
+                               'adc -cal loop test step ')) and not command.endswith(' full'):
+            command += ' full'
         self.log.write(f"# command: {command}\n")
         self.log.flush()
         self.serial.write((command + "\r").encode("ascii"))
         self.serial.flush()
         deadline = time.monotonic() + self.timeout
         lines = []
+        fault_seen = False
+        dma_fault = None
         while time.monotonic() < deadline:
             self.pending += self.serial.read(self.serial.in_waiting or 1).decode(errors="replace")
             while "\n" in self.pending:
                 line, self.pending = self.pending.split("\n", 1)
                 line = line.rstrip("\r")
-                print(line)
-                self.log.write(line + "\n")
-                self.log.flush()
+                if line.startswith('uart-cmd$:'):
+                    line = line.split(':', 1)[1].strip()
+                payload = line.startswith('LOOP-TEST-ROW ')
+                if payload or line.startswith('LOOP-TEST-CAPTURE '):
+                    self.records.append(dict(fields(line), **self.context))
+                if not payload:
+                    print(line)
+                    self.log.write(line + "\n")
+                    self.log.flush()
                 lines.append(line)
                 if ("RECOVERY_REQUIRED" in line or "act=abort:direction" in line or
                         "act=move:FAILED" in line or "st=clipping" in line or
                         "fault=1" in line):
-                    raise BenchFault("Bench fault/clipping; stopped without retry or automatic restore.")
+                    fault_seen = True
+                    if payload:
+                        row = fields(line)
+                        notice = (f"LOOP-TEST-FAULT phase={row.get('phase')} attempt={row.get('attempt')} "
+                                  f"st={row.get('st')} act={row.get('act')} clips={row.get('clips')}")
+                        print(notice)
+                        self.log.write(notice + '\n')
+                        self.log.flush()
                 if "Command Error" in line:
-                    raise BenchFault("Firmware rejected the command; check that the new ELF is loaded.")
+                    if "DMA capture timeout" in line:
+                        # The board can still be inside the running phase.
+                        # Retain its remaining records until END; never send
+                        # another test or an automatic recovery transaction.
+                        fault_seen = True
+                        dma_fault = line
+                    else:
+                        raise BenchFault(f"Firmware error: {line}; no further commands issued.")
                 if line.startswith(marker):
+                    if dma_fault:
+                        raise BenchFault(f"DMA capture timed out during this test: {dma_fault}; "
+                                         "command ended, partial data retained; no retry or automatic restore.")
+                    if fault_seen:
+                        raise BenchFault("Bench fault/clipping; data retained, no retry or automatic restore.")
                     return lines, not ("result=ERROR" in line)
-        raise BenchFault(f"Timeout waiting for {marker}; no further commands issued.")
+        reason = f" after {dma_fault}" if dma_fault else ""
+        raise BenchFault(f"Timeout waiting for {marker}{reason}; no further commands issued.")
 
     def require(self, command, marker="LOOP-TEST-END"):
         lines, ok = self.command(command, marker)
@@ -229,6 +285,12 @@ def point_values(axis, text):
 
 
 def run(args):
+    if args.reuse_baseline and args.wave is not None:
+        raise ValueError("reuse-baseline requires reference-free mode; omit --wave")
+    if args.wave not in (None, 2, 3):
+        raise ValueError("Calibration requires dither-only wave 2 or 3; tone calibration is disabled")
+    if args.skew_gate_milli is None:
+        args.skew_gate_milli = 500
     if not 0 < args.min_yield <= 1 or args.window < 2 or getattr(args, "repeats", 1) < 1:
         raise ValueError("require 0 < min-yield <= 1, window >= 2 and repeats >= 1")
     if (not 1 <= args.gain_gate_ppm <= 2000000 or not 1 <= args.skew_gate_milli <= 500 or
@@ -248,14 +310,16 @@ def run(args):
         raise ValueError("tolerance must be positive and finite (codes, ratio, or ps)")
     config = (f"adc -cal loop test config {args.gain_gate_ppm} {args.skew_gate_milli} "
               f"{round(args.deadband_ps * 100)} {round(args.step_ps * 100)} {args.batch}")
-    print(f"mode={args.mode} uart={args.uart} wave={args.wave}; load the matching DPG vector manually.")
+    print(f"mode={args.mode} uart={args.uart}; reference-free: supply shared A/B dither only.")
     print(config)
-    print(f"baseline={args.baseline_train}+{args.baseline_hold} attempts; "
+    print(f"baseline={'reuse saved board baseline' if args.reuse_baseline else str(args.baseline_train) + '+' + str(args.baseline_hold)}; "
           f"pre/train/hold={args.pre}/{args.train}/{args.hold}; points={points}")
     if not args.execute:
         print("PLAN ONLY. Add --execute to connect and perform register/clock writes.")
         return 0
     import serial
+    import matplotlib
+    matplotlib.use('Agg')
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=False)
@@ -270,13 +334,39 @@ def run(args):
             with serial.Serial(args.uart, 115200, timeout=0.5) as port:
                 port.reset_input_buffer()
                 console = Console(port, log, args.timeout)
-                console.require(f"adc -cal loop wave {args.wave}", "LOOP-WAVE")
-                console.require(config)
-                console.require("adc -cal loop test offset A 0")
-                console.require("adc -cal loop test offset B 0")
-                initial = console.require(f"adc -cal loop test baseline {args.baseline_train} {args.baseline_hold}")
-                records.extend(dict(r, experiment="baseline") for r in rows_from(initial))
-                baseline = next(fields(line) for line in initial if line.startswith("LOOP-TEST-BASELINE "))
+                records = console.records
+                if args.wave is not None:  # optional compatibility with older firmware
+                    console.require(f"adc -cal loop wave {args.wave}", "LOOP-WAVE")
+                if args.reuse_baseline:
+                    # Read-only preflight: do not change a valid baseline's gates
+                    # or clear the previous injection until status is verified.
+                    initial = console.require("adc -cal loop test status")
+                    baseline = next((fields(line) for line in initial
+                                     if line.startswith("LOOP-TEST-BASELINE ")), {})
+                    routes = next((fields(line) for line in initial
+                                   if line.startswith("LOOP-TEST-ROUTES ")), {})
+                    current = next((fields(line) for line in initial
+                                    if line.startswith("LOOP-TEST-CONFIG ")), {})
+                    if (baseline.get("valid") != "1" or baseline.get("snapshot") != "1" or
+                            baseline.get("fault") != "0" or not 0 <= int(baseline.get("code", -1)) <= 48):
+                        raise ValueError("No valid saved baseline; establish baseline first. No test writes sent.")
+                    if (routes.get("reference_free") != "1" or routes.get("tone_free") != "1" or
+                            routes.get("gain") != "dither_spectrum" or
+                            routes.get("skew") != "dither_cross_spectrum"):
+                        raise ValueError("Saved baseline must use reference-free dither routes")
+                    expected = dict(zip(("gain_ppm", "skew_milli", "deadband_cps", "step_cps", "batch"),
+                                        config.split()[-5:]))
+                    if any(current.get(k) != v for k, v in expected.items()):
+                        raise ValueError("Board config differs from requested config; use matching CLI settings. No config writes sent.")
+                    meta["reused_baseline"] = True
+                    meta["board_config"] = current
+                else:
+                    console.require(config)
+                    console.require("adc -cal loop test offset A 0")
+                    console.require("adc -cal loop test offset B 0")
+                    console.context = {"experiment": "baseline"}
+                    initial = console.require(f"adc -cal loop test baseline {args.baseline_train} {args.baseline_hold}")
+                    baseline = next(fields(line) for line in initial if line.startswith("LOOP-TEST-BASELINE "))
                 base_code = int(baseline["code"])
                 meta["baseline"] = baseline
                 if axis == "skew" and any(not 0 <= base_code + p <= 48 for p in points):
@@ -285,9 +375,19 @@ def run(args):
                     code = base_code if args.code is None else args.code
                     if not 0 <= code <= 47:
                         raise ValueError("step base must be 0..47")
+                    console.context = {"experiment": "step"}
                     lines, _ = console.command(f"adc -cal loop test step {code} {args.frames}")
-                    records.extend(dict(r, experiment="step") for r in rows_from(lines))
                     meta["step"] = summarise_step(lines, args.frames, args.min_yield)
+                    if args.wave in (None, 2, 3):
+                        meta["step"]["requested_routes_match"] = (
+                            (meta["step"]["gain_source"], meta["step"]["skew_route"]) in
+                            (("dither_mag", "dither_phase"), ("dither_spectrum", "dither_cross_spectrum")))
+                        meta["step"]["pass"] &= meta["step"]["requested_routes_match"]
+                    if __package__:
+                        from .axis_result_export import save_test_results
+                    else:
+                        from axis_result_export import save_test_results
+                    save_test_results(lines, out / 'step.log', meta['step'])
                     console.require("adc -cal loop test restore")
                 else:
                     for repeat in range(args.repeats):
@@ -300,12 +400,24 @@ def run(args):
                             else:
                                 inject = f"offset {args.channel} {point}"
                             console.require("adc -cal loop test " + inject)
+                            console.context = {"experiment": axis, "point": point, "repeat": repeat}
                             lines, _ = console.command(f"adc -cal loop test run {axis} {args.pre} {args.train} {args.hold}")
-                            records.extend(dict(r, experiment=axis, point=point, repeat=repeat)
-                                           for r in rows_from(lines))
                             result = summarise_run(lines, axis, tolerance, args.hold, args.min_yield, args.window)
+                            if args.wave in (None, 2, 3):
+                                result["requested_routes_match"] = (
+                                    (result["gain_source"], result["skew_route"]) in
+                                    (("dither_mag", "dither_phase"), ("dither_spectrum", "dither_cross_spectrum")))
+                                result["pass"] &= result["requested_routes_match"]
                             result.update(point=point, repeat=repeat, baseline_code=base_code)
+                            if __package__:
+                                from .axis_result_export import save_test_results
+                            else:
+                                from axis_result_export import save_test_results
+                            save_test_results(lines, out / f"{axis}_point{point}_repeat{repeat+1}.log", result)
                             summaries.append(result)
+                            print(f"POINT {'PASS' if result['pass'] else 'FAIL'}: {axis}={point} "
+                                  f"repeat={repeat+1}/{args.repeats} "
+                                  f"HOLD={result[axis + '_mean']:.6g}; files saved", flush=True)
                             # Preserve completed points even if a later transaction fails.
                             log.write("# result: " + json.dumps(result, sort_keys=True) + "\n")
                     console.require("adc -cal loop test restore")
@@ -345,16 +457,20 @@ def parser():
     for name in ("sweep", "step"):
         sp = sub.add_parser(name)
         sp.add_argument("--uart", default="COM7")
-        sp.add_argument("--wave", type=int, choices=(0, 1), default=0)
+        sp.add_argument("--wave", type=int, choices=(2, 3), default=None,
+                        help="legacy firmware compatibility only; omit for reference-free calibration")
         sp.add_argument("--out", default="calibration_out/axis_" + time.strftime("%Y%m%d_%H%M%S"))
         sp.add_argument("--execute", action="store_true")
+        sp.add_argument("--reuse-baseline", action="store_true",
+                        help="validate and reuse the current board baseline; do not recalibrate or rewrite config")
         sp.add_argument("--timeout", type=float, default=1800.0)
         for opt, default in (("pre", 40), ("train", 300), ("hold", 100),
                              ("baseline-train", 600), ("baseline-hold", 100)):
             sp.add_argument("--" + opt, type=int, choices=range(2, 2001), default=default,
                             metavar="2..2000")
         sp.add_argument("--gain-gate-ppm", type=int, default=200000)
-        sp.add_argument("--skew-gate-milli", type=int, default=250)
+        sp.add_argument("--skew-gate-milli", type=int,
+                        help="default: 500 for dither-only wave 2/3")
         sp.add_argument("--deadband-ps", type=float, default=10.0)
         sp.add_argument("--step-ps", type=float, default=19.1)
         sp.add_argument("--batch", type=int, default=20)

@@ -7,6 +7,114 @@
 `calibration_loop_c`。需要重新构建、下载该 ELF；旧 ELF 不包含下面的
 `adc -cal loop test ...` 命令。这里没有自动下载 ELF 或连接台架。
 
+## Dither-only 验证（2026-10-28）
+
+已有 `BASELINE valid=1` 时，关闭串口终端，自动完成 offset 扫描：
+
+```powershell
+python tools/board_axis_test.py sweep --axis offset --uart COM5 --reuse-baseline --execute
+```
+
+默认 B 通道，偏置 −64、−16、−4、0、4、16、64 codes，每档 5 遍，
+每遍 PRE/TRAIN/HOLD = 40/300/100，按每轮七档循环。
+每遍自动 restore、注入、测试、导出 CSV/JSON/PNG/SVG，并立即显示 PASS/FAIL。
+全部结束后 restore。输出位于新的 `calibration_out/axis_时间戳/`，
+另有 console.log、frames.csv、summary.csv、meta.json；不覆盖已有目录。
+`--reuse-baseline` 首先只读验证有效基准、无故障、无参考路由、配置匹配，
+不重建基准或写配置；前置检查失败即停止。硬件事务故障会停止，不自动恢复写入；
+普通 HOLD 不通过则记录 FAIL 并继续下一档。中途异常保留已完成数据。
+只测 +16 共 5 遍可追加 `--points=16 --repeats 5`。不带 `--execute` 只打印计划。
+
+**最新接口：板端已改为无 reference 的相对校准。** 不需要 `wave 3`、参考文件、
+脉冲模板或波形参数，直接 `adc -cal loop 300` 或 `adc -cal loop test baseline 600 100`。
+下面描述的 wave 2/3 和 dither_phase 是历史模板模式；当前板端输出应为
+`reference_free=1`、`gain=dither_spectrum`、`skew=dither_cross_spectrum`。
+需向 A/B 输入同一宽带 dither；算法匹配两路相对误差，不能识别共同绝对误差。
+新路径已做仿真和构建验证，尚未上板。PC 导出命令保持不变，不传 `--wave`。
+
+基准训练结束的 offset 系数使用末段最多 100 个尝试中的合格 dither 帧平均，
+在输入域消除逐帧反馈状态的影响；控制码移动会清空平均，至少 20 帧才应用。
+UART 的 `LOOP-TEST-FREEZE source=dither_training_mean` 标明平均帧数和冻结系数。
+随后 HOLD 仍是全新采集、全部反馈关闭，offset ±0.5 codes 等通过阈值不变。
+命令仍为 `adc -cal loop test baseline 600 100`，需要下载新 ELF。
+
+本次先用 **dither-only** 进行相同的单项 PRE/TRAIN/HOLD 测试。新固件选择
+`adc -cal loop wave 3`：DPG 加载
+`waveforms/dither_only/w06adc_e04_t04_amp32767_dither_only.txt`。
+Gain 使用 `dither_mag`（每事件峰峰值幅度比），skew 使用 `dither_phase`
+（极性校正折叠后拟合分数采样相位），offset 保留极性解耦的平顶估计。
+不使用 tone cancellation，不用 tone 幅度/相位作门限、控制或评分。
+
+必须重新构建并下载本次固件；旧 ELF 没有满量程 wave 3。`test status` 应输出
+`LOOP-TEST-ROUTES gain=dither_mag skew=dither_phase tone_free=1`；逐帧日志应有
+`gsrc=dither_mag skew_route=dither_phase`。`used_gain_ppm` 是当前路线的
+增益残差；旧版的 `tone_ppm=nan` 字段已从当前板端输出中移除。
+本次使用 DAC 峰值满量程 wave 3，启动默认也为 3。Wave 2 保留 5190 codes 对照。
+板端只允许这两种 dither-only 配置。Wave 0/1 的历史配置仍保留在表中，
+但 `loop` 和 `loop test` 会拒绝使用它们校准，且在采集或写入前返回错误。
+扫描脚本默认 wave 3，接受 `--wave 3` 或 `--wave 2`。
+
+**先验证普通 dither-only 闭环：** DPG 加载上述 wave 3 TXT，正常 bring-up 后
+只运行下面一条命令（本固件启动默认 wave 3）。`loop 300` 使用 dither
+更新全部三项；`test baseline`
+是在此之外增加独立冻结测量和基准准入检查，不是普通校准的前置条件。
+
+```text
+adc -cal loop 300
+```
+
+闭环命令会先执行 ACK 检查的 zero-step 事务，必要时初始化中性状态。
+`wave` 仅用于切换已知输入配置，`status` 仅查询结果，都不是必需校准步骤。
+`LOOP-START` 显示 `gain=dither_mag skew=dither_phase tone_free=1`；普通日志每
+20 个合格帧输出 `LOOP-PROGRESS`，其中 `gain_ppm`、`offset_mc`、`skew_cps`
+是该窗口的有符号平均残差，分别使用 ppm、0.001 ADC codes、0.01 ps。
+结束时 `LOOP-RESULT` 给出最后 20 个合格帧的均值和逐帧 SD。
+普通闭环也启用原始 ADC clipping 拒绝，未改其学习率或 dither 公式。
+看末段有符号残差和 `skew_abort=0`，不能把完成 300 帧等同于精度已验证。
+Gain/offset 是软件数字校正系数，skew 使用 ACK 检查的硬件延迟事务。
+
+**校准并自动保存到电脑：** 下载最新 ELF、正常上电并加载匹配 DPG 波形后，
+关闭占用串口的终端，在仓库根目录执行下面一条电脑指令（COM7 按实际修改）：
+
+```powershell
+python tools/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+```
+
+脚本用一条 `adc -cal loop 300 stream` 完成校准和全程传输，全部逐帧校准
+记录（含拒帧）实时写入 CSV，不受事后 RAM 快照条数限制。`.log` 只保留
+简短进度和异常，不复制数据包。校验完整性后生成 `.json`、全程曲线 `.png`
+和 `.svg`，包含全部合格点、20 帧均值、拒帧标记、A/B 系数和控制码。
+CSV 使用 ADC codes、ps、乘法增益系数；图和 JSON 标明反馈仍开启。
+复用文件名前缀会自动加时间后缀，保留之前结果。
+已经校准过、只想下载结果时，电脑指令是：
+
+```powershell
+python tools/board_loop_log.py --uart COM7 --cmd "adc -cal loop export" --out calibration_out/dither_saved.log
+```
+
+这不会重新采集或校准，也不写 ADC/延迟寄存器。只读保存的上一次普通 loop
+快照；记录在 RAM 中，重启或下一次普通 loop 会清除/覆盖。最多保留最近
+4000 条逐帧记录，若覆盖会明确记录缺失数量；该限制不影响上述 PC stream
+全程传输。`loop test` 的详细日志和扫描
+导出仍由 `tools/board_axis_test.py` 处理。当前新版日志/导出接口只完成离线
+和实际 Vitis 构建验证，尚需用户下载后上板检查。
+
+算法以 `d22d23ff6753b4503c54157529ad8396483cb006` 的 Python dither 分支为基准，
+`dither_raw.py` 的幅度和分数相位公式保持不变。此次进一步剥离了其外围的
+tone 辅助处理：解帧只用时域相关，对齐只用脉冲模板；不调用 tone 纯度、
+拟合、抵消、相位或载波指标函数。Offset 由脉冲平顶的极性解耦均值更新。
+通过原生调用计数和 Python 禁用函数测试验证整条校准路径的 tone 调用为零。
+
+Wave 3 幅度为 ±32767 DAC codes，即 DAC 数字峰值的 100%；正负各 32 个脉冲，
+均值为零。到达 DAC 数字轨是这个已知输入的设计值，不代表有越界截断。
+`touches_dac_rails=true` 与 `clipping=false` 分别表示触轨和无数字越界。
+这不保证 ADC 输入达到满量程：ADC 端取决于模拟链路，仍须检查实际采样幅度。
+原始 ADC 削顶保护保持启用，不能为了运行满量程 DAC 波形而关闭它。
+其他幅度需要同步固件表并作为另一个条件记录，不能加载既有的
+16000/30000 文件后选择 wave 3。Dither-only 的增益结果评价脉冲幅度比，
+不代表主音处的增益比；下文单频相位的限制说明适用于后续 tone 对照。
+本次 Vitis 2025.1 编译、链接已验证通过；仍需下载本次 ELF 并首次上板验证。
+
 ## 首次上板操作顺序（先跑通三个单点）
 
 下面是可直接按顺序操作的首次测试流程。先跑通每项一个测试点，再做
@@ -17,12 +125,12 @@
 ### 第一步：新固件和固定波形
 
 1. 在 Vitis clean/build `thesis_v3_loop_appl`，下载新 ELF，完成正常 bring-up。
-2. DPG 加载 `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5.txt`，
-   即 199.375 MHz 的主音加平衡正负 dither，不是 JSON，也不是纯正弦。
+2. DPG 加载 `waveforms/dither_only/w06adc_e04_t04_amp32767_dither_only.txt`，
+   即平衡正负 dither，无主音；加载 TXT，不是 JSON。
 3. 保持 DAC 2.6 GS/s、ADC 1.3 GS/s，以及现有接线、幅度。
 
-主音是 -1.5 dBFS（约 27570 DAC codes 峰值），dither 为 5190 DAC codes。
-该 TXT 实际范围为 -32746..32746，已很接近 DAC 满量程，先不要增加数字幅度。
+Dither 为 32767 DAC codes，脉冲上升/平顶/下降各 4 个 DAC 样本。
+该 TXT 实际范围为 -32767..32767，均值为零。先固定这个幅度测失配阶梯。
 这些数字不是 ADC 输入电压。先确认原始 ADC 数据未削顶。
 
 ### 第二步：建立基准，记录实际控制码 N
@@ -31,13 +139,16 @@
 
 ```text
 adc -cal skew step 0
-adc -cal loop wave 0
+adc -cal loop wave 3
 adc -cal loop test help
+adc -cal loop test config 200000 500 1000 1910 20
 adc -cal loop test baseline 600 100
 adc -cal loop test status
 ```
 
 基准阶段包含 600 次三项校准尝试，再全部冻结、进行 100 次独立测量。
+上面的 config 为 dither-only 显式选择 ±0.5 sample 捕获门限；19.1 ps/code
+只是启动控制值，后续仍须用本次工作点的配对步长测量复核并配置。
 可能需要几分钟，等待完成，不要因没有立即返回而重复发送命令。
 
 确认 `LOOP-TEST-BASELINE valid=1`，记录：
@@ -48,7 +159,38 @@ adc -cal loop test status
 
 若基准无效、出现错误 ACK 或 clipping，先排查，不进入下一个测试。
 
+基准的独立 HOLD 门限是：合格率至少 80%、有符号 offset 均值不超过
+±0.5 codes、dither gain 比残差不超过 ±0.2%，skew 不超过
+`max(deadband, step/2) + 3*SD/sqrt(N)`。TRAIN 的全程平均误差不能代替
+冻结后 HOLD 的结果。不要使用 HOLD 更新系数或放宽门限来获取有效基准。
+
+2026-10-28 用户首轮日志：TRAIN 600/600、offset 均值 −0.018 codes；
+HOLD 100/100、offset −1.623 codes、gain +0.1768%、skew −1.88 ps。
+仅 offset 超出基准门限。HOLD 每 20 帧 offset 均值依次为
+−1.089、−1.176、−1.610、−2.067、−2.171 codes，冻结期间还存在偏移趋势。
+这证明基准不合格，尚不能确定是末态系数噪声、模拟漂移或估计偏差造成。
+需要 TRAIN 末段逐帧系数和原始采样继续区分，不能据此改换 tone 路线。
+
+本次诊断更新新增 `LOOP-TEST-BASELINE-CHECK`，逐项打印均值、门限和
+`pass=0/1`；冻结阶段每 20 个合格帧另输出 `LOOP-TEST-WINDOW`，末尾不足
+20 帧也单独输出。窗口仅作观察，HOLD 的反馈始终关闭。
+`LOOP-TEST-BASELINE` 的 `wave/code` 指已保存的有效基准；无效时显示 −1。
+`LOOP-TEST-CURRENT` 才是当前选定的波形和执行器控制码。旧 ELF 无效基准
+显示的 `wave=0 code=0` 是未保存成功的字段，不表示当前正在使用 tone。
+新诊断需重新构建/下载；不会修改 dither 公式、学习率或上述门限。
+
 ### 第三步：Offset 单点
+
+当前 `test` 默认也使用简洁 UART 输出。电脑工具自动请求完整逐帧数据；
+手动注入后关闭串口终端，可运行下列指令保存本次单项测试并自动作图：
+
+```powershell
+python tools/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/offset_p16_r1.log
+```
+
+它只执行本次单项测试，不重建或覆盖已有基准。文件包含全部 PRE/TRAIN/HOLD
+数据；图中标注阶段，JSON 使用冻结 HOLD 数据判断结果。自动 sweep 每个点、
+每次重复也独立保存 CSV/JSON/PNG/SVG。需要下载新版 ELF 并重建一次 RAM 基准。
 
 ```text
 adc -cal loop test restore
@@ -80,7 +222,7 @@ adc -cal loop test restore
 不能把“写入与基准相同的 IFC”当作施加了增益失配。
 
 检查 PRE 幅度比确实变化，随后 HOLD 的 gain 残差应接近零，即
-校正后的 tone 幅度比接近 1。此时 offset 和 skew 校正保持基准状态。
+校正后的 dither 幅度比接近 1。此时 offset 和 skew 校正保持基准状态。
 
 ### 第五步：Skew 步长与一个恢复点
 
@@ -170,10 +312,11 @@ y_cal = (y_raw + injected_offset - offset_state) * gain_corr
 - Offset 残差：校正输出的 `offset_B - offset_A`，单位是校正后的 codes。
   若冻结的 `gain_corr` 不等于 1，注入 32 个原生 codes 的初始残差
   不一定恰好是 32 个输出 codes。不要未经转换就写成实测 µV。
-- Gain 残差：`abs(tone_B) / abs(tone_A) - 1`，乘 100 得到百分比。
-  工具校正的是所选主音处的**通道增益比**，不是绝对 volts/code。
-- Skew：正值表示 B 采样时刻更晚。相位路线给出当前主音频率下的
-  等效时间差。固定频率下输入通路的相位差也会进入这个结果。
+- Gain 残差：`mag_B / mag_A - 1`，乘 100 得到百分比。
+  它是脉冲的相对通道增益，不是绝对 volts/code。
+- Skew：正值表示 B 采样时刻更晚。Dither-only 使用两路折叠脉冲的分数
+  采样相位差；通路脉冲形状差异也可能影响这个估计，仍须配对步长复核。
+  不计算 tone 相位；也不能把这个结果当作独立的绝对时基标定。
 
 修改 B 的 IFC 时，名义幅度变化为：
 
@@ -220,21 +363,23 @@ N -> N+1 -> N -> N+1 -> N
 
 1. 在 Vitis 构建并下载 `thesis_v3_loop_appl`，按现有流程完成硬件 bring-up。
    不需要修改 Vitis 生成的 `src/` 或链接脚本。
-2. DPG 加载与固件选项完全一致的 **tone + dither** 波形：
+2. 本次 DPG 加载满量程 wave 3；wave 2 可作低幅度对照：
 
    | Wave | 文件 | Tone |
    |---|---|---|
-   | 0 | `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5.txt` | 199.375 MHz |
-   | 1 | `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5_f399p375.txt` | 399.375 MHz |
+   | 3（本次默认） | `waveforms/dither_only/w06adc_e04_t04_amp32767_dither_only.txt` | 无主音 |
+   | 2 | `waveforms/dither_only/w06adc_e04_t04_amp5190_dither_only.txt` | 无主音 |
+   | 0（校准禁用） | `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5.txt` | 199.375 MHz |
+   | 1（校准禁用） | `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5_f399p375.txt` | 399.375 MHz |
 
-   纯 function-generator 正弦、dither-only 波形、旧的宽脉冲向量都不能
-   直接替代这里的波形。固件不能可靠地自动识别所有错误向量。
+   纯 function-generator 正弦、未登记的 dither-only 波形、旧的宽脉冲向量都不能
+   直接替代所选波形。固件不能可靠地自动识别所有错误向量。
 3. 两通道输入同源，保持接线、幅度、采样率和温度条件一致，不让 ADC 削顶。
    先确认物理 A/B 寄存器银行与导出的通道标签对应；不要靠储存的 DC
    数值判断通道，也不要为交换通道把解帧旋转加 4。
 4. 首次使用执行器：`adc -cal skew step 0`。应看到 `result=OK`。
    首次会进行 neutral 初始化；后续 `step 0` 不会自动回到 neutral。
-5. 选择波形：`adc -cal loop wave 0`。关闭占用串口的其他终端再运行 Python。
+5. 选择波形：`adc -cal loop wave 3`。关闭占用串口的其他终端再运行 Python。
 6. 确定实际 COM 端口。以下 `COM7` 只是示例，不能假定每台电脑相同。
 
 Skew 写入必须走固件事务：读回、JESD 重同步、warm-up 和新 DMA 帧检查。
@@ -308,8 +453,8 @@ adc -cal loop test restore
 | `0x0E` | 1.81 Vpp |
 | `0x0F` | 1.93 Vpp |
 
-仅改一个银行，保留 `0x1910` 高四位并验证读回。HOLD 只评价该频率下的
-tone 增益比，不把 dither 比例也要求为 1。七个 IFC 点全部通过时，只能
+仅改一个银行，保留 `0x1910` 高四位并验证读回。HOLD 评价 dither_mag 的
+增益比。七个 IFC 点全部通过时，只能
 说覆盖了这些硬件状态；还没找到更大的算法失配边界。
 
 ### 5.5 Skew 步长与单项范围
@@ -357,6 +502,8 @@ adc -cal loop test config 200000 250 1000 1910 20
 | Batch frames | 20 个合格帧决定一次 skew 移动 |
 
 参数只影响新 `test` 流程，旧 `loop N` 保持默认行为。
+手动流程的默认 skew gate 为 250；本次 dither-only 使用 500，见首次流程。
+Python 扫描允许 wave 2/3，默认采用 500，可显式覆盖。
 Skew gate 最大允许 0.5 个采样周期。不要为得到通过结果无限放宽门限。
 允许较大失配的扫描可显式改 gain gate，例如 `300000`；报告时保留该设置。
 
@@ -382,16 +529,16 @@ step 的五个状态都使用大帧数时，需要相应提高这个超时。
 
 ```powershell
 # Offset：注入量为软件原生 ADC codes
-python tools/board_axis_test.py sweep --axis offset --uart COM7 --wave 0 --points=-64,-16,-4,0,4,16,64 --repeats 5 --out calibration_out/limits_offset_01
+python tools/board_axis_test.py sweep --axis offset --uart COM7 --wave 3 --points=-64,-16,-4,0,4,16,64 --repeats 5 --out calibration_out/limits_offset_01
 
 # Gain：这里填的是 IFC 寄存器码，不是百分比
-python tools/board_axis_test.py sweep --axis gain --uart COM7 --wave 0 --points=12,13,11,14,10,15,0 --gain-gate-ppm 300000 --repeats 5 --out calibration_out/limits_gain_01
+python tools/board_axis_test.py sweep --axis gain --uart COM7 --wave 3 --points=12,13,11,14,10,15,0 --gain-gate-ppm 300000 --repeats 5 --out calibration_out/limits_gain_01
 
 # Skew：相对于本次收敛基准的控制码偏移
-python tools/board_axis_test.py sweep --axis skew --uart COM7 --wave 0 --points=-8,-4,-2,-1,0,1,2,4,8 --repeats 5 --out calibration_out/limits_skew_01
+python tools/board_axis_test.py sweep --axis skew --uart COM7 --wave 3 --points=-8,-4,-2,-1,0,1,2,4,8 --repeats 5 --out calibration_out/limits_skew_01
 
 # 配对步长：默认在本次收敛基准码 N 测 N/N+1；也可指定 --code N
-python tools/board_axis_test.py step --uart COM7 --wave 0 --frames 55 --out calibration_out/limits_step_01
+python tools/board_axis_test.py step --uart COM7 --wave 3 --frames 55 --out calibration_out/limits_step_01
 ```
 
 确认硬件和波形就绪后，在所需命令末尾加 `--execute`。
@@ -475,6 +622,7 @@ python calibration_loop_c/export_golden.py --out calibration_sim/output/axis_gol
 calibration_sim/build-axis/adc_cal_sim.exe --loop-golden calibration_sim/output/axis_golden.txt --output-dir calibration_sim/output/axis_golden_replay
 calibration_sim/build-axis/adc_cal_sim.exe --run-all --output-dir calibration_sim/output/axis_all
 python tools/test_board_axis_test.py
+python tools/test_dither_only.py
 ```
 
 Native 测试验证真实生产控制器的单项冻结、独立 HOLD、注入和 clipping；

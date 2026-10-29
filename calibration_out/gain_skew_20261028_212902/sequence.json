@@ -1,0 +1,8 @@
+{
+  "completed": false,
+  "uart": "COM5",
+  "repeats": 3,
+  "runs": {},
+  "active_axis": null,
+  "stop_reason": "Stopped at user request: user will run the scripts manually"
+}

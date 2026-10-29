@@ -1,5 +1,17 @@
 # thesis_v3_loop_appl
 
+2026-10-28 current mode: **reference-free dither-only relative calibration**.
+Run `adc -cal loop 300` or `adc -cal loop test baseline 600 100`; no `wave`
+selection, reference upload, pulse template, or waveform parameters are needed.
+The fixed 1.3 GHz ADC clock is hardware metadata, not a signal reference.
+Both channels must observe the same broadband dither. Routes are
+`dither_spectrum` / `dither_cross_spectrum`; common absolute errors cannot be
+identified. The old `wave` command is a compatibility no-op. Older waveform and
+template-route instructions below describe historical runs, not this mode.
+Native checks pass and the Vitis ELF builds; new-mode hardware validation remains
+pending. To save complete records and plots use `tools/board_loop_log.py` with
+`--uart` and `--cmd`, omitting `--wave`.
+
 The original firmware (`../thesis_v3_500mhz_appl/`) plus one console command,
 `adc -cal loop`, which runs the impulse-dither calibration loop **on the
 Cortex-A53**. Before this app, the same loop ran only on the host PC
@@ -12,6 +24,78 @@ and 399.375 MHz, 300/300 qualified samples each, with every skew transaction
 
 Build details, Vitis traps and the bench checklist are in section 7 of
 [`calibration_sim/README.md`](../../calibration_sim/README.md).
+
+Vitis 2025.1 compatibility (2026-10-28): the app's 2025.2 template calls
+`print_build_info_target`, absent from a 2025.1 BSP. The user-editable
+`src/UserConfig.cmake` includes `cmake/vitis_compat.cmake`, which loads the
+selected BSP helpers and supplies only the missing build-information printer.
+A newer BSP's native helper takes precedence. The generated main CMakeLists,
+platform export, linker script and calibration choices are not patched by this
+compatibility hook. A full compile/link with the installed Vitis 2025.1 A53
+toolchain now succeeds; the ELF is `build/thesis_v3_loop_appl.elf`.
+
+Update 2026-10-28: `adc -cal loop wave 3` selects the dither-only 32767-code w06
+vector, with `dither_mag` gain and fractional `dither_phase` timing. Both the
+regular loop and `adc -cal loop test` require this dither route. Wave 3 is the
+boot default; tone configurations are refused before any capture or actuation.
+Alignment uses only time-domain correlation and pulse templates; no tone fit,
+purity, phase or tone-metric function is called. Rebuild/download
+the ELF first. This extension passes desktop native and Python replay tests;
+the user subsequently ran 300/300 qualified dither-only frames with no rejects
+or skew abort. Frozen offset precision and the new logging/export interface
+remain unverified on the bench. The single-axis procedure and vector are in
+[`CALIBRATION_LIMIT_TEST.md`](../../calibration_loop/CALIBRATION_LIMIT_TEST.md).
+
+For a regular dither-only calibration, load the wave 3 TXT on the DPG, complete
+bring-up, then run the single command `adc -cal loop 300` (wave 3 is the boot
+default). Wave selection and status queries are optional configuration/diagnostic
+commands, not additional calibration stages. The closed loop checks the actuator's zero-step ACK
+before capture. Gain uses `dither_mag`, offset uses polarity-decoupled pulse
+windows, and skew uses `dither_phase`; raw ADC clipping is rejected. The START
+row reports these routes without unused carrier metadata; rows omit `tone_ppm`.
+Gain/offset corrections are digital coefficients;
+skew moves the hardware delay. `loop test baseline` adds a separate frozen
+holdout qualification; it is not required to start the regular calibration.
+
+Normal UART logs show one progress line per 20 accepted frames, important
+events/rejections, a last-20 RESULT and final status. Test baseline/run/step now
+also default to compact phase/window/summary output. PC tools append a one-shot
+`full` option to collect every record while keeping console/log output concise.
+Single-axis CSV/JSON/PNG/SVG files distinguish PRE/TRAIN/HOLD and frozen statistics.
+
+For all frame records and automatic plots, close the serial terminal and run
+from the repository root (replace COM7 with the actual port):
+
+```powershell
+python tools/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+```
+
+The PC sends one calibration command, `adc -cal loop 300 stream`. Every frame
+record, including rejects, is saved to CSV as it arrives, without a RAM-history
+limit. Bulk data is excluded from the compact human UART log. After validating
+row counts/run IDs the PC creates:
+
+- `.csv`: all residuals, coefficients, alignment, clipping and actuator actions.
+- `.json`: final state, settings, counts, statistics and plot paths.
+- `.png` / `.svg`: the entire trace of three residuals, A/B gain/offset corrections
+  and actuator code; all accepted points, 20-frame means and rejection marks.
+- `.log`: concise progress/events and results, without bulk data.
+
+CSV/figures use ADC codes, ps and gain coefficients/percent. Feedback-active
+residuals are identified explicitly. Reused stems get timestamp suffixes to
+preserve previous runs. A timeout retains the CSV records already received.
+
+The optional read-only `adc -cal loop export` snapshot remains available but
+is not needed for this workflow. Its RAM snapshot keeps the latest 4000 rows
+(~2 MiB) until reset or the next regular loop, with dropped-row accounting.
+This snapshot limit does not apply to live PC streaming. Export does not
+capture or write hardware. Test commands do not overwrite the regular-run snapshot.
+
+Full streaming/plotting requires the matching new ELF, pyserial and matplotlib.
+`--no-export` selects UART progress only. Implementation: `butils_loop_results.c`,
+`tools/loop_result_export.py`, `tools/loop_result_plot.py`. Protocol/plot tests:
+`python tools/test_loop_result_export.py`; set `LOOP_C_EXPORT_FIXTURE` to a native
+test_summary.txt to also decode the actual production C packet.
 
 ---
 
@@ -145,7 +229,10 @@ sequenceDiagram
             B-->>L: ack
         end
         L->>B: row callback
-        B->>U: LOOP it=... row
+        B->>B: save row in RAM
+        opt every 20 accepted frames, event or rejection
+            B->>U: progress / diagnostic
+        end
     end
     B->>U: LOOP-END + LOOP-STATUS
 ```
@@ -187,11 +274,12 @@ change the digital correction state.
 
 | Function | File | What it does |
 |---|---|---|
-| `handle_adc_loop_cmd()` | [butils_loop.c:280](butils_loop.c#L280) | parses `adc -cal loop N / open N / status / wave K` |
+| `handle_adc_loop_cmd()` | [butils_loop.c](butils_loop.c) | parses `adc -cal loop N / open N / status / export / wave K` |
 | `board_loop_run()` | [butils_loop.c:203](butils_loop.c#L203) | loads the waveform config, zero-step transaction (closed only), `adc_cal_loop_init()`, `adc_cal_loop_run()`, prints `LOOP-END` |
 | `board_loop_capture()` | [butils_loop.c:104](butils_loop.c#L104) | capture hook: `adc_capture_frame()`, checks `dma_capture_generation()` advanced, copies `RxBufferPtr` |
 | `board_loop_request_steps()` | [butils_loop.c:130](butils_loop.c#L130) | skew hook: calls `adc_skew_transaction()`, returns its `ok` and `code_after` as the ACK |
-| `board_loop_on_row()` | [butils_loop.c:147](butils_loop.c#L147) | row hook: times the compute, prints one `LOOP` line |
+| `board_loop_on_row()` | [butils_loop.c](butils_loop.c) | records every row, prints 20-frame progress and important events/rejections |
+| result recorder/exporter | [butils_loop_results.c](butils_loop_results.c) | bounded RAM history, final snapshot and read-only CSV transport |
 | `adc_skew_transaction()` | [butils.c:3402](butils.c#L3402) | the single sanctioned skew write: neutral init if needed → write + readback → warm-up capture → fresh-frame check |
 | `loop` dispatch | [butils.c:2910](butils.c#L2910) | `adc -cal loop ...` → `handle_adc_loop_cmd()` |
 | include of the adapter | [butils.c:3634](butils.c#L3634) | `#define BUTILS_LOOP_FRAGMENT 1` + `#include "butils_loop.c"` |
@@ -257,7 +345,7 @@ The experiment configuration is runtime-selectable; ordinary `loop N` and
 ### 5.1 Console commands
 
 ```
-adc -cal loop wave [K]   list the known DPG vectors / select K as the one loaded (0 at boot)
+adc -cal loop wave [K]   list/select the DPG vector (3 at boot; dither-only 2/3)
 adc -cal loop open N     N qualified samples, skew measured only (no actuator writes)
 adc -cal loop N          N qualified samples, closed loop (skew moves, ACK-checked)
 adc -cal loop status     state of the last run
@@ -267,12 +355,10 @@ adc -cal loop [help]     usage
 ### 5.2 Before every run
 
 1. Load this ELF, then do the usual bring-up.
-2. Load a tone+dither vector on the DPG. It must be a row of `loop_waveform.h`:
-   - `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5.txt` → `--wave 0` (199.375 MHz)
-   - `waveforms/tone_dither/w06adc_e04_t04_amp5190_tone_m1p5_f399p375.txt` → `--wave 1` (399.375 MHz)
-
-   `waveforms/impulse_dither.txt` and dither-only vectors are **not** supported.
-   A wrong vector is not rejected; the results are just wrong.
+2. Load `waveforms/dither_only/w06adc_e04_t04_amp32767_dither_only.txt` on the DPG
+   and select `--wave 3`. The DAC/ADC rates must remain 2.6/1.3 GS/s.
+   The 32767-code w06 geometry and polarity table must match `loop_waveform.h`.
+   Legacy tone vectors and other dither geometries are not interchangeable.
 3. After a firmware reload, initialise the actuator once on the console:
    `adc -cal skew step 0`. Expect `neutral_initialized=YES` and code 24.
 4. **Close the serial terminal** (Tera Term, PuTTY, the Vitis serial monitor).
@@ -285,28 +371,26 @@ adc -cal loop [help]     usage
 Run from the **repository root**, with `pyserial` installed (`pip install pyserial`):
 
 ```powershell
-cd C:\Users\Hans\Documents\summer2025_research_tiadc
+cd C:\TIDIAC\summer2025_research_tiadc
 
 # quick check, no actuator writes (~20 s)
-python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/open20_w06.log
+python tools/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/open20_dither.log
 
-# full closed loop, 300 samples (~4 min)
-python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300" --out calibration_out/closed_loop/run9_board_w06.log
-
-# same at 399.375 MHz (DPG must be playing the f399p375 vector)
-python tools/board_loop_log.py --uart COM7 --wave 1 --cmd "adc -cal loop 300" --out calibration_out/closed_loop/run10_board_f399.log
+# full closed loop, 300 samples; duration depends on the estimator/bench
+python tools/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop 300" --out calibration_out/closed_loop/run_dither_board.log
 ```
 
 What [`tools/board_loop_log.py`](../../tools/board_loop_log.py) does:
 
 1. Opens the port at 115200 baud.
 2. With `--wave K`, sends `adc -cal loop wave K` and waits for `LOOP-WAVE`.
-3. Sends `--cmd`, prints every console line and writes it to the log.
-4. Stops at `LOOP-STATUS` (success), on a firmware `Command Error`, or after
-   `--timeout` seconds (default 1800).
+3. Sends `--cmd` (default `adc -cal loop 300`), prints compact progress and saves all UART lines.
+4. At `LOOP-STATUS`, automatically reads `loop export` when supported, then writes CSV/JSON.
+   Older verbose rows can be converted directly. Errors/timeouts retain the UART log.
 
-Exit code 0 means the run finished. Otherwise the log ends with `# STOPPED: error`
-or `# STOPPED: timeout`.
+Exit code 0 requires a completed, healthy run and complete history for automatic
+exports. Incomplete runs can still produce diagnostic CSV/JSON with exit 1.
+Transport errors/timeouts retain `# STOPPED: error` or `# STOPPED: timeout` in the log.
 
 ### 5.4 Where the log goes
 
@@ -320,31 +404,35 @@ Run from the repository root, or the default lands in a `calibration_out/` under
 whatever folder you are in. Use a new stem for every run: the script overwrites
 an existing file without asking.
 
-The log is plain text. The first lines are `# cmd:`, `# port:`, `# start:` and
-`# wave:`, followed by the console output exactly as printed.
+The plain-text header contains `# cmd:`, `# port:` and `# start:`. Optional
+waveform selection output and the UART transcript follow it. Matching
+`.csv`/`.json` files are written beside it unless `--no-export` is used.
 
 ### 5.5 Reading the log
 
 ```
-LOOP-SKEW-TXN steps=+0 result=OK code_after=23 stage=-
-LOOP-START mode=closed samples=300 waveform=w06adc_e04_t04_amp5190_tone_m1p5 tone_mhz=199.375 sig_cycles=1276 code=23
-LOOP it=0 st=ok n0= rot= margin_x100= tone_ppm= gain_ppm= doff_mc= skew_cps= corr_a_ppm= corr_b_ppm= offa_mc= offb_mc=
+LOOP-SKEW-TXN steps=+0 result=OK code_after=... stage=-
+LOOP-START mode=closed samples=300 waveform=w06adc_e04_t04_amp32767_dither_only ... export=1 run_id=...
+LOOP-PROGRESS accepted=20/300 window=20 code=... gain_ppm=... offset_mc=... skew_cps=...
 ...
-LOOP it=19 st=ok ... batch=19/20 bmean_cps=17459 act=move:OK-1 code=22
-LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP-PROGRESS accepted=300/300 window=20 code=... gain_ppm=... offset_mc=... skew_cps=...
+LOOP-RESULT window=20 feedback=active gain_ppm=... gain_sd_ppm=... offset_mc=... offset_sd_mc=... skew_cps=... skew_sd_cps=...
 ...
-LOOP-END qualified=300/300 captures=300 rejected=0 code=12 skew_abort=0 elapsed_ms=236199 compute_ms_avg=678
-LOOP-STATUS mode=closed waveform=... qualified=300 captures=300 rejected=0 polarity=-1 code=12 skew_abort=0 ...
+LOOP-END qualified=300/300 captures=... rejected=... code=... skew_abort=0 elapsed_ms=... compute_ms_avg=...
+LOOP-STATUS mode=closed waveform=... qualified=300 captures=... rejected=... code=... ...
 ```
 
 `xil_printf` has no floating point, so values are scaled integers, or `nan`.
 
 | Field | Meaning | Converged value |
 |---|---|---|
-| `st` | `ok` or the reject reason (`margin`, `events`, `a_nan`, `b_nan`, `skew_range`, `gain_range`, `capture`) | `ok` |
+| `gain_ppm` in PROGRESS/RESULT | controlled dither magnitude ratio error × 1e6; signed window mean | near 0 |
+| `offset_mc` in PROGRESS/RESULT | signed offset residual mean × 1000 ADC codes | near 0 |
+| `*_sd_*` in RESULT | sample SD, same scaling as the corresponding mean | reported, not a bias |
+| `st` in diagnostic/test rows | `ok` or the reject reason (`margin`, `events`, `a_nan`, `b_nan`, `skew_range`, `gain_range`, `capture`, `clipping`) | `ok` |
 | `margin_x100` | alignment margin × 100 | ~1700 for `w06`; much lower means the wrong vector |
-| `tone_ppm` | (tone ratio − 1) × 1e6, the controlled gain observable | → 0 |
-| `gain_ppm` | (dither g_B/g_A − 1) × 1e6, not controlled | stays at about +12000 by design |
+| `used_gain_ppm` in diagnostic/test rows | controlled dither magnitude ratio error × 1e6 | near 0 |
+| `gain_ppm` in diagnostic/test rows | older pulse-window gain cross-check | not the controlled magnitude observable |
 | `doff_mc` | (offset_B − offset_A) × 1000, in codes | → 0 |
 | `skew_cps` | skew in 0.01 ps (`-706` = −7.06 ps) | inside ±1000 |
 | `corr_*_ppm`, `off*_mc` | applied gain correction − 1 (ppm), offset state × 1000 | settle |
@@ -352,7 +440,7 @@ LOOP-STATUS mode=closed waveform=... qualified=300 captures=300 rejected=0 polar
 
 Things to check first:
 
-- **`LOOP-START`**: `waveform=` and `tone_mhz=` match the vector on the DPG.
+- **`LOOP-START`**: `waveform=` matches the dither-only vector on the DPG.
 - **`LOOP-END`**: `skew_abort=0`, `qualified=N/N`.
 - **Skew transactions**: every `LOOP-SKEW-TXN` has `result=OK`.
 - **Actuator code**: `code=-1` in an open run means the actuator was not

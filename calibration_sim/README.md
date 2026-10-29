@@ -476,11 +476,13 @@ relative to `firmware/thesis_v3_loop_appl/src/`.
 > `SET_BIT` redefinition in `ethernet.c`. It has **not** been built in the IDE or
 > run on the board yet. `thesis_v3_500mhz_appl` is untouched.
 >
-> **Platform version.** The lab uses Vitis 2025.1. `final_ver_1` was regenerated in
-> 2025.2, because the 2025.2 app template calls `print_build_info_target`, which
-> the 2025.1 export lacks. This changed many tracked BSP files. Do not push them to
-> `main` without agreeing on a version. `git checkout -- firmware/final_ver_1`
-> restores the 2025.1 platform.
+> **Platform compatibility (updated 2026-10-28).** The lab uses Vitis 2025.1.
+> The 2025.2 app template calls `print_build_info_target`, absent from the
+> 2025.1 export. The application now loads `cmake/vitis_compat.cmake` from the
+> user-editable `src/UserConfig.cmake`; it supplies the missing metadata printer
+> only when the BSP has none. A full Vitis 2025.1 compile/link has succeeded.
+> Keep the generated main CMakeLists and platform unchanged; regenerating the
+> BSP in a different Vitis version is not needed for this error.
 
 ### Host loop vs on-board loop
 
@@ -526,6 +528,7 @@ firmware/thesis_v3_loop_appl/
 │                       printing) + handle_adc_skew_transaction_cmd() (same SKEW-TXN output) ·
 │                       #define BUTILS_LOOP_FRAGMENT + #include "butils_loop.c" at the end
 ├── butils_loop.c     board adapter, #included by butils.c like butils_calibration.c
+├── butils_loop_results.c  compact progress, saved RAM history and read-only export
 ├── loop_waveform.h   config of the vector on the DPG
 ├── vitis-comp.json, _ide/              Vitis-generated
 └── src/
@@ -559,11 +562,18 @@ firmware/thesis_v3_loop_appl/
 adc -cal loop N        N qualified samples: gain/offset per frame, skew batch decision
 adc -cal loop open N   same, skew measured only (no actuator writes)
 adc -cal loop status   state of the last run
+adc -cal loop export   download saved regular-loop results; no capture or writes
 adc -cal loop [help]   usage and the waveform the loop assumes
 ```
 
+As of 2026-10-28, `adc -cal loop wave 3` selects the dither-only w06 vector
+at 32767 DAC codes. `adc -cal loop test` then uses `dither_mag` gain and
+`dither_phase` timing with independent PRE/TRAIN/HOLD phases. This extension is
+desktop-tested, not yet bench-validated; rebuild/download the ELF and follow
+[`CALIBRATION_LIMIT_TEST.md`](../calibration_loop/CALIBRATION_LIMIT_TEST.md).
+
 - N is 1..2000, and every run starts from a fresh state.
-- After a bring-up, run `adc -cal skew step 0` first.
+- The closed-loop command performs its own zero-step actuator initialization/check.
 - A closed run learns the actuator code from a zero-step ACK and refuses to start
   if that transaction fails. An open run only reads the code over SPI.
 - Every iteration costs at least the 100 ms settle in `adc_capture_frame()` plus
@@ -574,9 +584,21 @@ adc -cal loop [help]   usage and the waveform the loop assumes
 | capture | `adc_capture_frame()`, then the generation must have advanced, then copy `RxBufferPtr`. 4095 bytes = 2047 words, and the odd byte is dropped as on the host. |
 | `request_steps(delta)` | `adc_skew_transaction(delta)`. Any `RECOVERY_REQUIRED` stage gives `ok = 0` and latches skew off. Prints a `LOOP-SKEW-TXN` line. |
 | state | `static adc_cal_loop_t g_board_loop`, ~570 KB in `.bss` (DDR), never on the 64 KB stack |
-| config | `loop_waveform.h`: `w06adc_e04_t04_amp5190_tone_m1p5` = host defaults with edge 4 / top 4 DAC samples and 5190 LSB, polarity seed 20260725. It must match the DPG, or the margin collapses and the run stops after 20 rejects. |
+| config | `loop_waveform.h`: boot default `w06adc_e04_t04_amp32767_dither_only`, edge/top 4/4 DAC samples, polarity seed 20260725. Must match the actual DPG vector. |
 
 ### Output
+
+Normal runs now print one PROGRESS per 20 accepted frames, a last-20 RESULT,
+events/rejections and final status. Every row is retained in a separate bounded
+RAM snapshot (latest 4000 rows; overwritten rows are reported). PC command
+`python tools/board_loop_log.py --uart COM7 --out calibration_out/run.log`
+calibrates 300 frames and saves `.log`, physical-unit `.csv` and result `.json`.
+`--cmd "adc -cal loop export"` downloads the saved regular run without another
+calibration. Export does not write hardware; the new interface is offline-tested
+and built with Vitis, not yet bench-tested. See the app README for details.
+
+The following verbose format describes historical tone reference logs, not the
+current normal dither-only output:
 
 `xil_printf` has no floating point and no `%+d`, so values are scaled integers,
 or `nan` when not finite.
@@ -604,7 +626,7 @@ LOOP-END qualified= captures= rejected= code= skew_abort= elapsed_ms= compute_ms
 |---|---|---|
 | "Invalid Template 'empty_application'" (lopper fails) | Smart App Control blocks `cc1.exe` loading `libisl-23.dll` (Code Integrity events 3033/3077) | allow the Vitis tools |
 | "location contains spaces" | a space in the component name field | retype the name |
-| `Unknown CMake command "print_build_info_target"` | 2025.2 app template on a 2025.1 platform | Regenerate BSP + Build `final_ver_1` in 2025.2 |
+| `Unknown CMake command "print_build_info_target"` | 2025.2 app template on a 2025.1 platform | Keep the user-config include of `../cmake/vitis_compat.cmake`; rebuild the app with the existing BSP |
 | "opening dependency file ... No such file or directory" | object paths over the 260-character MAX_PATH (264 for a platform named `final_ver_1_v2025_2`); the MinGW gcc ignores `LongPathsEnabled` | keep platform names short (`final_ver_1` builds) |
 
 The app itself: `File → New Component → Application`, name `thesis_v3_loop_appl`,
@@ -634,8 +656,10 @@ Empty Application (C), no sources.
   actuator, since it includes the warm-up capture and the freshness check.
 - The loop's corrections live only in `g_board_loop.state`. They are not applied to
   `RxBufferPtr` or to any other `adc -cal` stage.
-- Only the tone route is ported. A dither-only vector needs `dither_raw.py`, which
-  is not ported, and every frame on it would be rejected.
+- The current board calibration requires dither-only wave 2 or 3. Its dedicated path
+  uses pulse correlation, polarity-decoupled flat-top offset, dither magnitude
+  gain and fractional pulse phase. Tone fit/purity calls are bypassed entirely;
+  the historical tone implementation is retained only for offline regression.
 - Do not commit the ELF or build outputs.
 
 ### Open items

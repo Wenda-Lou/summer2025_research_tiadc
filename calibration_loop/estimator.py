@@ -103,7 +103,8 @@ def split_at(words: np.ndarray, rotation: int, group: int = 8, half: int = 4) ->
     }
 
 
-def deframe(words: np.ndarray, group: int = 8, half: int = 4) -> dict:
+def deframe(words: np.ndarray, group: int = 8, half: int = 4,
+            tone_free: bool = False) -> dict:
     """Find the [A A A A B B B B] group boundary in the word stream.
 
     The DMA is restarted for every capture and the AXI-Stream from the JESD link
@@ -139,7 +140,8 @@ def deframe(words: np.ndarray, group: int = 8, half: int = 4) -> dict:
             cand = split_at(words, rot, group, half)
         except ValueError:
             continue
-        cand["purity"] = _tone_purity(cand["ch_a"]) + _tone_purity(cand["ch_b"])
+        cand["purity"] = 0.0 if tone_free else (
+            _tone_purity(cand["ch_a"]) + _tone_purity(cand["ch_b"]))
         cand["abs_corr"] = abs(cand["corr"])
         # Primary key: |correlation| (physical).  Tie-break: tone purity.
         cand["score"] = cand["abs_corr"] + 1e-3 * cand["purity"]
@@ -158,7 +160,8 @@ def deframe(words: np.ndarray, group: int = 8, half: int = 4) -> dict:
     lagged = shifted > aligned
     if lagged:
         best = split_at(words, (best["rotation"] + half) % group, group, half)
-        best["purity"] = _tone_purity(best["ch_a"]) + _tone_purity(best["ch_b"])
+        best["purity"] = 0.0 if tone_free else (
+            _tone_purity(best["ch_a"]) + _tone_purity(best["ch_b"]))
         best["abs_corr"] = abs(best["corr"])
         best["score"] = best["abs_corr"] + 1e-3 * best["purity"]
 
@@ -170,6 +173,7 @@ def prepare_capture(
     raw_bytes: bytes | np.ndarray,
     cfg: DitherConfig,
     signature: dict | None = None,
+    tone_free: bool = False,
 ) -> dict:
     """Turn one raw DMA buffer into two canonically ordered, upright channels.
 
@@ -206,9 +210,7 @@ def prepare_capture(
     in the ordering depends on it any more.
     """
     words = unpack_words(raw_bytes)
-    f0 = cfg.sig_cycles / cfg.n_adc_period
-
-    view = deframe(words)
+    view = deframe(words, tone_free=tone_free)
     a, b = view["ch_a"], view["ch_b"]
 
     # One branch is inverted; normalise it upright so both channels share one
@@ -222,8 +224,13 @@ def prepare_capture(
     # implementation ran them on every candidate rotation, which is both wasteful
     # and the reason the alignment it returned could belong to a stream that was
     # later discarded.
-    align_a = align_to_loop(fit_tone(a, f0, refine=True)["residual"], cfg)
-    align_b = align_to_loop(fit_tone(b, f0, refine=True)["residual"], cfg)
+    if tone_free:
+        align_a = align_to_loop(a, cfg)
+        align_b = align_to_loop(b, cfg)
+    else:
+        f0 = cfg.sig_cycles / cfg.n_adc_period
+        align_a = align_to_loop(fit_tone(a, f0, refine=True)["residual"], cfg)
+        align_b = align_to_loop(fit_tone(b, f0, refine=True)["residual"], cfg)
 
     # Both channels see the same DPG loop, so one alignment serves both; take
     # whichever correlation peak was stronger.
@@ -439,6 +446,7 @@ def estimate_channel(
     polarity_sign: float = 1.0,
     pin_polarity: bool = False,
     accumulator: "JointEventAccumulator | None" = None,
+    tone_free: bool = False,
 ) -> ChannelEstimate:
     """Extract offset, gain and skew of one channel from one capture.
 
@@ -480,13 +488,22 @@ def estimate_channel(
     dd = float(d @ d)
     dpdp = float(dprime @ dprime)
 
-    f0 = cfg.sig_cycles / cfg.n_adc_period
     est = ChannelEstimate()
     dither_hat = np.zeros_like(y)
     n0_used = None if n0 is None else int(n0)
 
+    if tone_free:
+        passes = 1
     for pass_index in range(max(1, passes)):
-        fit = fit_tone(y - dither_hat, f0, refine=refine_frequency)
+        if tone_free:
+            # Pulse statistics use the raw stream. No carrier fit, spectral
+            # purity or tone-dependent failure can enter the strict path.
+            fit = {"residual": y - y.mean(), "dc": float(y.mean()),
+                   "tone": np.zeros_like(y), "amplitude": np.nan,
+                   "phase": np.nan, "f0": np.nan}
+        else:
+            f0 = cfg.sig_cycles / cfg.n_adc_period
+            fit = fit_tone(y - dither_hat, f0, refine=refine_frequency)
 
         if n0_used is None:
             align = align_to_loop(fit["residual"], cfg)
@@ -497,7 +514,7 @@ def estimate_channel(
         # can hold common to both channels.  A time shift dt multiplies the tone
         # by exp(-j*2*pi*f*dt), so this phase is a direct, pulse-shape-independent
         # timing observable -- unlike the template derivative used below.
-        phase_fit = fit if f0_override is None else fit_tone(
+        phase_fit = fit if tone_free or f0_override is None else fit_tone(
             y - dither_hat, f0_override, refine=False,
         )
         est.phase_rad = float(phase_fit["phase"])
@@ -512,7 +529,7 @@ def estimate_channel(
         # kept, because DC is exactly what the offset statistic measures.  With
         # it off, the raw record goes through untouched -- the un-cancelled
         # baseline used for the convergence-speed comparison.
-        resid = (y - fit["tone"]) if cancel_signal else y
+        resid = (y - fit["tone"]) if cancel_signal and not tone_free else y
 
         ks, starts = visible_events(n0_used, y.size, cfg, m_lo, m_hi)
         est.n_events_used = int(ks.size)
@@ -797,6 +814,7 @@ def estimate_block(
     skew_prior_samples: float = 0.0,
     polarity_sign: float = 1.0,
     pin_polarity: bool = False,
+    tone_free: bool = False,
 ) -> BlockEstimate:
     """Estimate both channels of the pair from one capture.
 
@@ -811,7 +829,8 @@ def estimate_block(
     """
     # Pass 1: rough estimate of channel A, which also fixes the loop alignment.
     a = estimate_channel(ch_a, cfg, cancel_signal=cancel_signal, n0=n0,
-                         polarity_sign=polarity_sign, pin_polarity=pin_polarity)
+                         polarity_sign=polarity_sign, pin_polarity=pin_polarity,
+                         tone_free=tone_free)
 
     # The ADC clock has a fixed but unknown sub-sample phase with respect to the
     # DPG loop, and it shows up identically in both channels.  Only the
@@ -823,12 +842,12 @@ def estimate_block(
     a = estimate_channel(
         ch_a, cfg, cancel_signal=cancel_signal, n0=a.align_n0,
         skew_prior_samples=common, polarity_sign=polarity_sign,
-        pin_polarity=pin_polarity,
+        pin_polarity=pin_polarity, tone_free=tone_free,
     )
     b = estimate_channel(
         ch_b, cfg, cancel_signal=cancel_signal, n0=a.align_n0,
         skew_prior_samples=common + skew_prior_samples, polarity_sign=polarity_sign,
-        pin_polarity=pin_polarity,
+        pin_polarity=pin_polarity, tone_free=tone_free,
     )
 
     out = BlockEstimate(ch_a=a, ch_b=b)
@@ -838,6 +857,10 @@ def estimate_block(
             and abs(a.tone_amplitude) > 1e-9):
         out.tone_ratio = abs(b.tone_amplitude) / abs(a.tone_amplitude)
     out.offset_mismatch_codes = b.offset_codes - a.offset_codes
+    if tone_free:
+        out.skew_source = "dither-phase"
+        out.skew_centroid_ps = (b.centroid_samples - a.centroid_samples) * 1e12 / cfg.fs_adc
+        return out
 
     # --- skew, from shape-independent observables ---------------------------
     #

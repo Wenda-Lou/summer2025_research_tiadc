@@ -1,8 +1,21 @@
 # calibration_loop_c
 
+2026-10-28: the board now enables `options.reference_free` by default. This
+branch uses only simultaneous A/B broadband dither samples and the ADC sample
+rate. It does not build/use `loop_ref`, pulse geometry, polarity tables, or tone
+fits. `adc_calibration_loop_blind.h` estimates relative gain from spectral power,
+relative sampling delay from cross-spectrum phase slope (positive B later), and
+relative DC from `mean(B) - gain_ratio * mean(A)`. Common absolute errors are
+unidentifiable. Spectra must have adequate broadband excitation and compatible
+channel transfer shapes; constant/single-frequency/weak/incoherent inputs are
+rejected. Historical template/tone modes remain for replay, not board defaults.
+Tests use unknown-to-estimator waveforms, corrupted waveform metadata, signed
+known delays, three pulse widths/amplitudes, fresh frozen holdouts and independent
+noise rejection. Bench validation of this new estimator is still pending.
+
 C port of the host calibration loop (`calibration_loop/`), as the first step of
 moving the loop from the PC to the Zynq ARM core. Hardware-independent C11: no
-Xilinx headers, no heap, libm only. It is not yet part of the firmware build. It is
+Xilinx headers, no heap, libm only. Used by `thesis_v3_loop_appl` on the A53 and
 built and tested by `calibration_sim`.
 
 | File | Contents |
@@ -16,6 +29,25 @@ The tone route, which is the host default:
 `cancel_signal=True`, `gain_observable="tone"` (with the same fallback to
 `"dither"`), `skew_observable="phase"`.
 
+With `options.tone_free=1`, the controller selects sign-free per-event
+`dither_mag` gain and fractional-template `dither_phase` timing from
+`dither_raw.py` as present in commit `d22d23ff6753b4503c54157529ad8396483cb006`.
+That file's dither equations are unchanged. Strict dither preparation uses only
+time-domain channel correlation and the pulse template. It does not call tone
+purity, carrier fitting, tone subtraction, or tone phase reconstruction.
+Offset comes from the polarity-decoupled flat-top profile, not a tone-fit DC.
+Tone cancellation and tone gates are disabled; missing dither
+observables reject the frame without falling back to a tone fit. Tone gain and
+timing outputs are NaN in this mode. Offset keeps the polarity-decoupled flat-top
+observable. The route-specific batch uses median/MAD rejection and shares the
+same ACK and direction latch. `skew_fold_ps` is a diagnostic cross-check only.
+The firmware's loop and single-axis commands require dither-only wave 2 or 3.
+Wave 3 is the boot default, at DAC full-scale peak (32767 codes); wave 2 retains
+5190 codes. Tone selections are refused before capture or actuation. ADC
+clipping is rejected independently of the legitimate full-scale DAC peaks.
+Historical tone code remains for offline regression and is not the board's
+calibration route.
+
 | Python | C |
 |---|---|
 | `DitherConfig`, `validate()` | `adc_cal_loop_config_t`, `adc_cal_loop_config_validate()` |
@@ -27,7 +59,7 @@ The tone route, which is the host default:
 | `skew_batch`, `SkewActuator.error_to_steps` | `adc_cal_loop_skew_batch()`, `adc_cal_loop_error_to_steps()` |
 | `CalibrationLoop.step/_reject_reason/_skew_decision/run` | `adc_cal_loop_step()`, `adc_cal_loop_run()` |
 
-Not ported: the tone-free routes (`dither_raw.py`, `--tone-free`), the joint
+Not ported: the joint
 multi-frame accumulator, and the SNDR/SFDR/difference-spur metrics in
 `metrics.py`. Those metrics are logged by the host but are not used by the loop.
 
@@ -68,6 +100,11 @@ Optional post-ADC offset injection, raw-rail rejection and a tone requirement
 are enabled only for experiments. See
 [`CALIBRATION_LIMIT_TEST.md`](../calibration_loop/CALIBRATION_LIMIT_TEST.md).
 
+`python tools/test_dither_only.py` runs with every tone fit, purity and
+carrier-metric function patched to raise. Native tests also count every tone
+fit/purity call and require zero during dither calibration. Both paths verify
+that changing unused carrier metadata leaves results unchanged.
+
 ```sh
 cd calibration_sim
 cmake -S . -B build && cmake --build build
@@ -76,9 +113,15 @@ python ../calibration_loop_c/export_golden.py         # needs numpy; writes outp
 ./build/adc_cal_sim --loop-golden output/loop_golden.txt
 ```
 
-The golden file is about 1.2 MB and is generated, so do not commit it. Four cases:
+The golden file is generated, so do not commit it. Tone cases:
 `model_nominal`, `model_mismatch`, `batch_honest`, and `batch_lying` (the direction
 latch must fire after exactly one move).
+Five additional dither-only cases cover model convergence, acquisition from
++200 ps, honest batch actuation and a reversed actuator. Version 2 records the
+tone-free option, dither magnitudes, phases, both timing routes and the timing
+actually used. Unsupported tone diagnostics are NaN, while the driven estimates,
+controller states and actions are compared with Python. The reader also accepts
+version 1 files. The full-scale DAC case explicitly models ADC headroom.
 
 Result on 2026-09-30 (gcc 15, WSL): 227/227 pass under ASan and UBSan. Across all
 140 replayed captures, the largest relative deviation between C and Python in any

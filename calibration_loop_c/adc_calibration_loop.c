@@ -5,12 +5,22 @@
 #include <string.h>
 
 /*
- * Port of calibration_loop/{dither,estimator,loop}.py, tone route.  Function
+ * Port of calibration_loop/{dither,dither_raw,estimator,loop}.py. Function
  * names follow the Python ones so the two can be read side by side; comments
  * only note where the C differs from a line-for-line translation.
  */
 
 #define LOOP_PI 3.14159265358979323846
+
+#ifdef ADC_CAL_SOFTWARE_SIMULATION
+static unsigned g_test_tone_calls;
+unsigned adc_cal_loop_test_tone_calls(int reset)
+{
+    const unsigned calls = g_test_tone_calls;
+    if (reset) g_test_tone_calls = 0U;
+    return calls;
+}
+#endif
 
 /* Function forms: the libm macros warn under -Wconversion on some toolchains. */
 static int loop_isfinite(double value)
@@ -93,7 +103,7 @@ static double pulse_len(const adc_cal_loop_config_t *cfg)
 
 static double a_sine(const adc_cal_loop_config_t *cfg)
 {
-    return pow(10.0, cfg->amp_dbfs / 20.0);
+    return cfg->sig_cycles == 0 ? 0.0 : pow(10.0, cfg->amp_dbfs / 20.0);
 }
 
 static double a_dither(const adc_cal_loop_config_t *cfg)
@@ -155,7 +165,7 @@ int adc_cal_loop_config_validate(const adc_cal_loop_config_t *cfg, const char **
         }
     }
 
-    if (why == NULL) {
+    if (why == NULL && a_sine(cfg) * ADC_CAL_LOOP_DAC_FULL_SCALE >= 0.5) {
         /* tone_phase_coherence(15) <= 0.3 */
         const double step = fmod((double)cfg->sig_cycles * (double)slot_period(cfg) /
                                  (double)adc_cal_loop_n_adc_period(cfg), 1.0);
@@ -341,6 +351,9 @@ static int tone_solve(const double *y, size_t n, double freq, double coef[3], do
 int adc_cal_loop_fit_tone(const double *y, size_t n, double f0, int refine,
                           adc_cal_loop_tone_fit_t *fit)
 {
+#ifdef ADC_CAL_SOFTWARE_SIMULATION
+    g_test_tone_calls++;
+#endif
     double coef[3];
     double sse;
 
@@ -447,6 +460,9 @@ static int split_at(const int32_t *words, int n_words, int rotation, double *a, 
  * spectrum.  Plain DFT; it is only evaluated when it can decide a tie. */
 static double tone_purity(const double *x, int n, double *scratch)
 {
+#ifdef ADC_CAL_SOFTWARE_SIMULATION
+    g_test_tone_calls++;
+#endif
     const double mu = mean_of(x, n);
     int any = 0;
     double total = 0.0;
@@ -580,7 +596,6 @@ int adc_cal_loop_prepare_capture(adc_cal_loop_t *loop, const uint8_t *raw, size_
     adc_cal_loop_tone_fit_t fit;
     align_result_t align_a;
     align_result_t align_b;
-    const double f0 = (double)loop->cfg.sig_cycles / (double)loop->n_loop;
 
     if (raw == NULL || prep == NULL || n_bytes / 2 > ADC_CAL_LOOP_MAX_WORDS) {
         return -1;
@@ -608,7 +623,7 @@ int adc_cal_loop_prepare_capture(adc_cal_loop_t *loop, const uint8_t *raw, size_
         score = abs_corr[rot];
         /* Purity is at most 2, so a candidate more than 2e-3 below the best
          * |corr| can never win; only evaluate the spectra when it could. */
-        if (abs_corr[rot] >= best_abs - 2.5e-3) {
+        if (!loop->opt.tone_free && abs_corr[rot] >= best_abs - 2.5e-3) {
             split_at(loop->words, n_words, rot, loop->work_y, loop->work_r);
             score += 1e-3 * (tone_purity(loop->work_y, n_split[rot], loop->cal_a) +
                              tone_purity(loop->work_r, n_split[rot], loop->cal_a));
@@ -633,26 +648,38 @@ int adc_cal_loop_prepare_capture(adc_cal_loop_t *loop, const uint8_t *raw, size_
         }
     }
     corr = corr_of(loop->ch_a, loop->ch_b, n);
+    /* Match the existing de-framer's channel-orientation convention before
+     * either estimator. Opposite analog polarity is not a waveform reference.
+     * Keep prep.corr signed so diagnostics retain the measured orientation. */
     if (corr < 0.0) {
         for (int i = 0; i < n; ++i) {
             loop->ch_b[i] = -loop->ch_b[i];
         }
     }
-
-    if (adc_cal_loop_fit_tone(loop->ch_a, (size_t)n, f0, 1, &fit) != 0) {
-        return -3;
+    if (loop->opt.reference_free) {
+        prep->n_samples = (size_t)n;
+        prep->rotation = best;
+        prep->corr = corr;
+        prep->n0 = prep->n0_natural = -1; /* no waveform position exists */
+        prep->align_margin = fabs(corr) > 0.0 ?
+            1.0 / fmax(1.0 - fabs(corr), 1e-6) : 0.0;
+        prep->sign_a = prep->sign_b = 1.0;
+        return 0;
     }
-    for (int i = 0; i < n; ++i) {
-        loop->work_r[i] = loop->ch_a[i] - (tone_at(&fit, (size_t)i) + fit.dc);
+    if (loop->opt.tone_free) {
+        align_to_loop(loop, loop->ch_a, n, loop->n0_override, &align_a);
+        align_to_loop(loop, loop->ch_b, n, loop->n0_override, &align_b);
+    } else {
+        const double f0 = (double)loop->cfg.sig_cycles / (double)loop->n_loop;
+        if (adc_cal_loop_fit_tone(loop->ch_a, (size_t)n, f0, 1, &fit) != 0) return -3;
+        for (int i = 0; i < n; ++i)
+            loop->work_r[i] = loop->ch_a[i] - (tone_at(&fit, (size_t)i) + fit.dc);
+        align_to_loop(loop, loop->work_r, n, loop->n0_override, &align_a);
+        if (adc_cal_loop_fit_tone(loop->ch_b, (size_t)n, f0, 1, &fit) != 0) return -3;
+        for (int i = 0; i < n; ++i)
+            loop->work_r[i] = loop->ch_b[i] - (tone_at(&fit, (size_t)i) + fit.dc);
+        align_to_loop(loop, loop->work_r, n, loop->n0_override, &align_b);
     }
-    align_to_loop(loop, loop->work_r, n, loop->n0_override, &align_a);
-    if (adc_cal_loop_fit_tone(loop->ch_b, (size_t)n, f0, 1, &fit) != 0) {
-        return -3;
-    }
-    for (int i = 0; i < n; ++i) {
-        loop->work_r[i] = loop->ch_b[i] - (tone_at(&fit, (size_t)i) + fit.dc);
-    }
-    align_to_loop(loop, loop->work_r, n, loop->n0_override, &align_b);
 
     prep->n_samples = (size_t)n;
     prep->rotation = best;
@@ -792,13 +819,12 @@ static int estimate_channel(adc_cal_loop_t *loop, const double *y, int n, int n0
                             int cancel_signal, adc_cal_loop_channel_estimate_t *est)
 {
     const adc_cal_loop_config_t *cfg = &loop->cfg;
-    const int passes = 2;
+    const int passes = loop->opt.tone_free ? 1 : 2;
     const int m_lo = template_m_lo();
     const int m_hi = template_m_hi(cfg);
     const int W = m_hi - m_lo + 1;
     const double er = edge_r(cfg);
     const double tw = top_w(cfg);
-    const double f0 = (double)cfg->sig_cycles / (double)loop->n_loop;
     double d[ADC_CAL_LOOP_MAX_WINDOW];
     double dp[ADC_CAL_LOOP_MAX_WINDOW];
     double v[ADC_CAL_LOOP_MAX_WINDOW];
@@ -828,36 +854,49 @@ static int estimate_channel(adc_cal_loop_t *loop, const double *y, int n, int n0
         double gain;
 
         est->hat_gain = hat;
-        for (int i = 0; i < n; ++i) {
-            ytmp[i] = y[i] - (loop_isfinite(hat) ? dither_at(loop, i, n0, hat, polarity_sign) : 0.0);
-        }
-        if (adc_cal_loop_fit_tone(ytmp, (size_t)n, f0, 1, &fit) != 0) {
-            return -1;
-        }
-        est->phase_rad = fit.phase;
-        est->tone_f0 = fit.f0;
-        est->align_n0 = n0;
-        est->offset_record_codes = fit.dc;
-        est->tone_amplitude = fit.amplitude;
-        {
-            double s = 0.0;
-            double s2 = 0.0;
+        if (loop->opt.tone_free) {
+            const double mu = mean_of(y, n);
+            double ss = 0.0;
+            est->align_n0 = n0;
+            est->offset_record_codes = mu;
             for (int i = 0; i < n; ++i) {
-                const double r = ytmp[i] - (tone_at(&fit, (size_t)i) + fit.dc);
-                s += r;
+                resid[i] = y[i];
+                ss += (y[i] - mu) * (y[i] - mu);
             }
-            s /= (double)n;
+            est->residual_rms = sqrt(ss / (double)n);
+        } else {
+            const double f0 = (double)cfg->sig_cycles / (double)loop->n_loop;
             for (int i = 0; i < n; ++i) {
-                const double r = ytmp[i] - (tone_at(&fit, (size_t)i) + fit.dc) - s;
-                s2 += r * r;
+                ytmp[i] = y[i] - (loop_isfinite(hat) ? dither_at(loop, i, n0, hat, polarity_sign) : 0.0);
             }
-            est->residual_rms = sqrt(s2 / (double)n);
-        }
+            if (adc_cal_loop_fit_tone(ytmp, (size_t)n, f0, 1, &fit) != 0) {
+                return -1;
+            }
+            est->phase_rad = fit.phase;
+            est->tone_f0 = fit.f0;
+            est->align_n0 = n0;
+            est->offset_record_codes = fit.dc;
+            est->tone_amplitude = fit.amplitude;
+            {
+                double s = 0.0;
+                double s2 = 0.0;
+                for (int i = 0; i < n; ++i) {
+                    const double r = ytmp[i] - (tone_at(&fit, (size_t)i) + fit.dc);
+                    s += r;
+                }
+                s /= (double)n;
+                for (int i = 0; i < n; ++i) {
+                    const double r = ytmp[i] - (tone_at(&fit, (size_t)i) + fit.dc) - s;
+                    s2 += r * r;
+                }
+                est->residual_rms = sqrt(s2 / (double)n);
+            }
 
-        /* Cancellation removes the fitted tone from the *original* record and
-         * keeps DC, exactly like the host. */
-        for (int i = 0; i < n; ++i) {
-            resid[i] = cancel_signal ? y[i] - tone_at(&fit, (size_t)i) : y[i];
+            /* Cancellation removes the fitted tone from the *original* record and
+             * keeps DC, exactly like the host. */
+            for (int i = 0; i < n; ++i) {
+                resid[i] = cancel_signal ? y[i] - tone_at(&fit, (size_t)i) : y[i];
+            }
         }
 
         n_ev = visible_events(loop, n0, n, m_lo, m_hi, ks, starts);
@@ -973,16 +1012,134 @@ static double wrap_to_half_period(double delta, double f0)
     return delta - period * nearbyint(delta / period);
 }
 
+/* dither_raw.replica_phase(): fractional template fit, with the same basin
+ * guard and Newton polish as Python. Positive phase means sampling later. */
+static double replica_phase(const double *rep, int m_lo, int width,
+                             const adc_cal_loop_config_t *cfg)
+{
+    double den = 0.0, coarse = 0.0;
+    double low = rep[0], high = rep[0];
+    double lo, hi, best, best_res = DBL_MAX;
+    int grid[3];
+    for (int i = 0; i < width; ++i) {
+        const double dp = adc_cal_loop_pulse_derivative((double)(m_lo + i), edge_r(cfg), top_w(cfg));
+        den += dp * dp;
+        coarse += rep[i] * dp;
+        low = fmin(low, rep[i]); high = fmax(high, rep[i]);
+    }
+    if (!loop_isfinite(high - low) || high <= low || den <= 0.0) return NAN;
+    coarse /= den;
+    if (!loop_isfinite(coarse) || fabs(coarse) > 1.0) {
+        lo = -0.75; hi = 1.75; best = 0.0;
+        grid[0] = 60; grid[1] = grid[2] = 40;
+    } else {
+        lo = coarse - 0.35; hi = coarse + 0.35; best = coarse;
+        grid[0] = 40; grid[1] = grid[2] = 30;
+    }
+    for (int pass = 0; pass < 3; ++pass) {
+        const double span = hi - lo;
+        for (int j = 0; j < grid[pass]; ++j) {
+            const double phi = lo + span * (double)j / (double)(grid[pass] - 1);
+            double tt = 0.0, rt = 0.0, res = 0.0;
+            for (int i = 0; i < width; ++i) {
+                const double t = adc_cal_loop_pulse((double)(m_lo + i) + phi, edge_r(cfg), top_w(cfg));
+                tt += t * t; rt += rep[i] * t;
+            }
+            if (tt <= 0.0) continue;
+            for (int i = 0; i < width; ++i) {
+                const double t = adc_cal_loop_pulse((double)(m_lo + i) + phi, edge_r(cfg), top_w(cfg));
+                const double r = rep[i] - rt / tt * t;
+                res += r * r;
+            }
+            if (res < best_res) { best_res = res; best = phi; }
+        }
+        lo = best - span / (double)grid[pass];
+        hi = best + span / (double)grid[pass];
+    }
+    if (best_res == DBL_MAX) return NAN;
+    for (int pass = 0; pass < 4; ++pass) {
+        double tt = 0.0, rt = 0.0, dd = 0.0, rd = 0.0, td = 0.0;
+        double gain, step;
+        for (int i = 0; i < width; ++i) {
+            const double x = (double)(m_lo + i) + best;
+            const double t = adc_cal_loop_pulse(x, edge_r(cfg), top_w(cfg));
+            const double d = adc_cal_loop_pulse_derivative(x, edge_r(cfg), top_w(cfg));
+            tt += t * t; rt += rep[i] * t; dd += d * d;
+            rd += rep[i] * d; td += t * d;
+        }
+        if (tt <= 0.0 || dd <= 0.0) break;
+        gain = rt / tt;
+        if (fabs(gain) < 1e-12) break;
+        step = (rd - gain * td) / (gain * dd);
+        best += step;
+        if (fabs(step) < 1e-5) break;
+    }
+    return best;
+}
+
+/* Fold both corrected streams at A's alignment and polarity. No per-channel
+ * alignment, stored DC label, or sign change of the captured data is used. */
+static void measure_dither(adc_cal_loop_t *loop, const double *a, const double *b,
+                            int n, adc_cal_loop_block_estimate_t *out)
+{
+    const adc_cal_loop_config_t *cfg = &loop->cfg;
+    const int m_lo = -2, m_hi = (int)ceil(pulse_len(cfg)) + 2;
+    const int width = m_hi - m_lo; /* Python arange excludes m_hi */
+    double rep_a[ADC_CAL_LOOP_MAX_WINDOW] = {0};
+    double rep_b[ADC_CAL_LOOP_MAX_WINDOW] = {0};
+    int ks[ADC_CAL_LOOP_MAX_EVENTS], starts[ADC_CAL_LOOP_MAX_EVENTS];
+    align_result_t align;
+    double ma = 0.0, mb = 0.0;
+    double pp_a, min_a, max_a, proj = 0.0, dpdp = 0.0;
+    int count;
+    align_to_loop(loop, a, n, -1, &align);
+    out->dither_margin = align.margin;
+    count = visible_events(loop, align.n0, n, m_lo, m_hi, ks, starts);
+    if (count < 2 || width > ADC_CAL_LOOP_MAX_WINDOW) return;
+    for (int e = 0; e < count; ++e) {
+        const double sign = (double)cfg->polarity[ks[e]] * align.sign;
+        double alo = DBL_MAX, ahi = -DBL_MAX, blo = DBL_MAX, bhi = -DBL_MAX;
+        for (int i = 0; i < width; ++i) {
+            const int idx = starts[e] + m_lo + i;
+            rep_a[i] += sign * a[idx]; rep_b[i] += sign * b[idx];
+            alo = fmin(alo, a[idx]); ahi = fmax(ahi, a[idx]);
+            blo = fmin(blo, b[idx]); bhi = fmax(bhi, b[idx]);
+        }
+        ma += ahi - alo; mb += bhi - blo;
+    }
+    out->mag_a = ma / (double)count;
+    out->mag_b = mb / (double)count;
+    if (out->mag_a > 1e-9) out->gain_mag_ratio = out->mag_b / out->mag_a;
+    min_a = DBL_MAX; max_a = -DBL_MAX;
+    for (int i = 0; i < width; ++i) {
+        rep_a[i] /= (double)count; rep_b[i] /= (double)count;
+        min_a = fmin(min_a, rep_a[i]); max_a = fmax(max_a, rep_a[i]);
+    }
+    out->phase_a = replica_phase(rep_a, m_lo, width, cfg);
+    out->phase_b = replica_phase(rep_b, m_lo, width, cfg);
+    out->skew_slope_ps = (out->phase_b - out->phase_a) * 1e12 / adc_cal_loop_fs_adc(cfg);
+    pp_a = max_a - min_a; /* unit template has peak-to-peak 1 at this grid */
+    for (int i = 0; i < width; ++i) {
+        const double dp = pp_a * adc_cal_loop_pulse_derivative((double)(m_lo + i), edge_r(cfg), top_w(cfg));
+        proj += (rep_a[i] - rep_b[i]) * dp; dpdp += dp * dp;
+    }
+    if (dpdp > 0.0) out->skew_fold_ps = -proj / dpdp * 1e12 / adc_cal_loop_fs_adc(cfg);
+}
+
+#include "adc_calibration_loop_blind.h"
+
 int adc_cal_loop_estimate_block(adc_cal_loop_t *loop, const double *ch_a, const double *ch_b,
                                 size_t n_samples, int n0, double skew_prior_samples,
                                 double polarity_sign, int pin_polarity,
                                 adc_cal_loop_block_estimate_t *out)
 {
+    if (loop->opt.reference_free)
+        return blind_estimate(loop, ch_a, ch_b, n_samples, out);
     const adc_cal_loop_config_t *cfg = &loop->cfg;
     const int n = (int)n_samples;
     const int cancel = loop->opt.cancel_signal;
     const double ts_ps = 1e12 / adc_cal_loop_fs_adc(cfg);
-    const double f_nom = (double)cfg->sig_cycles / (double)loop->n_loop;
+    double f_nom;
     adc_cal_loop_channel_estimate_t a;
     adc_cal_loop_channel_estimate_t b;
     double common;
@@ -1008,6 +1165,9 @@ int adc_cal_loop_estimate_block(adc_cal_loop_t *loop, const double *ch_a, const 
     out->skew_diff_route_ps = NAN;
     out->skew_centroid_ps = NAN;
     out->skew_used_ps = NAN;
+    out->mag_a = out->mag_b = out->gain_mag_ratio = NAN;
+    out->skew_slope_ps = out->skew_fold_ps = NAN;
+    out->phase_a = out->phase_b = out->dither_margin = NAN;
     out->rotation = -1;
 
     if (estimate_channel(loop, ch_a, n, n0, 0.0, polarity_sign, pin_polarity, cancel, &a) != 0) {
@@ -1030,6 +1190,21 @@ int adc_cal_loop_estimate_block(adc_cal_loop_t *loop, const double *ch_a, const 
     }
     out->offset_mismatch_codes = b.offset_codes - a.offset_codes;
 
+    if (loop->opt.tone_free) {
+        out->ch_a = a;
+        out->ch_b = b;
+        measure_dither(loop, ch_a, ch_b, n, out);
+        out->skew_mismatch_ps = out->skew_slope_ps;
+        out->skew_mismatch_samples = out->skew_slope_ps / ts_ps;
+        out->skew_centroid_ps = (b.centroid_samples - a.centroid_samples) * ts_ps;
+        out->skew_source = ADC_CAL_LOOP_SKEW_SOURCE_DITHER_PHASE;
+        out->ch_a.skew_samples = out->ch_a.skew_ps = 0.0;
+        out->ch_b.skew_samples = out->skew_mismatch_samples;
+        out->ch_b.skew_ps = out->skew_mismatch_ps;
+        return 0; /* No shared tone frequency, phase fit or tone diagnostic. */
+    }
+
+    f_nom = (double)cfg->sig_cycles / (double)loop->n_loop;
     f_sh = 0.5 * (a.tone_f0 + b.tone_f0);
     if (!loop_isfinite(f_sh) || f_sh <= 0.0) {
         f_sh = f_nom;
@@ -1171,8 +1346,7 @@ void adc_cal_loop_default_actuator(adc_cal_loop_actuator_t *actuator)
     actuator->code_max = 48;
 }
 
-/* gain_observable_pair(): the requested amplitudes, falling back when unusable.
- * dither_mag (tone-free) is not ported, so it is always unusable here. */
+/* Tone-free gain must never fall back onto a tone/comb-line fit. */
 static const char *gain_observable_pair(const adc_cal_loop_block_estimate_t *est,
                                         adc_cal_loop_gain_observable_t source,
                                         double *ga, double *gb)
@@ -1185,6 +1359,14 @@ static const char *gain_observable_pair(const adc_cal_loop_block_estimate_t *est
                         fabs(tone_b) > 1e-9;
     const int dith_ok = loop_isfinite(dith_a) && loop_isfinite(dith_b) && fabs(dith_a) > 1e-9 &&
                         fabs(dith_b) > 1e-9;
+
+    if (source == ADC_CAL_LOOP_GAIN_DITHER_MAG) {
+        *ga = est->mag_a; *gb = est->mag_b;
+        if (loop_isfinite(*ga) && loop_isfinite(*gb) && *ga > 1e-9 && *gb > 1e-9)
+            return "dither_mag";
+        *ga = *gb = NAN;
+        return "none";
+    }
 
     if (source == ADC_CAL_LOOP_GAIN_DITHER) {
         if (dith_ok) {
@@ -1397,7 +1579,39 @@ void adc_cal_loop_skew_batch(const adc_cal_loop_skew_frame_t *frames, int n_fram
     }
 }
 
-/* CalibrationLoop._skew_decision(), tone route. */
+void adc_cal_loop_skew_batch_dither(const adc_cal_loop_skew_frame_t *frames, int n_frames,
+                                    double min_margin, adc_cal_loop_skew_batch_t *out)
+{
+    double kept[ADC_CAL_LOOP_MAX_BATCH], dev[ADC_CAL_LOOP_MAX_BATCH] = {0.0};
+    int count = 0, used = 0;
+    double center, bound;
+    memset(out, 0, sizeof(*out));
+    out->n_total = n_frames;
+    out->mean_ps = out->se_ps = out->route_center_ps = out->route_bound_ps = NAN;
+    if (n_frames > ADC_CAL_LOOP_MAX_BATCH) n_frames = ADC_CAL_LOOP_MAX_BATCH;
+    for (int i = 0; i < n_frames; ++i) {
+        if (loop_isfinite(frames[i].phase_ps) && fabs(frames[i].phase_ps) <= 2000.0 &&
+            loop_isfinite(frames[i].margin) && frames[i].margin >= min_margin)
+            kept[count++] = frames[i].phase_ps;
+    }
+    if (!count) return;
+    center = nan_median(kept, count);
+    for (int i = 0; i < count; ++i) dev[i] = fabs(kept[i] - center);
+    bound = 6.0 * 1.4826 * nan_median(dev, count) + 1.5;
+    for (int i = 0; i < count; ++i)
+        if (fabs(kept[i] - center) <= bound) kept[used++] = kept[i];
+    out->n_used = used;
+    out->route_center_ps = nan_median(kept, used);
+    out->route_bound_ps = bound;
+    if (used) out->mean_ps = mean_of(kept, used);
+    if (used > 1) {
+        double ss = 0.0;
+        for (int i = 0; i < used; ++i) ss += (kept[i] - out->mean_ps) * (kept[i] - out->mean_ps);
+        out->se_ps = sqrt(ss / (double)(used - 1) / (double)used);
+    }
+}
+
+/* CalibrationLoop._skew_decision(), with a route-specific batch filter. */
 static void skew_decision(adc_cal_loop_t *loop, const adc_cal_loop_block_estimate_t *est,
                           adc_cal_loop_row_t *row)
 {
@@ -1415,7 +1629,7 @@ static void skew_decision(adc_cal_loop_t *loop, const adc_cal_loop_block_estimat
         batch_frames = ADC_CAL_LOOP_MAX_BATCH;
     }
     f = &loop->skew_frames[loop->skew_frame_count++];
-    f->phase_ps = est->skew_phase_ps;
+    f->phase_ps = loop->opt.tone_free ? est->skew_used_ps : est->skew_phase_ps;
     f->diff_route_ps = est->skew_diff_route_ps;
     f->source = est->skew_source;
     f->tone = est->ch_a.tone_amplitude;
@@ -1426,7 +1640,11 @@ static void skew_decision(adc_cal_loop_t *loop, const adc_cal_loop_block_estimat
         return;
     }
 
-    adc_cal_loop_skew_batch(loop->skew_frames, loop->skew_frame_count, &batch);
+    if (loop->opt.tone_free)
+        adc_cal_loop_skew_batch_dither(loop->skew_frames, loop->skew_frame_count,
+                                       loop->opt.min_align_margin, &batch);
+    else
+        adc_cal_loop_skew_batch(loop->skew_frames, loop->skew_frame_count, &batch);
     loop->skew_frame_count = 0;
     row->skew_batch_used = batch.n_used;
     row->skew_batch_mean_ps = batch.mean_ps;
@@ -1508,7 +1726,10 @@ int adc_cal_loop_init(adc_cal_loop_t *loop, const adc_cal_loop_config_t *cfg,
     if (loop == NULL || cfg == NULL) {
         return -1;
     }
-    if (adc_cal_loop_config_validate(cfg, NULL) != 0) {
+    if (opt != NULL && opt->reference_free) {
+        if (!loop_isfinite(cfg->fs_dac) || cfg->fs_dac <= 0.0 || cfg->adc_ratio <= 0)
+            return -2;
+    } else if (adc_cal_loop_config_validate(cfg, NULL) != 0) {
         return -2;
     }
     memset(loop, 0, sizeof(*loop));
@@ -1518,6 +1739,14 @@ int adc_cal_loop_init(adc_cal_loop_t *loop, const adc_cal_loop_config_t *cfg,
         loop->opt = *opt;
     } else {
         adc_cal_loop_default_options(&loop->opt);
+    }
+    if (loop->opt.reference_free) loop->opt.tone_free = 1;
+    if (loop->opt.tone_free) {
+        /* The mode explicitly chooses observables; no tone cancellation,
+         * tone-quality gate or fallback is meaningful without a carrier. */
+        loop->opt.cancel_signal = 0;
+        loop->opt.require_tone = 0;
+        loop->opt.gain_observable = ADC_CAL_LOOP_GAIN_DITHER_MAG;
     }
     if (state != NULL) {
         loop->state = *state;
@@ -1529,6 +1758,8 @@ int adc_cal_loop_init(adc_cal_loop_t *loop, const adc_cal_loop_config_t *cfg,
     } else {
         adc_cal_loop_default_actuator(&loop->act);
     }
+
+    if (loop->opt.reference_free) return 0; /* never construct a reference */
 
     /* dither_only_loop(cfg) */
     loop->n_loop = adc_cal_loop_n_adc_period(cfg);
@@ -1576,10 +1807,18 @@ static adc_cal_loop_reject_t reject_reason(const adc_cal_loop_t *loop,
          fabs(est->ch_b.tone_amplitude) <= fmax(1.0, 3.0 * est->ch_b.residual_rms))) {
         return ADC_CAL_LOOP_REJECT_TONE;
     }
-    if (!loop_isfinite(est->ch_a.gain_codes) || !loop_isfinite(est->ch_a.skew_samples)) {
+    if (loop->opt.tone_free) {
+        if (!loop_isfinite(est->dither_margin) || est->dither_margin < loop->opt.min_align_margin)
+            return ADC_CAL_LOOP_REJECT_ALIGN_MARGIN;
+        if (!loop_isfinite(est->skew_used_ps) || !loop_isfinite(est->mag_a) || est->mag_a <= 1e-9)
+            return ADC_CAL_LOOP_REJECT_A_NOT_FINITE;
+        if (!loop_isfinite(est->mag_b) || est->mag_b <= 1e-9)
+            return ADC_CAL_LOOP_REJECT_B_NOT_FINITE;
+    } else if (!loop_isfinite(est->ch_a.gain_codes) || !loop_isfinite(est->ch_a.skew_samples)) {
         return ADC_CAL_LOOP_REJECT_A_NOT_FINITE;
     }
-    if (!loop_isfinite(est->ch_b.gain_codes) || !loop_isfinite(est->ch_b.skew_samples)) {
+    if (!loop->opt.tone_free &&
+        (!loop_isfinite(est->ch_b.gain_codes) || !loop_isfinite(est->ch_b.skew_samples))) {
         return ADC_CAL_LOOP_REJECT_B_NOT_FINITE;
     }
     residual = (est->skew_used_ps - loop->state.skew_target_ps) * 1e-12 *
@@ -1677,7 +1916,11 @@ int adc_cal_loop_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes,
         return rc;
     }
     row->est.rotation = row->prep.rotation;
-    row->est.skew_used_ps = row->est.skew_mismatch_ps;
+    row->est.skew_used_ps = loop->opt.tone_free ? row->est.skew_slope_ps : row->est.skew_mismatch_ps;
+    {
+        double ga, gb;
+        row->gain_source = gain_observable_pair(&row->est, loop->opt.gain_observable, &ga, &gb);
+    }
 
     row->rejected = (loop->opt.reject_clipping && row->clipped_samples != 0U)
                         ? ADC_CAL_LOOP_REJECT_CLIPPING
@@ -1795,6 +2038,8 @@ const char *adc_cal_loop_skew_source_name(adc_cal_loop_skew_source_t source)
 {
     switch (source) {
     case ADC_CAL_LOOP_SKEW_SOURCE_NONE: return "none";
+    case ADC_CAL_LOOP_SKEW_SOURCE_DITHER_PHASE: return "dither-phase";
+    case ADC_CAL_LOOP_SKEW_SOURCE_DITHER_CROSS_SPECTRUM: return "dither-cross-spectrum";
     case ADC_CAL_LOOP_SKEW_SOURCE_PHASE: return "phase";
     case ADC_CAL_LOOP_SKEW_SOURCE_PHASE_BRANCH_PRIOR: return "phase+branch(prior)";
     case ADC_CAL_LOOP_SKEW_SOURCE_PHASE_BRANCH_CENTROID: return "phase+branch(centroid)";

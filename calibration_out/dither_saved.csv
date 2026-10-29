@@ -1,0 +1,1 @@
+capture,iteration,status,gain_error_ppm,offset_error_codes,skew_error_ps,gain_corr_a,gain_corr_b,offset_a_codes,offset_b_codes,actuator_code,skew_action,skew_step_codes,batch_used,batch_frames,batch_skew_ps,clipped_samples,n0,rotation,alignment_margin

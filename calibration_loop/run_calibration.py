@@ -193,11 +193,7 @@ def cmd_sim(args) -> None:
         print(f"  offset spur       : {avg('raw_offset_spur_dbc'):.1f} -> "
               f"{avg('cal_offset_spur_dbc'):.1f} dBc")
     else:
-        # The spectral columns are scored at the tone frequency, so with the tone at -120 dBFS
-        # they describe the noise floor and must not be read as performance.  The tone-free
-        # stand-ins are the injected dither's own SNR and the coherent A-B power.
-        print("  (no tone: the SNDR/SFDR/image columns are scored at f_in and describe the")
-        print("   noise floor -- read the tone-free pair below instead)")
+        print("  (dither-only: carrier fits and SNDR/SFDR/image diagnostics are disabled)")
         print(f"  coherent A-B      : {avg('dbc_ab_coherent'):.1f} -> "
               f"{avg('dbc_ab_coherent_cal'):.1f} dBc   (native -> residual, tone-free)")
         print(f"  dither SNR (A)    : {avg('snr_dither_db'):.2f} -> "

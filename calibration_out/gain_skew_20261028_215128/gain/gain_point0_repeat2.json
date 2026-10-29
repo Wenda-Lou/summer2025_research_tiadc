@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "source": "single_axis_test",
+  "axis": null,
+  "metadata": {
+    "mode": "single_axis",
+    "feedback_by_phase": {
+      "pre": "frozen"
+    }
+  },
+  "requested": 40,
+  "qualified": 0,
+  "budget_unit": "attempts",
+  "captures": 40,
+  "rejected": 40,
+  "exported_rows": 40,
+  "total_rows": 40,
+  "history_complete": true,
+  "dropped_rows": 0,
+  "run_completed": false,
+  "run_healthy": false,
+  "actuator_code": 12,
+  "phase_statistics": {
+    "pre": {
+      "attempts": 40,
+      "budget": 40,
+      "accepted": 0,
+      "gain_error_ppm": {
+        "n": 0,
+        "mean": null,
+        "sd": null
+      },
+      "offset_error_codes": {
+        "n": 0,
+        "mean": null,
+        "sd": null
+      },
+      "skew_error_ps": {
+        "n": 0,
+        "mean": null,
+        "sd": null
+      }
+    }
+  },
+  "assessment": {
+    "axis": "gain",
+    "tolerance": 0.001,
+    "hold_accepted": 0,
+    "hold_budget": 100,
+    "hold_yield": 0.0,
+    "pre_mean": null,
+    "pre_observed_mean": -0.221852475,
+    "gain_source": "",
+    "skew_route": "",
+    "routes_consistent": true,
+    "offset_n": 0,
+    "offset_mean": null,
+    "offset_sd": null,
+    "offset_se": null,
+    "gain_n": 0,
+    "gain_mean": null,
+    "gain_sd": null,
+    "gain_se": null,
+    "skew_n": 0,
+    "skew_mean": null,
+    "skew_sd": null,
+    "skew_se": null,
+    "reject_reasons": "{\"gain_range\": 40}",
+    "hold_frozen": false,
+    "hold_continues_train": false,
+    "inactive_frozen": true,
+    "hold_clock_frozen": false,
+    "inactive_skew_frozen": true,
+    "last_code": "12",
+    "range_limit": false,
+    "quantization_limited": false,
+    "last_train_action": null,
+    "convergence_attempt": null,
+    "pass": false,
+    "requested_routes_match": false,
+    "point": 0,
+    "repeat": 1,
+    "baseline_code": 12
+  },
+  "correction": {
+    "gain_corr_a": 1.005222,
+    "gain_corr_b": 0.996,
+    "offset_a_codes": 2.676,
+    "offset_b_codes": -2.763
+  },
+  "tail": {
+    "window": 0,
+    "feedback": "frozen",
+    "gain_error_ppm": {
+      "n": 0,
+      "mean": null,
+      "sd": null
+    },
+    "offset_error_codes": {
+      "n": 0,
+      "mean": null,
+      "sd": null
+    },
+    "skew_error_ps": {
+      "n": 0,
+      "mean": null,
+      "sd": null
+    }
+  },
+  "precision_validation": "no_holdout",
+  "plots": {
+    "png": "C:\\TIDIAC\\summer2025_research_tiadc\\calibration_out\\gain_skew_20261028_215128\\gain\\gain_point0_repeat2.png",
+    "svg": "C:\\TIDIAC\\summer2025_research_tiadc\\calibration_out\\gain_skew_20261028_215128\\gain\\gain_point0_repeat2.svg"
+  }
+}

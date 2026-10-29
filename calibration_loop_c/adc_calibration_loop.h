@@ -7,10 +7,12 @@
  * (C11, libm only, no Xilinx headers) so it can later be added to the firmware
  * unchanged; today it is built and tested by calibration_sim.
  *
- * Scope of this port is the tone route, i.e. the host defaults:
+ * Default route matches the host tone defaults:
  *   cancel_signal = true, gain_observable = "tone" (falls back to "dither"),
  *   skew_observable = "phase".
- * The tone-free routes (dither_raw.py) and the SNDR/SFDR metrics are not ported.
+ * tone_free selects dither_mag gain and fractional dither_phase timing,
+ * ported from dither_raw.py, without tone cancellation or tone-based gates.
+ * SNDR/SFDR metrics are not ported.
  *
  * One iteration, exactly as CalibrationLoop.step():
  *   raw DMA bytes -> de-frame -> apply correction -> estimate residual errors
@@ -84,6 +86,10 @@ typedef struct {
 
 int adc_cal_loop_fit_tone(const double *y, size_t n, double f0, int refine,
                           adc_cal_loop_tone_fit_t *fit);
+#ifdef ADC_CAL_SOFTWARE_SIMULATION
+/* Native audit only: total tone-fit/purity calls, optionally reset after read. */
+unsigned adc_cal_loop_test_tone_calls(int reset);
+#endif
 
 /* ------------------------------------------------------------------------ */
 /* Estimates                                                                  */
@@ -112,7 +118,9 @@ typedef enum {
     ADC_CAL_LOOP_SKEW_SOURCE_PHASE_BRANCH_PRIOR,
     ADC_CAL_LOOP_SKEW_SOURCE_PHASE_BRANCH_CENTROID,
     ADC_CAL_LOOP_SKEW_SOURCE_PROFILE_FALLBACK,
-    ADC_CAL_LOOP_SKEW_SOURCE_OBSERVABLES_DISAGREE
+    ADC_CAL_LOOP_SKEW_SOURCE_OBSERVABLES_DISAGREE,
+    ADC_CAL_LOOP_SKEW_SOURCE_DITHER_PHASE,
+    ADC_CAL_LOOP_SKEW_SOURCE_DITHER_CROSS_SPECTRUM
 } adc_cal_loop_skew_source_t;
 
 typedef struct {
@@ -128,6 +136,14 @@ typedef struct {
     double skew_centroid_ps;
     adc_cal_loop_skew_source_t skew_source;
     double skew_used_ps;
+    double mag_a;
+    double mag_b;
+    double gain_mag_ratio;
+    double skew_slope_ps;
+    double skew_fold_ps;
+    double phase_a;
+    double phase_b;
+    double dither_margin;
     int rotation;
 } adc_cal_loop_block_estimate_t;
 
@@ -163,7 +179,8 @@ typedef struct {
 
 typedef enum {
     ADC_CAL_LOOP_GAIN_TONE = 0,
-    ADC_CAL_LOOP_GAIN_DITHER
+    ADC_CAL_LOOP_GAIN_DITHER,
+    ADC_CAL_LOOP_GAIN_DITHER_MAG
 } adc_cal_loop_gain_observable_t;
 
 enum {
@@ -188,6 +205,8 @@ typedef struct {
     double input_offset[2];     /* experiment only: post-ADC, native 14-bit codes */
     int reject_clipping;        /* experiment guard; legacy default is off */
     int require_tone;           /* refuse a fallback when grading tone gain */
+    int tone_free;              /* dither_mag / dither_phase; no tone fallback */
+    int reference_free;         /* A/B relative spectrum; only ADC sample rate is required */
 } adc_cal_loop_options_t;
 
 void adc_cal_loop_default_state(adc_cal_loop_state_t *state);
@@ -297,6 +316,9 @@ typedef struct {
  * relative route-agreement bound 6 robust sigma, 1.5 ps floor). */
 void adc_cal_loop_skew_batch(const adc_cal_loop_skew_frame_t *frames, int n_frames,
                              adc_cal_loop_skew_batch_t *out);
+/* Tone-free batch: finite phase, margin, 2000 ps bound, median/MAD outliers. */
+void adc_cal_loop_skew_batch_dither(const adc_cal_loop_skew_frame_t *frames, int n_frames,
+                                    double min_margin, adc_cal_loop_skew_batch_t *out);
 
 typedef struct {
     adc_cal_loop_config_t cfg;
@@ -350,7 +372,7 @@ int adc_cal_loop_estimate_block(adc_cal_loop_t *loop, const double *ch_a, const 
                                 double polarity_sign, int pin_polarity,
                                 adc_cal_loop_block_estimate_t *est);
 
-/* CalibrationState.update(); returns the gain observable used ("tone"/"dither"/"none"). */
+/* CalibrationState.update(); returns "tone"/"dither"/"dither_mag"/"none". */
 const char *adc_cal_loop_state_update(adc_cal_loop_state_t *state,
                                       const adc_cal_loop_block_estimate_t *est,
                                       int integrate_skew,

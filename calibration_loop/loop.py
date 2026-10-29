@@ -247,6 +247,13 @@ class CalibrationLoop:
         self.cfg = cfg
         self.state = state or CalibrationState()
         self.opt = options or LoopOptions()
+        self.tone_free = (self.opt.skew_observable.startswith("dither") or
+                          self.opt.gain_observable == "dither_mag")
+        if self.tone_free:
+            if (self.opt.gain_observable != "dither_mag" or
+                    not self.opt.skew_observable.startswith("dither")):
+                raise ValueError("Dither calibration requires dither_mag gain and dither timing; no tone route.")
+            self.opt.cancel_signal = False
         self.log: list[dict] = []
         self.captures = 0
         """Captures attempted by the last :meth:`run` (qualified + rejected)."""
@@ -374,7 +381,8 @@ class CalibrationLoop:
         if raw is None:
             return None
 
-        prep = prepare_capture(raw, self.cfg, signature=self._signature)
+        prep = prepare_capture(raw, self.cfg, signature=self._signature,
+                               tone_free=self.tone_free)
         if self._signature is None:
             self._signature = prep["signature"]
         if self._polarity is None:
@@ -392,6 +400,7 @@ class CalibrationLoop:
             skew_prior_samples=self.state.skew_target_ps * 1e-12 * self.cfg.fs_adc,
             polarity_sign=self._polarity,
             pin_polarity=True,
+            tone_free=self.tone_free,
         )
         est.rotation = prep["rotation"]
 
@@ -411,6 +420,11 @@ class CalibrationLoop:
             est.skew_slope_ps = res.skew_slope_ps
             est.skew_fold_ps = res.skew_fold_ps
             est.phase_a, est.phase_b = res.phase_a, res.phase_b
+            est.skew_mismatch_ps = res.skew_slope_ps
+            est.skew_mismatch_samples = res.skew_slope_ps * 1e-12 * self.cfg.fs_adc
+            est.ch_a.skew_samples = est.ch_a.skew_ps = 0.0
+            est.ch_b.skew_samples = est.skew_mismatch_samples
+            est.ch_b.skew_ps = res.skew_slope_ps
             est.peak_a = exc.peak_a
             est.dbc_ab_coherent = exc.dbc_ab_coherent
             est.dbc_ab_coherent_cal = res.dbc_ab_coherent
@@ -527,7 +541,6 @@ class CalibrationLoop:
 
     def _measure(self, raw_a, raw_b, cal_a, cal_b, est: BlockEstimate, n0: int) -> dict:
         fs = self.cfg.fs_adc
-        f_in = self.cfg.f_sig
 
         # Strip the injected dither before scoring; see synthesize_dither().  The
         # gains were fitted with the session polarity sign, so the synthesised
@@ -583,7 +596,20 @@ class CalibrationLoop:
             "snr_dither_db_cal": est.snr_dither_db_cal,
         }
 
-        # Per-channel dynamic performance, always meaningful.
+        if self.tone_free:
+            # A carrier fit and carrier-referenced metrics have no role in
+            # strict dither calibration, including diagnostic logging.
+            for tag in ("raw_a", "raw_b", "cal_a", "cal_b", "raw", "cal"):
+                for metric in ("sndr_db", "sfdr_db", "enob"):
+                    row[f"{tag}_{metric}"] = float("nan")
+            for tag in ("raw", "cal"):
+                for metric in ("difference_dbc", "offset_spur_dbc", "image_spur_dbc"):
+                    row[f"{tag}_{metric}"] = float("nan")
+            row["cal_dc_difference_codes"] = float(cal_a.mean() - cal_b.mean())
+            return row
+
+        # Legacy tone diagnostics.
+        f_in = self.cfg.f_sig
         for tag, x in (("raw_a", raw_a), ("raw_b", raw_b), ("cal_a", cal_a), ("cal_b", cal_b)):
             m = analyse(x, fs)
             row[f"{tag}_sndr_db"] = m["sndr_db"]

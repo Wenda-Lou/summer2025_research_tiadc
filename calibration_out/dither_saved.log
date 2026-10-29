@@ -1,0 +1,6 @@
+# cmd: adc -cal loop export
+# port: COM5
+# start: 2026-10-28 19:14:01
+
+LOOP-EXPORT-END result=ERROR reason=no-completed-run
+# STOPPED: error

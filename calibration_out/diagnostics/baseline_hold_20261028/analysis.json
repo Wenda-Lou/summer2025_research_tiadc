@@ -1,0 +1,24 @@
+{
+  "origin": "User-provided UART baseline_hold rows 0..99; values in mc divided by 1000.",
+  "offset_mean_codes": -1.6225299999999996,
+  "offset_sd_codes": 1.398109838425805,
+  "offset_se_codes_iid_approx": 0.1398109838425805,
+  "offset_20_frame_means": [
+    -1.08895,
+    -1.1759,
+    -1.60995,
+    -2.06675,
+    -2.1711
+  ],
+  "dcmean_20_frame_means": [
+    -1.4781499999999999,
+    -1.0618,
+    -1.8096,
+    -1.8603999999999998,
+    -2.33765
+  ],
+  "offset_linear_trend_codes_per_100_attempts": -1.4493351335133515,
+  "dcmean_linear_trend_codes_per_100_attempts": -1.2323828382838282,
+  "offset_dcmean_correlation": 0.5912457522202076,
+  "note": "No timestamps or TRAIN tail supplied. Attempt trends do not establish physical drift. dcmean is a whole-record diagnostic, not the offset feedback observable."
+}

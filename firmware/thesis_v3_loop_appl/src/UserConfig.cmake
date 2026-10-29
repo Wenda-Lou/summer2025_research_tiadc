@@ -161,6 +161,9 @@ set(USER_LINK_OTHER_FLAGS
 set_source_files_properties("../../../calibration_loop_c/adc_calibration_loop.c"
     PROPERTIES COMPILE_OPTIONS "-O2")
 
+# User hook: keep this application's 2025.2 template usable with a 2025.1 BSP.
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/vitis_compat.cmake")
+
 ###   END OF USER SETTINGS SECTION ###
 ###   DO NOT EDIT BEYOND THIS LINE ###
 
