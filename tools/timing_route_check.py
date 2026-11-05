@@ -3,7 +3,7 @@
 Two tone-free routes claim to measure the same delay, and they disagree about *how* they do it:
 
   * ``fold``  -- project the folded A-B difference onto the pulse's derivative.  This is the route
-                 every ladder number in ``BENCH_SESSION_DITHER_ONLY.md`` was measured with, and
+                 every ladder number in ``docs/bench/BENCH_SESSION_DITHER_ONLY.md`` was measured with, and
                  it is the loop's ``--skew-observable dither_fold``.
   * ``phase`` -- fit each channel's folded replica against the template at a fractional sampling
                  phase and difference the phases (the loop's ``dither_phase``, and what

@@ -63,7 +63,7 @@ A read-only stability pass at the converged point (7 rounds, 340 s) shows the st
 drift **+0.01 ps/minute** (slope uncertainty ±0.20 ps/min) and a spur spread of 0.57 dB.
 No periodic re-convergence is needed on a minutes timescale.
 
-![Closed-loop learning curve, run 3](calibration_out/professor_update/loop_learning_curve.png)
+![Closed-loop learning curve, run 3](../../calibration_out/professor_update/loop_learning_curve.png)
 
 ## 2. Correction: offset observability is not limited
 
@@ -113,7 +113,7 @@ and skew from the tone phase. The host-side loop reported here reaches the same 
 from independent measurements, and additionally shows what the impulses *are* good for:
 alignment and offset, from the same capture that supplies the tone.
 
-![Gain observable comparison](calibration_out/professor_update/loop_summary.png)
+![Gain observable comparison](../../calibration_out/professor_update/loop_summary.png)
 
 Both runs in the left panel are comparable in every other respect — cancellation on, parked
 at code 24 first, and converging to the same residual skew (−9.70 vs −9.72 ps) — so the

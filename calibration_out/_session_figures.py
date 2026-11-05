@@ -21,7 +21,7 @@ panel and plots the dither SNR instead.
 **Best-of rule.**  Each figure carries the best result of its question, not every state and every
 control run that was measured.  The runs that lost (`run4_tonefree` on the fold route, the lower
 ladder amplitudes, the route-scale comparison) are in the tables of
-`BENCH_SESSION_DITHER_ONLY.md` §7 and §F, and the numbers this script prints below still cover all
+`docs/bench/BENCH_SESSION_DITHER_ONLY.md` §7 and §F, and the numbers this script prints below still cover all
 of them — the figures are the highlight reel, the doc is the record.
 
 Every plotted number is read from the committed run outputs under ``calibration_out/``.  Only bench
@@ -280,7 +280,7 @@ def figure_fullscale(plt, lad, ifc30):
 
     The ladder walked three amplitudes; this figure carries the *best* one (30000 LSB, 91.6 % of
     DAC full scale) and the DAC ceiling projected linearly from it.  The lower states are kept in
-    the table of `BENCH_SESSION_DITHER_ONLY.md` §F -- what they establish (linearity to 0.1 %) is
+    the table of `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §F -- what they establish (linearity to 0.1 %) is
     stated here as a number instead of being drawn three times.
     """
     fig, ax = plt.subplots(1, 2, figsize=(10.4, 4.6))

@@ -5,6 +5,11 @@ This directory holds legacy/superseded materials and the cleanup record for the
 
 ## Contents
 
+- `legacy_host/` (moved here 2026-11-04)
+  - `py_UDP_interface/`, `py_to_matlab_module/`, `lwip_platform/`: the 2025
+    host/platform experiments (UDP capture script, MATLAB bridge, standalone
+    lwIP Vitis app). Not used by the current firmware, `calibration_loop` or
+    `tools/`.
 - `legacy_reports/`
   - Older report versions that were removed from the repository root. They are
     preserved here for reference and are superseded by:
@@ -44,3 +49,20 @@ Still present because the files were locked at cleanup time (retry later):
 Do not delete `test_platform/thesis_v3_500mhz_appl/adc_data/calibration_exports/`.
 Those directories are the board-run evidence used by the September publication
 decision.
+
+## Cleanup record (2026-11-04)
+
+Moves only (`git mv`, history kept); nothing deleted except the empty
+`test_platform/` (it held only a `.gitignore`; the Vitis tree it once held now
+lives in `firmware/`, so the `test_platform/...` paths above refer to the old
+location).
+
+- Root documents -> `docs/`: `CALIBRATION_STARTUP.md` and
+  `BENCH_SESSION_DITHER_ONLY.md` -> `docs/bench/`;
+  `TIADC_CALIBRATION_LOOP_UPDATE_EN.md` and `next_steps.md`
+  (-> `next_steps_2026-09-21.md`) -> `docs/reports/`; `TIADC_defenition.md`
+  -> `docs/TIADC_definitions.md`; `frequency sweep.xlsx` ->
+  `docs/data/frequency_sweep.xlsx`.
+- `axi_lite_wrapper/`, `axi_full_wrapper/` -> `rtl/`.
+- `py_UDP_interface/`, `py_to_matlab_module/`, `lwip_platform/` ->
+  `archive/legacy_host/`.

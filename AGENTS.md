@@ -40,9 +40,8 @@ The repository mixes four kinds of code that support that bench:
    impulse-dither closed-loop calibration package that drives the bench over
    UART/UDP from a host PC (generate DPG vectors, simulate, probe, close the
    loop). Runs against the existing firmware unchanged.
-4. **RTL** (`fpga/skew_actuator/`, `axi_lite_wrapper/`, `axi_full_wrapper/`) —
-   Verilog modules with SystemVerilog testbenches and Vivado TCL integration
-   scripts.
+4. **RTL** (`rtl/axi_lite_wrapper/`, `rtl/axi_full_wrapper/`) — Verilog
+   modules with SystemVerilog testbenches (Vivado xsim).
 
 ## Repository Layout
 
@@ -57,15 +56,12 @@ The repository mixes four kinds of code that support that bench:
 | `firmware/thesis_v3_loop_appl/` | Vitis 2025.2 app: the original firmware (most sources referenced from `thesis_v3_500mhz_appl/`) plus `adc -cal loop`, which runs `calibration_loop_c` on the A53. Local files: modified `butils.c`, `butils_loop.c` (board adapter, `#include`d), `loop_waveform.h` (table of known DPG vectors, selected at run time with `adc -cal loop wave K`: 0 = 199.375 MHz, 1 = 399.375 MHz). Bench-validated 2026-10-14: closed loop converged at both tones, all transactions `OK` (see the on-board loop note under Architecture Notes). Overview, code map, logged runs and the 2026-10-14 reference results: its `README.md`. Design, build traps and bench procedure: last section of `calibration_sim/README.md`. |
 | `calibration_out/` | Example output of `calibration_loop` runs (CSV, JSON, plots). |
 | `tools/` | Ad-hoc bench/host diagnostics, run from the repo root with `PYTHONPATH=.` if invoked as a path. `prepare_capture_truth_check.py` and `live_before_after.py` grade de-framing/channel ordering against `BenchModel` truth or live bytes; `half_group_lag_impact.py`, `deframe_rotation_table.py`, `compare_reconstruction.py` quantify extraction errors. `skew_step_characterize.py` measures the actuator's step response, `skew_close_loop.py` converges it with the batch decision, `skew_park.py` returns it to a chosen control code through the ACK-checked firmware transaction, and `loop_direction_check.py` proves the loop's direction guard offline against `BenchModel` for the tone route **and both dither routes**; `timing_route_check.py` compares the two tone-free timing routes against known actuator codes for whichever waveform is loaded (the loop's route choice is made from its output, not assumed). `dither_vs_tone_gain.py` compares the dither and tone routes to the gain mismatch on the same frames (and `--save-frames` archives the captures so a state can be re-analysed without bench time); `dither_raw_evidence.py` reads gain, offset and timing straight off the folded impulse replicas of tone-free captures — folding must be polarity-corrected (the balanced ± train cancels a sign-blind fold) and timing comes from the slope projection, readable as a difference between fixed states, not per frame. `dither_ladder.py` turns a ladder of captured states (16000 → 24000 → 30000 LSB) into the amplitude-linearity answer and a figure, and `dac_vs_adc_plot.py` overlays one capture on the DAC vector it came from. `board_loop_log.py` runs one `adc -cal loop ...` command on `thesis_v3_loop_appl` (optionally `--wave K` first), echoes the console and saves it as a log, stopping at `LOOP-STATUS` or on a `Command Error`. Each run is saved in its own folder (`--out calibration_out/x.log` → `calibration_out/x/x.log`, `.csv`, `.json`, `.png`, `.svg`, `.html`; a reused name becomes `x_<timestamp>/`; `--flat` restores the old side-by-side layout). `--park-after CODE` sends `adc -cal loop test park CODE` after a calibration run that ended cleanly (never after a timeout, error or `RECOVERY_REQUIRED`) and trusts it only if every `LOOP-SKEW-TXN` is `result=OK` and the last `code_after` is CODE; a failed park exits 1 but keeps the run's export. After an export it also writes `<stem>.html` beside the CSV and opens it (`--no-viewer` skips): `loop_viewer_export.py` copies `loop_viewer.html` (offline, drag-and-drop viewer for run CSVs, verbose `LOOP it=` logs and `axis_*`/`gain_skew_*` sweep folders) with that data embedded; run it by hand on any CSV or sweep folder. |
-| `fpga/skew_actuator/` | `adc_channel_skew_actuator_gpio.v` fractional-delay AXI-Stream module + Vivado TCL integration scripts + xsim validation logs. |
-| `axi_lite_wrapper/`, `axi_full_wrapper/` | AXI Lite / AXI Full master wrapper Verilog with SystemVerilog testbenches (Vivado xsim). |
-| `lwip_platform/` | Standalone lwIP Ethernet platform code (`ethernet.c/h`, static IPv4 config) and a minimal Vitis application. |
-| `py_UDP_interface/` | Host UDP capture script (`sampling_clk_config_script.py`, 32 KB captures from the board). |
-| `py_to_matlab_module/` | MATLAB engine bridge experiment (`matlab_engine.py`). |
+| `rtl/axi_lite_wrapper/`, `rtl/axi_full_wrapper/` | AXI Lite / AXI Full master wrapper Verilog with SystemVerilog testbenches (Vivado xsim); `axi_lite_wrapper/ip_repo/` is the packaged Vivado IP. |
+| `docs/` | Project documents. `bench/CALIBRATION_STARTUP.md`: bench start-up checklist for the on-board loop (RF combiner setup). `bench/BENCH_SESSION_DITHER_ONLY.md`: dither-only bench session record (§7 closed loop, §F full-scale ladder). `reports/`: professor updates and meeting notes. `TIADC_definitions.md`: glossary (Chinese). `data/frequency_sweep.xlsx`: DAC output-vs-frequency sweep. |
+| `archive/` | Superseded material, kept for reference only; see `archive/README.md`. `legacy_reports/`: older reports. `legacy_host/`: the 2025 host/platform experiments (`py_UDP_interface/` UDP capture script, `py_to_matlab_module/` MATLAB bridge, `lwip_platform/` standalone lwIP Vitis app) — not used by the current firmware or tools. |
 | `waveforms/` | Generated DPG DAC vectors, one signed integer per line, each with a `.json` of its `DitherConfig`. `impulse_dither.txt` is the generator default (edge 16 / top 32 DAC samples, 2000 LSB) — **not** the vector the on-board loop assumes. `tone_dither/` holds the tone+dither vectors the loop uses: `w06adc_e04_t04_amp5190_tone_m1p5` (199.375 MHz) and `..._f399p375` (399.375 MHz, `--sig-cycles 2556`). `pulse_ladder/`, `scale_check/`: dither-only amplitude/width ladders. |
 | `BOARD_TEST_PLAN.md` | **Removed** in `ea96ba9`; recover with `git show ea96ba9~1:BOARD_TEST_PLAN.md`. The current bench procedures are `calibration_loop/BENCH_GUIDE.md` and, for the on-board loop, section 7 of `calibration_sim/README.md`. |
-| `adc_calibration_output_example_log.log` | Example UART log of a full `adc -cal` run. |
-| `xelab.pb`, `xvlog.pb`, `xsim.dir/`, `.Xil/`, `_ide/` | Vivado xsim / IDE leftovers — generated, do not edit. |
+| `fpga/skew_actuator/`, `adc_calibration_output_example_log.log` | **Removed** in `12e6640` (RTL fractional-delay skew actuator + TCL scripts; example `adc -cal` UART log); recover with `git show 12e6640~1:<path>`. |
 
 ### Firmware modules (`firmware/thesis_v3_500mhz_appl/`)
 
@@ -156,11 +152,11 @@ Do not hand-edit Vitis-generated files (`src/`, `_ide/`, `vitis-comp.json`,
 
 ### RTL
 
-Verilog testbenches (`tb.sv`) run under Vivado xsim. `fpga/skew_actuator/`
-also has Vivado TCL scripts (`integrate_skew_actuator.tcl`,
-`finalize_and_synthesize_skew_actuator.tcl`) that patch a block design — note
-they contain hard-coded absolute paths (`C:/thesis_v3/...`) and must be
-adjusted before use.
+Verilog testbenches (`rtl/*/tb.sv`) run under Vivado xsim. The removed
+`fpga/skew_actuator/` (recover from `12e6640~1`) also had Vivado TCL scripts
+(`integrate_skew_actuator.tcl`, `finalize_and_synthesize_skew_actuator.tcl`)
+that patch a block design — note they contain hard-coded absolute paths
+(`C:/thesis_v3/...`) and must be adjusted before use.
 
 ### Board testing
 
@@ -381,7 +377,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   the bench, where the first dither-only closed loop ran 300 qualified samples from 300 captures
   with 0 rejected, closed the skew from −71.4 ps to inside the deadband in ten ACKed single-code
   moves, and improved the raw coherent A−B dither power by 18.1 dB (see
-  `BENCH_SESSION_DITHER_ONLY.md` §7).  Alignment, offset and gain behave identically to the tone
+  `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §7).  Alignment, offset and gain behave identically to the tone
   case (offset scatter +0.670 ± 2.313 against +0.668 ± 2.297 codes; gain +1.001 ± 0.004 both), so
   the impulses carry those three on their own.
 
@@ -447,7 +443,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   `calibration_out/_tone_free_loop_test.py` (both routes against known delays and closed-loop,
   acquisition from a +200 ps mismatch, old-gate comparison) and `tools/loop_direction_check.py`
   (batch decision and direction latch, run for the tone route and both dither routes).  Bench
-  procedure: `BENCH_SESSION_DITHER_ONLY.md` §7.
+  procedure: `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §7.
 
 - **Full-scale dither ladder (stage F, measured 2026-09-20)**: the excitation has two knobs —
   pulse width and amplitude.  Width is spent: the generator's floor is the 6-sample pulse
@@ -484,7 +480,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   (15.9 % FS) for the dither before the vector clips — the 30000 LSB excitation is a *tone-free*
   option.  Instrument check, including a deliberately compressing ladder that must fail:
   `python calibration_out/_dither_ladder_test.py`.  Figures, numbers and procedure:
-  `calibration_out/professor_update/session_fullscale.png` and `BENCH_SESSION_DITHER_ONLY.md` §F
+  `calibration_out/professor_update/session_fullscale.png` and `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §F
   (which holds every ladder table).
 
 - **Sample accounting in the loop**: `CalibrationLoop.run(N)` collects N *qualified*
@@ -505,7 +501,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   sanctioned write path, routed through `handle_adc_skew_transaction_cmd()` (see
   the actuation note above), and it takes *relative control codes*, never
   per-channel ps or raw register values.  The RTL skew actuator
-  (`fpga/skew_actuator/`) remains a separate, not-yet-integrated effort (Q8
+  (`fpga/skew_actuator/`, removed in `12e6640`) remains a separate, not-yet-integrated effort (Q8
   fractional delay, AXI GPIO controlled, reset code 256).
 - **On-board loop (`thesis_v3_loop_appl`), bench 2026-10-14**: `calibration_loop_c`
   run on the A53 against live captures, tone route, `w06` pulse (edge 4 / top 4,
@@ -690,7 +686,7 @@ experiment workflow. Never grade training residuals as independent precision.
    Session-level figures come from `python calibration_out/_session_figures.py`, which
    reads **only** committed run outputs and prints the numbers each panel carries (the
    three `calibration_out/professor_update/session_*.png` figures; the full tables stay in
-   `BENCH_SESSION_DITHER_ONLY.md` §7 and §F).  If a figure and a doc disagree, the figure
+   `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §7 and §F).  If a figure and a doc disagree, the figure
    script is the reproducible side, so fix the doc.
 6. Hardware behavior is validated on the bench (`calibration_loop/BENCH_GUIDE.md`;
    for the on-board loop, section 7 of `calibration_sim/README.md`), not by the host

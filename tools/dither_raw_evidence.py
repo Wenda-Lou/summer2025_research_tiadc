@@ -147,7 +147,7 @@ def slope_delay(rep_d: np.ndarray, rep_ref: np.ndarray, m: np.ndarray,
 
     A relative delay turns the pulse into its own derivative, so the difference replica is
     projected onto the known pulse slope: ``dt = <A-B, d/dt> / <d/dt, d/dt>``.  This is the
-    route every ladder number in ``BENCH_SESSION_DITHER_ONLY.md`` was measured with, so it is
+    route every ladder number in ``docs/bench/BENCH_SESSION_DITHER_ONLY.md`` was measured with, so it is
     kept as-is for comparability.
 
     **It is not the loop's route, and its scale is not linear.**  The six-sample pulse carries
