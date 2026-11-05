@@ -1,7 +1,7 @@
 """Scratch: matched-pair comparison of two closed-loop bench runs.
 
 Both runs must start from the same actuator state (code 24, ~-44 ps) — that is what
-``tools/skew_park.py`` is for.  With cancellation on (run1) versus off
+``tools/skew/skew_park.py`` is for.  With cancellation on (run1) versus off
 (run2_nocancel) the *digital* gain/offset loop is the thing under test: the skew
 actuator moves at most one code per 20-frame batch either way, so its trajectory is
 set by the batch size, while the gain and offset estimates are what the removed

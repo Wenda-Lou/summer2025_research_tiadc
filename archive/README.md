@@ -83,3 +83,10 @@ Moves only (`git mv`). `calibration_out/` now holds run outputs only:
   sweep's folder; `adc_data.zip`, `probe_probe.png`, `run.csv`,
   `run_learning.png`, `run_meta.json` (old default-name outputs) -> `misc/`.
 
+### Phase 3 (2026-11-05): `tools/` grouped
+
+`tools/*.py` moved into `tools/board_loop/`, `skew/`, `dither/`, `frames/` and
+`console/` (see `tools/README.md`); `loop_direction_check.py` and
+`test_dither_only.py` moved to `checks/`. Scripts that set `REPO` now look three
+levels up; `checks/` scripts that import dither tools add `tools/dither` to
+`sys.path`. Every `tools/<name>.py` reference in docs and code was rewritten.

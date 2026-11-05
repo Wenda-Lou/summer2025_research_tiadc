@@ -50,7 +50,7 @@ Close the loop on the board. `--allow-skew-writes` is required: without it the r
 measures skew but never drives the actuator, which is the open-loop case.
 
 ```bash
-python tools/skew_park.py --uart COM5 --code 24   # neutral start; also the required
+python tools/skew/skew_park.py --uart COM5 --code 24   # neutral start; also the required
                                                   # initialization after a bring-up
 python -m calibration_loop.run_calibration bench --uart COM5 \
     --allow-skew-writes --iterations 300
@@ -91,7 +91,7 @@ after 20 consecutive rejects. What each route is, and why:
     (2026-09-20), which widens the 10 ps deadband to ~28 ps in truth — hence cross-check, not
     driver.
 - Which route is quieter *and* correctly scaled is a property of the waveform, so measure it rather
-  than assuming: `python tools/timing_route_check.py --state 24=<dir> --state 32=<dir> --waveform-json <yours>.json`
+  than assuming: `python tools/dither/timing_route_check.py --state 24=<dir> --state 32=<dir> --waveform-json <yours>.json`
   fits both routes' ps/code against the actuator's known codes and, when the captures hold a tone,
   uses the tone-phase route as the scale anchor (with a guard that refuses the anchor if the
   captures have no tone). Measured on the bench 2026-09-20 (`w06` 16000 LSB, 200 frames per state):
@@ -109,7 +109,7 @@ Offline proof of all of it (run before any bench session that uses these routes)
 
 ```bash
 python checks/_tone_free_loop_test.py   # routes against known delays + closed loop
-python tools/loop_direction_check.py             # batch decision and direction latch, both routes
+python checks/loop_direction_check.py             # batch decision and direction latch, both routes
 ```
 
 The skew axis closes on hardware (`dSkew` to about -10 ps, the raw A-B difference

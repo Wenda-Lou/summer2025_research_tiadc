@@ -239,7 +239,7 @@ class SkewActuator:
     The step is not uniform across the code range, so this constant is a statement about *where*
     it was measured.  Two paired, same-session measurements, both with the tone-phase route:
 
-    * **2026-09-20, codes 34 <-> 35** (`tools/skew_step_characterize.py --code 34 --frames 55
+    * **2026-09-20, codes 34 <-> 35** (`tools/skew/skew_step_characterize.py --code 34 --frames 55
       --execute`): baseline -16.45 / restore -16.36 / restore -16.62 ps, stepped +2.60 / +2.62 ps,
       step **+19.08 +- 0.06 ps** (se; 95 % CI +-0.12), repeat signs agreeing and the two restores
       reproducing the baseline to 0.26 ps -- ~318 sigma.  This is the region the closed loop
@@ -347,7 +347,7 @@ class SkewActuator:
         until each step has been measured -- so this is a single-step request and
         not absolute positioning: asking for code 24 while at 31 returns
         ``code_after = 30``.  A caller that needs an absolute position (parking the
-        actuator for a repeat run) must loop on the ACK, as ``tools/skew_park.py``
+        actuator for a repeat run) must loop on the ACK, as ``tools/skew/skew_park.py``
         does.  ``delta == 0`` is a real no-op and writes nothing.
 
         With ``learn`` (the default) a not-yet-known code is read first through a

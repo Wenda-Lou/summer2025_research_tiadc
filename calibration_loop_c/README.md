@@ -100,7 +100,7 @@ Optional post-ADC offset injection, raw-rail rejection and a tone requirement
 are enabled only for experiments. See
 [`CALIBRATION_LIMIT_TEST.md`](../calibration_loop/CALIBRATION_LIMIT_TEST.md).
 
-`python tools/test_dither_only.py` runs with every tone fit, purity and
+`python checks/test_dither_only.py` runs with every tone fit, purity and
 carrier-metric function patched to raise. Native tests also count every tone
 fit/purity call and require zero during dither calibration. Both paths verify
 that changing unused carrier metadata leaves results unchanged.

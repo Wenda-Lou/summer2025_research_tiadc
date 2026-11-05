@@ -12,7 +12,7 @@
 已有 `BASELINE valid=1` 时，关闭串口终端，自动完成 offset 扫描：
 
 ```powershell
-python tools/board_axis_test.py sweep --axis offset --uart COM5 --reuse-baseline --execute
+python tools/board_loop/board_axis_test.py sweep --axis offset --uart COM5 --reuse-baseline --execute
 ```
 
 默认 B 通道，偏置 −64、−16、−4、0、4、16、64 codes，每档 5 遍，
@@ -77,7 +77,7 @@ Gain/offset 是软件数字校正系数，skew 使用 ACK 检查的硬件延迟�
 关闭占用串口的终端，在仓库根目录执行下面一条电脑指令（COM7 按实际修改）：
 
 ```powershell
-python tools/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
 ```
 
 脚本用一条 `adc -cal loop 300 stream` 完成校准和全程传输，全部逐帧校准
@@ -89,14 +89,14 @@ CSV 使用 ADC codes、ps、乘法增益系数；图和 JSON 标明反馈仍开�
 已经校准过、只想下载结果时，电脑指令是：
 
 ```powershell
-python tools/board_loop_log.py --uart COM7 --cmd "adc -cal loop export" --out calibration_out/dither_saved.log
+python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop export" --out calibration_out/dither_saved.log
 ```
 
 这不会重新采集或校准，也不写 ADC/延迟寄存器。只读保存的上一次普通 loop
 快照；记录在 RAM 中，重启或下一次普通 loop 会清除/覆盖。最多保留最近
 4000 条逐帧记录，若覆盖会明确记录缺失数量；该限制不影响上述 PC stream
 全程传输。`loop test` 的详细日志和扫描
-导出仍由 `tools/board_axis_test.py` 处理。当前新版日志/导出接口只完成离线
+导出仍由 `tools/board_loop/board_axis_test.py` 处理。当前新版日志/导出接口只完成离线
 和实际 Vitis 构建验证，尚需用户下载后上板检查。
 
 算法以 `d22d23ff6753b4503c54157529ad8396483cb006` 的 Python dither 分支为基准，
@@ -185,7 +185,7 @@ HOLD 100/100、offset −1.623 codes、gain +0.1768%、skew −1.88 ps。
 手动注入后关闭串口终端，可运行下列指令保存本次单项测试并自动作图：
 
 ```powershell
-python tools/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/offset_p16_r1.log
+python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/offset_p16_r1.log
 ```
 
 它只执行本次单项测试，不重建或覆盖已有基准。文件包含全部 PRE/TRAIN/HOLD
@@ -529,16 +529,16 @@ step 的五个状态都使用大帧数时，需要相应提高这个超时。
 
 ```powershell
 # Offset：注入量为软件原生 ADC codes
-python tools/board_axis_test.py sweep --axis offset --uart COM7 --wave 3 --points=-64,-16,-4,0,4,16,64 --repeats 5 --out calibration_out/limits_offset_01
+python tools/board_loop/board_axis_test.py sweep --axis offset --uart COM7 --wave 3 --points=-64,-16,-4,0,4,16,64 --repeats 5 --out calibration_out/limits_offset_01
 
 # Gain：这里填的是 IFC 寄存器码，不是百分比
-python tools/board_axis_test.py sweep --axis gain --uart COM7 --wave 3 --points=12,13,11,14,10,15,0 --gain-gate-ppm 300000 --repeats 5 --out calibration_out/limits_gain_01
+python tools/board_loop/board_axis_test.py sweep --axis gain --uart COM7 --wave 3 --points=12,13,11,14,10,15,0 --gain-gate-ppm 300000 --repeats 5 --out calibration_out/limits_gain_01
 
 # Skew：相对于本次收敛基准的控制码偏移
-python tools/board_axis_test.py sweep --axis skew --uart COM7 --wave 3 --points=-8,-4,-2,-1,0,1,2,4,8 --repeats 5 --out calibration_out/limits_skew_01
+python tools/board_loop/board_axis_test.py sweep --axis skew --uart COM7 --wave 3 --points=-8,-4,-2,-1,0,1,2,4,8 --repeats 5 --out calibration_out/limits_skew_01
 
 # 配对步长：默认在本次收敛基准码 N 测 N/N+1；也可指定 --code N
-python tools/board_axis_test.py step --uart COM7 --wave 3 --frames 55 --out calibration_out/limits_step_01
+python tools/board_loop/board_axis_test.py step --uart COM7 --wave 3 --frames 55 --out calibration_out/limits_step_01
 ```
 
 确认硬件和波形就绪后，在所需命令末尾加 `--execute`。
@@ -582,8 +582,8 @@ HOLD 至少要有 80% 合格帧，且 `abs(mean) + 1.96*SE <= tolerance`。
 也可以只记录一次手动运行并离线分析：
 
 ```powershell
-python tools/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run skew 40 300 100" --out calibration_out/skew_single_01.log
-python tools/board_axis_test.py analyse --log calibration_out/skew_single_01.log --axis skew --hold 100 --tolerance 10
+python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run skew 40 300 100" --out calibration_out/skew_single_01.log
+python tools/board_loop/board_axis_test.py analyse --log calibration_out/skew_single_01.log --axis skew --hold 100 --tolerance 10
 ```
 
 `analyse` 用于单次 run/step 的日志；不要把完整多点 sweep 日志当成一个点。
@@ -621,8 +621,8 @@ calibration_sim/build-axis/adc_cal_sim.exe --run-loop-tests --output-dir calibra
 python calibration_loop_c/export_golden.py --out calibration_sim/output/axis_golden.txt
 calibration_sim/build-axis/adc_cal_sim.exe --loop-golden calibration_sim/output/axis_golden.txt --output-dir calibration_sim/output/axis_golden_replay
 calibration_sim/build-axis/adc_cal_sim.exe --run-all --output-dir calibration_sim/output/axis_all
-python tools/test_board_axis_test.py
-python tools/test_dither_only.py
+python tools/board_loop/test_board_axis_test.py
+python checks/test_dither_only.py
 ```
 
 Native 测试验证真实生产控制器的单项冻结、独立 HOLD、注入和 clipping；

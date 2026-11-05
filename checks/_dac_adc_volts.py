@@ -32,7 +32,7 @@ from calibration_loop.estimator import estimate_block, polarity_anchor, prepare_
 # carries its provenance so a stale assumption cannot hide.
 FS_ADC_VPP_DIFF = 1.59      # DATASHEET: AD9695 differential input span at IFC register 0x1910 = 0x0C.
 #                             Confirm by driving a known 50 ohm amplitude at the ADC input and
-#                             reading the codes (tools/tone_level.py --dac-lsb 0).  Until then this is
+#                             reading the codes (tools/dither/tone_level.py --dac-lsb 0).  Until then this is
 #                             the one number in the chain that is not measured here.
 ADC_CODES = 2 ** 14         # 14-bit signed: -8192 .. +8191, span 16384 codes
 U_PER_CODE = FS_ADC_VPP_DIFF / ADC_CODES          # V per code, differential (= 97.05 uV)
@@ -82,7 +82,7 @@ def report(label: str, tone_codes: float, cfg: DitherConfig,
               f"  =>  {v_adc / v_dac:6.3%}  ({20 * np.log10(v_adc / v_dac):+.1f} dB)")
     if pulse_pp:
         # The honest ADC-side pulse number is the *folded replica peak-to-peak* (what
-        # tools/dither_ladder.py reports); estimate_block's gain_codes is the least-squares scale of
+        # tools/dither/dither_ladder.py reports); estimate_block's gain_codes is the least-squares scale of
         # a unit template, so it carries a ~40 % shape error and is not used here.
         v_adc = 0.5 * pulse_pp * U_PER_CODE
         v_dac = cfg.dither_scale_lsb * U_PER_LSB
@@ -106,7 +106,7 @@ for path in sorted(glob.glob("calibration_out/dither_vs_tone_frames/frame_*.bin"
         margins.append(m)
 # gain_codes (17.6 codes here) is the least-squares scale of a *unit template*, i.e. the same family
 # as the "7-18 codes" this session's doc quotes for these captures, but it is not a clean peak: the
-# shaped replica's folded pk-pk is what tools/dither_ladder.py reports, so the pulse row below uses
+# shaped replica's folded pk-pk is what tools/dither/dither_ladder.py reports, so the pulse row below uses
 # that number (from the ladder table) rather than gain_codes.
 report(f"archived tone+dither frames, 2026-09-17 ({len(tones)} frames, margin "
        f"{np.mean(margins):.1f})",
@@ -122,7 +122,7 @@ for amp_lsb, rep in ((16000, ladder["16000"]), (24000, ladder["24000"]), (30000,
 
 print("\nEvery volt here is measured at one end or the other; the ratio between them is the link.  "
       "The tone is\nthe honest probe (an impulse's peak also depends on pulse droop), so its ratio "
-      "is what the frequency\nsweep in tools/tone_level.py should map out.")
+      "is what the frequency\nsweep in tools/dither/tone_level.py should map out.")
 
 # 3. the chain, element by element, for the tone: DAC output -> splitter -> the rest -> ADC codes
 tone_lsb = cfg_old.a_sine * DAC_FULL_SCALE

@@ -1,4 +1,4 @@
-"""Instrument check for tools/dither_ladder.py, including a positive control.
+"""Instrument check for tools/dither/dither_ladder.py, including a positive control.
 
 The ladder tool is what turns a set of captured states into the answer to "how far can the
 dither be pushed".  Its linearity check therefore has to be able to *fail* when the chain really
@@ -29,7 +29,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "tools"))
+sys.path.insert(0, os.path.join(REPO, "tools", "dither"))
 
 from calibration_loop.dither import DitherConfig, write_dac_files     # noqa: E402
 from calibration_loop.simulate import BenchModel                      # noqa: E402

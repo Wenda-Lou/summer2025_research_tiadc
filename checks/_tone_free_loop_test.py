@@ -14,7 +14,7 @@ way and both are checked here, because both are invisible in a "did it converge"
    requiring the route to read them back, sign and scale.
 2. **Which observable is judged.** The acceptance filter must judge dither estimates.
    Strict mode never computes tone diagnostics; those columns must remain NaN.
-   tools/test_dither_only.py separately makes every tone function raise on any call.
+   checks/test_dither_only.py separately makes every tone function raise on any call.
 
     python checks/_tone_free_loop_test.py
 """

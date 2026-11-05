@@ -249,7 +249,7 @@ def figure_tone(plt, rt):
 def step_pooled(pts, min_margin=6.0):
     """The paired 34↔35 characterization as the tool's own verdict.
 
-    ``tools/skew_step_characterize.py`` pools every code-34 frame (baseline + both restores) into
+    ``tools/skew/skew_step_characterize.py`` pools every code-34 frame (baseline + both restores) into
     one batch and every code-35 frame into another, applies the loop's alignment-margin floor, and
     differences the two means.  Pooling this way is what gives the documented +19.08 ± 0.06 ps/code,
     so the figure uses the same arithmetic rather than a per-block average.

@@ -538,7 +538,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "dither_fold -- tone-free, projects the folded A-B difference "
                              "onto the pulse slope (quieter, but its scale read 2.8x low "
                              "on the same run, which widens the deadband to ~28 ps in "
-                             "truth).  Check any waveform with tools/timing_route_check.py")
+                             "truth).  Check any waveform with tools/dither/timing_route_check.py")
         sp.add_argument("--max-skew-samples", dest="max_skew_samples", type=float, default=None,
                         help="override the per-frame skew gate, in fractions of a sample "
                              "period.  Default: 0.25 with the tone-phase route (0.5 with the "

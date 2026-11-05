@@ -491,7 +491,7 @@ relative to `firmware/thesis_v3_loop_appl/src/`.
 | Who runs the loop | host PC, one UART/UDP round trip per capture | the board, inside one `adc -cal loop N` |
 | Data path | `dma -d` → `dma -w` → `udp` → PC | `adc_capture_frame()` → `RxBufferPtr`, no network |
 | Skew write | host sends `adc -cal skew step ±1`, parses `SKEW-TXN ... result=OK` | loop calls the same transaction and reads its status struct |
-| Everything else | — | unchanged; `adc -cal skew step` prints the same lines, so `tools/skew_park.py` still works |
+| Everything else | — | unchanged; `adc -cal skew step` prints the same lines, so `tools/skew/skew_park.py` still works |
 
 ```mermaid
 sequenceDiagram
@@ -591,7 +591,7 @@ desktop-tested, not yet bench-validated; rebuild/download the ELF and follow
 Normal runs now print one PROGRESS per 20 accepted frames, a last-20 RESULT,
 events/rejections and final status. Every row is retained in a separate bounded
 RAM snapshot (latest 4000 rows; overwritten rows are reported). PC command
-`python tools/board_loop_log.py --uart COM7 --out calibration_out/run.log`
+`python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/run.log`
 calibrates 300 frames and saves `.log`, physical-unit `.csv` and result `.json`.
 `--cmd "adc -cal loop export"` downloads the saved regular run without another
 calibration. Export does not write hardware; the new interface is offline-tested
@@ -642,7 +642,7 @@ Empty Application (C), no sources.
 3. **Open loop.** `adc -cal loop open 20`. Expect `st=ok` rows and
    `margin_x100 > 600`, and record `compute_ms_avg`.
 4. **Matched pair against the host.**
-   1. `python tools/skew_park.py --uart COM5 --code 24`.
+   1. `python tools/skew/skew_park.py --uart COM5 --code 24`.
    2. Host run: `python -m calibration_loop.run_calibration bench --uart COM5 --allow-skew-writes --iterations 300`.
    3. Park at code 24 again.
    4. `adc -cal loop 300` on this ELF.

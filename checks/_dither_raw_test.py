@@ -1,4 +1,4 @@
-"""Instrument check for tools/dither_raw_evidence.py against known ground truth.
+"""Instrument check for tools/dither/dither_raw_evidence.py against known ground truth.
 
 The tone-free raw tool measures the A-B timing from folded impulse replicas.  Before that
 number is trusted on the bench, the measurement itself has to be shown to recover a *known*
@@ -27,7 +27,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "tools"))
+sys.path.insert(0, os.path.join(REPO, "tools", "dither"))
 
 from calibration_loop.dither import DitherConfig, build_dac_waveform   # noqa: E402
 from dither_raw_evidence import analyse                                # noqa: E402

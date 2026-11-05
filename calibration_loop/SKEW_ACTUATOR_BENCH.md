@@ -106,7 +106,7 @@ point if you want 90 %.
 For each point: send `adc -cal skew step <delta>` on the console, require
 `result=OK`, then capture the frames. The `skew_batch` acceptance filter and the
 arithmetic mean are already in `calibration_loop.estimator`, and
-`tools/skew_step_characterize.py` drives the whole sequence and prints the table
+`tools/skew/skew_step_characterize.py` drives the whole sequence and prints the table
 below.
 
 **Pass:** the two stepped points move the same way and their step sizes agree
@@ -149,5 +149,5 @@ against the limits (`SkewActuator.error_to_steps`).
 
 Per round/point: the raw ACK block, `probe` output, and — for stage 6 — the
 per-frame `skew_phase_ps`, `skew_diff_route_ps`, `skew_source` and `frame_sha1`
-(the loop CSV carries all four; `tools/skew_step_characterize.py` writes them to
+(the loop CSV carries all four; `tools/skew/skew_step_characterize.py` writes them to
 its own CSV). Those are what make the result auditable rather than anecdotal.

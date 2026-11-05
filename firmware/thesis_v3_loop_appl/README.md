@@ -9,7 +9,7 @@ Both channels must observe the same broadband dither. Routes are
 identified. The old `wave` command is a compatibility no-op. Older waveform and
 template-route instructions below describe historical runs, not this mode.
 Native checks pass and the Vitis ELF builds; new-mode hardware validation remains
-pending. To save complete records and plots use `tools/board_loop_log.py` with
+pending. To save complete records and plots use `tools/board_loop/board_loop_log.py` with
 `--uart` and `--cmd`, omitting `--wave`.
 
 The original firmware (`../thesis_v3_500mhz_appl/`) plus one console command,
@@ -67,7 +67,7 @@ For all frame records and automatic plots, close the serial terminal and run
 from the repository root (replace COM7 with the actual port):
 
 ```powershell
-python tools/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
 ```
 
 The PC sends one calibration command, `adc -cal loop 300 stream`. Every frame
@@ -93,8 +93,8 @@ capture or write hardware. Test commands do not overwrite the regular-run snapsh
 
 Full streaming/plotting requires the matching new ELF, pyserial and matplotlib.
 `--no-export` selects UART progress only. Implementation: `butils_loop_results.c`,
-`tools/loop_result_export.py`, `tools/loop_result_plot.py`. Protocol/plot tests:
-`python tools/test_loop_result_export.py`; set `LOOP_C_EXPORT_FIXTURE` to a native
+`tools/board_loop/loop_result_export.py`, `tools/board_loop/loop_result_plot.py`. Protocol/plot tests:
+`python tools/board_loop/test_loop_result_export.py`; set `LOOP_C_EXPORT_FIXTURE` to a native
 test_summary.txt to also decode the actual production C packet.
 
 ---
@@ -374,13 +374,13 @@ Run from the **repository root**, with `pyserial` installed (`pip install pyseri
 cd C:\TIDIAC\summer2025_research_tiadc
 
 # quick check, no actuator writes (~20 s)
-python tools/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/open20_dither.log
+python tools/board_loop/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/open20_dither.log
 
 # full closed loop, 300 samples; duration depends on the estimator/bench
-python tools/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop 300" --out calibration_out/closed_loop/run_dither_board.log
+python tools/board_loop/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop 300" --out calibration_out/closed_loop/run_dither_board.log
 ```
 
-What [`tools/board_loop_log.py`](../../tools/board_loop_log.py) does:
+What [`tools/board_loop/board_loop_log.py`](../../tools/board_loop/board_loop_log.py) does:
 
 1. Opens the port at 115200 baud.
 2. With `--wave K`, sends `adc -cal loop wave K` and waits for `LOOP-WAVE`.
@@ -451,7 +451,7 @@ Things to check first:
 ## 6. Reference runs (2026-10-14)
 
 Both runs: `adc -cal loop 300`, closed loop, tone route, `w06` pulse (edge 4 /
-top 4 DAC samples, 5190 LSB), logged with `tools/board_loop_log.py`. The
+top 4 DAC samples, 5190 LSB), logged with `tools/board_loop/board_loop_log.py`. The
 firmware was reloaded (a new bring-up) between the two runs.
 
 ### 6.1 Summary
@@ -536,7 +536,7 @@ Columns, per batch of 20 frames:
 - **300 samples = 15 batches = at most 15 skew moves.** Both runs needed 11 and
   had 80 frames left at the end. If the starting error needs more codes than
   that, run more samples (`adc -cal loop 600`), or park closer first with
-  `tools/skew_park.py --verify-frames 0`.
+  `tools/skew/skew_park.py --verify-frames 0`.
 - **Gain and offset converge in the first batch; skew takes eleven.** The
   residual columns are within 0.8 % (gain) and 0.7 codes (offset) of zero from
   batch 1 on, because `mu = 0.35` per frame settles in ~10 frames. The *learned*

@@ -6,7 +6,7 @@ decimals with 20 and with 100 frames), while the raw folded-replica ratio read 0
 0.9643 on the two sets.  A quantity that does not move when the data changes cannot be the one
 used to claim gain detectability, so the routes are separated here:
 
-  1. ``estimate_block(..., pin_polarity=True)``  -- what ``tools/dither_response_test.py`` prints
+  1. ``estimate_block(..., pin_polarity=True)``  -- what ``tools/dither/dither_response_test.py`` prints
   2. ``estimate_block(..., pin_polarity=False)`` -- the same fit without the sign pinning
   3. sign-free per-event magnitude: the peak-to-peak of each impulse window, averaged over
      events with no polarity convention at all.  Polarity only flips a pulse's sign, so a
@@ -31,7 +31,7 @@ import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
-sys.path.insert(0, os.path.join(REPO, "tools"))
+sys.path.insert(0, os.path.join(REPO, "tools", "dither"))
 
 from calibration_loop.dither import DitherConfig, polarity_sequence          # noqa: E402
 from calibration_loop.estimator import (align_to_loop, estimate_block,      # noqa: E402

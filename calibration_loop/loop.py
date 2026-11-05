@@ -90,7 +90,7 @@ class LoopOptions:
     yield `skew_min_yield` (0.4) reports `low-yield:N/M` and the actuator is never
     moved, so the loop cannot acquire at all, and `max_consecutive_rejects` stops
     the run.  Two sanctioned ways out: park near the converged code first
-    (`tools/skew_park.py --uart COM5 --code 30`, where ~19 ps/code puts the residual
+    (`tools/skew/skew_park.py --uart COM5 --code 30`, where ~19 ps/code puts the residual
     inside the gate), or widen the bound for that run with
     `--max-skew-samples 0.5` (385 ps, still inside the tone phase's half-period wrap
     of 0.63 samples, so a wrapped branch is still caught).  A tone-free run needs
@@ -151,7 +151,7 @@ class LoopOptions:
       below).  Its zero crossing stays honest, so it is still usable as a cross-check.
 
     Which to use is a hardware question, and it is answerable before closing the loop:
-    ``tools/timing_route_check.py`` measures both against known actuator codes (read-only, offline
+    ``tools/dither/timing_route_check.py`` measures both against known actuator codes (read-only, offline
     on archived or fresh captures), and -- when the captures hold a tone -- against the
     tone-phase route as well, which is shape-independent and therefore the scale anchor.
 
@@ -176,7 +176,7 @@ class LoopOptions:
     A 20-frame batch on ``dither_phase`` then has 1.1 ps of standard error against the 10 ps
     deadband -- still more than precise enough.  The earlier 4.85 and 7.4 ps/code
     characterizations are *not* an independent anchor: both were measured with the tone route
-    (``tools/skew_step_characterize.py`` takes ``est.skew_phase_ps``), and today's tone reading of
+    (``tools/skew/skew_step_characterize.py`` takes ``est.skew_phase_ps``), and today's tone reading of
     19.5 ps/code at the working point disagrees with them, so the step at the code you actually
     use should be re-measured before any figure from it is quoted.
 
@@ -214,7 +214,7 @@ class LoopOptions:
 
     The check requires **both** a large disagreement *and* the opposite sign, so a step-size error
     alone cannot latch it.  That matters on this bench, because the actuator's step is not
-    uniform: measured 2026-09-20 with `tools/skew_step_characterize.py`, one code is 19.08 +- 0.06
+    uniform: measured 2026-09-20 with `tools/skew/skew_step_characterize.py`, one code is 19.08 +- 0.06
     ps between codes 34 and 35 (where the loop parks) against ~7.4 ps near neutral (2026-09-17).
     Whichever value ``HOST_STEP_PS`` carries, an honest move in the other region disagrees with
     the expectation by ~12 ps > this tolerance but keeps the sign, so it is not a fault.  The
@@ -229,7 +229,7 @@ class LoopOptions:
     taken from 2 of 20 frames has a standard error of several ps, against a 10 ps
     deadband, so it must not be allowed to move the actuator.  Below this yield the
     batch is logged and nothing else happens -- the same floor
-    ``tools/skew_close_loop.py`` uses.  Measured batches on the bench yield
+    ``tools/skew/skew_close_loop.py`` uses.  Measured batches on the bench yield
     0.75-1.0, so this only fires on a genuinely broken capture run (a half-synced
     JESD link, dropped datagrams), which is exactly when one bad mean would
     otherwise walk the actuator."""

@@ -139,7 +139,7 @@ Measured today (2026-11-04): when the tone is too large the estimator rejects ev
    - in the terminal: `adc -cal loop test park 24`
    - or, **after disconnecting the terminal**, in PowerShell at the repo root:
      ```powershell
-     python tools/skew_park.py --uart COM7 --code 24 --verify-frames 0
+     python tools/skew/skew_park.py --uart COM7 --code 24 --verify-frames 0
      ```
 3. **Disconnect the COM7 terminal** (Disconnect in Vitis / VS Code Serial Monitor). The tool in the next step needs exclusive access to COM7.
 
@@ -149,7 +149,7 @@ Measured today (2026-11-04): when the tone is too large the estimator rejects ev
 
 In PowerShell at the repo root:
 ```powershell
-python tools/board_loop_log.py --uart COM7 --out calibration_out/combiner_tone400mV_dither20Mhz_run300.log
+python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/combiner_tone400mV_dither20Mhz_run300.log
 ```
 
 - Suggested file name format: `combiner_tone<amplitude>mV_dither<rate>Mhz_run300.log`; with no tone, use `combiner_notone_...`.

@@ -91,7 +91,7 @@ The `swap` column reports captures where the half-group de-frame candidate was
 detected and replaced by the aligned pair. `False` is the normal reading; `True`
 means that frame's raw winner was four samples out, so the two channels no longer
 shared one loop position `n0`. To watch that quantity directly it must be ~1 and
-not ~0.756 — `python tools/live_before_after.py --uart COM3` prints it per frame
+not ~0.756 — `python tools/frames/live_before_after.py --uart COM3` prints it per frame
 alongside the gain ratio.
 
 `--plot` writes `probe_probe.png`. The left panel is `V[m]`, the averaged pulse
@@ -127,7 +127,7 @@ is also the neutral initialization), then walks one code at a time and refuses t
 continue if any ACK is not `result=OK`.
 
 ```bash
-python tools/skew_park.py --uart COM5 --code 24 --verify-frames 20
+python tools/skew/skew_park.py --uart COM5 --code 24 --verify-frames 20
 ```
 
 Then the three-way loop:
@@ -222,7 +222,7 @@ Two things to expect from that, so neither reads as a fault:
 * the `g_B/g_A` column settles at **about 1.012**, not 1.0000, because the dither
   route is no longer being nulled.  The plot draws both on purpose.
 
-`tools/dither_vs_tone_gain.py` measures the disagreement directly.  The offline proof
+`tools/dither/dither_vs_tone_gain.py` measures the disagreement directly.  The offline proof
 that the choice fixes the corrected spur is `checks/_gain_loop_test.py`: on a
 model whose pulse gains reproduce the bench's 1.2 % disagreement, the dither route
 leaves the tone 1.18 % out with the corrected spur at -38.0 dBc, while the tone route
@@ -266,14 +266,14 @@ dither-vs-tone gain disagreement is a property of the pulse path, not of tone in
 **Skew has no usable route without the tone**, and not because of dispersion: the model has
 none, and the impulse train's spectral content at f0 is simply too small for a coherent
 phase fit. Two consequences for a dither-only session: the loop's own skew gate throws away
-about half the captures (so use `tools/dither_response_test.py`, which measures the estimator
+about half the captures (so use `tools/dither/dither_response_test.py`, which measures the estimator
 directly and saves the raw frames, rather than `bench`), and the timing half of the
 "known changes" test cannot be answered in this configuration — it needs the tone on.
 
 ### Then the matched control
 
 ```bash
-python tools/skew_park.py --uart COM5 --code 24     # same starting point as run1
+python tools/skew/skew_park.py --uart COM5 --code 24     # same starting point as run1
 python -m calibration_loop.run_calibration bench --uart COM5 \
     --allow-skew-writes --no-cancellation --iterations 300 \
     --out calibration_out/closed_loop --stem run2_nocancel_300
@@ -340,10 +340,10 @@ Two more measurements belong in the same session, both read-only:
 
 ```bash
 # does the state the run left behind hold?  prints the drift and the A-B spur
-python tools/skew_stability_check.py --uart COM5
+python tools/skew/skew_stability_check.py --uart COM5
 
 # do the dither and tone routes to the gain mismatch actually agree?
-python tools/dither_vs_tone_gain.py --uart COM5 --frames 40 --save-frames
+python tools/dither/dither_vs_tone_gain.py --uart COM5 --frames 40 --save-frames
 ```
 
 The read-only tools open COM5 and the UDP port exactly like a run does, so they

@@ -87,8 +87,8 @@ At a -1.5 dBFS tone, keep the dither at or below 5197 LSB to avoid DAC clipping.
 Load the intended TXT on the DPG, then run:
 
 ```sh
-python tools/raw_frame_probe.py --uart COM5
-python tools/geometry_id.py --uart COM5 --frames 4
+python tools/frames/raw_frame_probe.py --uart COM5
+python tools/frames/geometry_id.py --uart COM5 --frames 4
 ```
 
 On the firmware console:
@@ -102,7 +102,7 @@ Require `result=OK`, `neutral_initialized=YES`, and record the reported actuator
 at code 24 through the ACK-checked transaction path:
 
 ```sh
-python tools/skew_park.py --uart COM5 --code 24 --verify-frames 0
+python tools/skew/skew_park.py --uart COM5 --code 24 --verify-frames 0
 ```
 
 Use `--verify-frames 0` for tone-free waveforms because the park tool's verification route needs
@@ -124,10 +124,10 @@ spi -r 0x1910
 Take a short capture in a new directory:
 
 ```sh
-python tools/dither_response_test.py --uart COM5 --frames 100 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 100 \
   --out calibration_out/response/preflight
 
-python tools/dither_raw_evidence.py \
+python tools/dither/dither_raw_evidence.py \
   --state ck=calibration_out/response/preflight/raw \
   --waveform-json <matching-waveform.json>
 ```
@@ -196,8 +196,8 @@ spi -r 0x1910
 After the differential write:
 
 ```sh
-python tools/raw_frame_probe.py --uart COM5 --frames 3
-python tools/frame_consistency.py --uart COM5 --frames 6
+python tools/frames/raw_frame_probe.py --uart COM5 --frames 3
+python tools/frames/frame_consistency.py --uart COM5 --frames 6
 ```
 
 If the write disturbs the link, perform link recovery and rerun the checks after every later IFC
@@ -209,7 +209,7 @@ Keep the actuator fixed. Capture the baseline with both channels at `0x0C`, then
 only to `0x0D`:
 
 ```sh
-python tools/dither_response_test.py --uart COM5 --frames 500 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 500 \
   --out calibration_out/response/A_base
 ```
 
@@ -222,13 +222,13 @@ spi -r 0x1910
 Verify the link, then capture the stepped state:
 
 ```sh
-python tools/raw_frame_probe.py --uart COM5
-python tools/frame_consistency.py --uart COM5 --frames 6
+python tools/frames/raw_frame_probe.py --uart COM5
+python tools/frames/frame_consistency.py --uart COM5 --frames 6
 
-python tools/dither_response_test.py --uart COM5 --frames 500 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 500 \
   --out calibration_out/response/A_step
 
-python tools/dither_raw_evidence.py \
+python tools/dither/dither_raw_evidence.py \
   --state base=calibration_out/response/A_base/raw \
   --state step=calibration_out/response/A_step/raw \
   --waveform-json waveforms/pulse_ladder/<stem>.json
@@ -259,10 +259,10 @@ capture these states in order:
 For each state:
 
 ```sh
-python tools/dither_response_test.py --uart COM5 --frames 200 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 200 \
   --out calibration_out/response/B_<stem>
 
-python tools/dither_raw_evidence.py \
+python tools/dither/dither_raw_evidence.py \
   --state <stem>=calibration_out/response/B_<stem>/raw \
   --waveform-json waveforms/pulse_ladder/<stem>.json
 ```
@@ -278,20 +278,20 @@ actuator untouched throughout the ladder.
 Load each TXT before its capture:
 
 ```sh
-python tools/dither_response_test.py --uart COM5 --frames 300 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 300 \
   --out calibration_out/response/F_amp16000
 
-python tools/dither_response_test.py --uart COM5 --frames 300 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 300 \
   --out calibration_out/response/F_amp24000
 
-python tools/dither_response_test.py --uart COM5 --frames 300 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 300 \
   --out calibration_out/response/F_amp30000
 ```
 
 Analyse all three states:
 
 ```sh
-python tools/dither_ladder.py \
+python tools/dither/dither_ladder.py \
   --state 16000=calibration_out/response/F_amp16000/raw \
   --state 24000=calibration_out/response/F_amp24000/raw \
   --state 30000=calibration_out/response/F_amp30000/raw \
@@ -313,10 +313,10 @@ spi -r 0x1910
 ```
 
 ```sh
-python tools/dither_response_test.py --uart COM5 --frames 300 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 300 \
   --out calibration_out/response/F_amp30000_ifcD
 
-python tools/dither_ladder.py \
+python tools/dither/dither_ladder.py \
   --state off=calibration_out/response/F_amp30000/raw \
   --state on=calibration_out/response/F_amp30000_ifcD/raw \
   --state-json off=waveforms/pulse_ladder/w06adc_e04_t04_amp30000.json \
@@ -337,14 +337,14 @@ After preflight, confirm channel B is healthy with a short state capture. Then c
 code, `+8` codes and `+1` code in one run:
 
 ```sh
-python tools/dither_response_test.py --uart COM5 --frames 1000 --steps +8,+1 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 1000 --steps +8,+1 \
   --allow-skew-writes --out calibration_out/response/ladder
 ```
 
 Analyse each code separately:
 
 ```sh
-python tools/dither_raw_evidence.py \
+python tools/dither/dither_raw_evidence.py \
   --state base=calibration_out/response/ladder/raw/code24_frame_*.bin \
   --state c32=calibration_out/response/ladder/raw/code32_frame_*.bin \
   --state b1=calibration_out/response/ladder/raw/code25_frame_*.bin \
@@ -395,7 +395,7 @@ spi -r 0x0701
 Capture the baseline:
 
 ```sh
-python tools/dither_response_test.py --uart COM5 --frames 500 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 500 \
   --out calibration_out/response/E_base
 ```
 
@@ -418,13 +418,13 @@ spi -r 0x0701
 Verify channel A did not change, probe the link, and capture the stepped state:
 
 ```sh
-python tools/raw_frame_probe.py --uart COM5
-python tools/frame_consistency.py --uart COM5 --frames 6
+python tools/frames/raw_frame_probe.py --uart COM5
+python tools/frames/frame_consistency.py --uart COM5 --frames 6
 
-python tools/dither_response_test.py --uart COM5 --frames 500 \
+python tools/dither/dither_response_test.py --uart COM5 --frames 500 \
   --out calibration_out/response/E_step
 
-python tools/dither_raw_evidence.py \
+python tools/dither/dither_raw_evidence.py \
   --state base=calibration_out/response/E_base/raw \
   --state step=calibration_out/response/E_step/raw \
   --waveform-json waveforms/pulse_ladder/<stem>.json
@@ -445,14 +445,14 @@ Run the offline checks:
 
 ```sh
 python checks/_tone_free_loop_test.py
-python tools/loop_direction_check.py
+python checks/loop_direction_check.py
 ```
 
 Load `w06adc_e04_t04_amp16000.txt`, run common preflight and confirm the matching geometry. Before
 the loop, compare timing routes on a known code pair:
 
 ```sh
-python tools/timing_route_check.py \
+python tools/dither/timing_route_check.py \
   --state 24=calibration_out/response/R24/raw \
   --state 32=calibration_out/response/R32/raw \
   --waveform-json waveforms/pulse_ladder/w06adc_e04_t04_amp16000.json

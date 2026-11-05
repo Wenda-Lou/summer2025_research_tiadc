@@ -42,7 +42,7 @@ typedef struct {
     uint64_t rng;
     int last_rotation;
     int noise_only;
-    /* stub actuator (tools/loop_direction_check.py) */
+    /* stub actuator (checks/loop_direction_check.py) */
     double direction;
     double step_ps;
     double commanded_ps;

@@ -62,7 +62,7 @@ def action_code(action: str) -> int:
 
 
 class StubActuator:
-    """Same stub as tools/loop_direction_check.py: production decision logic,
+    """Same stub as checks/loop_direction_check.py: production decision logic,
     a bench whose sign may be wrong."""
 
     HOST_STEP_PS = SkewActuator.HOST_STEP_PS

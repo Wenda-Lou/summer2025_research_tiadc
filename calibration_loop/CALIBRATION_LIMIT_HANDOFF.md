@@ -51,7 +51,7 @@ skew 控制码变化时清空累积并跳过移动帧，至少 20 帧才应用�
 最新修正：用户实际使用 `loop test`。该入口现在默认也只打印阶段、20 帧
 窗口、总结和异常；PC 工具对 baseline/run/step 自动追加一次性 `full`，
 保存完整数据并按 PRE/TRAIN/HOLD 作图，不再持续刷逐帧 UART 日志。
-`tools/axis_result_export.py` 输出每个测试点/重复的 CSV、JSON、PNG、SVG，
+`tools/board_loop/axis_result_export.py` 输出每个测试点/重复的 CSV、JSON、PNG、SVG，
 HOLD 统计和判断使用独立冻结数据。普通 loop 的功能保留，校准算法未改。
 验证：native 432 通过，Python 单项协议 12 项及导出/绘图 17 项通过；
 实际 Vitis 2025.1 构建通过。新 ELF 下载会清掉 RAM 基准，必须重建一次。
@@ -64,7 +64,7 @@ HOLD 统计和判断使用独立冻结数据。普通 loop 的功能保留，校
 终端，在仓库根目录运行一条电脑指令（COM7 按实际修改）：
 
 ```powershell
-python tools/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
 ```
 
 PC 用一条 `adc -cal loop 300 stream` 完成校准和全程传输。每条校准记录
@@ -78,7 +78,7 @@ offset 系数和执行器码，区分每个合格点、20 帧均值和拒帧标�
 普通 `adc -cal loop 300` 仍为简洁串口模式；`loop test` 保持详细实验日志。
 可选 `loop export` 只读快照功能保留，但不是当前全程工作流的必要步骤。
 新增源码：`firmware/thesis_v3_loop_appl/butils_loop_results.c`、
-`tools/loop_result_export.py`、`tools/loop_result_plot.py`。
+`tools/board_loop/loop_result_export.py`、`tools/board_loop/loop_result_plot.py`。
 
 验证：native 424 项通过、0 失败，包含超出 RAM 容量仍逐条发送的检查；
 PC 协议/绘图测试验证真实 C stream、全部行数、单位、拒帧标记和全程生图。
@@ -212,7 +212,7 @@ Python 扫描用 `--wave 2`，仍默认 PLAN ONLY。
 
 - `adc_cal_sim --run-all`：6077 通过、0 失败，18 scenarios、14 pipelines。
 - 新生成的 Python golden，8 个场景共 280 帧，C replay：489 通过、0 失败。
-- `python tools/test_board_axis_test.py`：11 项通过；wave 2 的 PLAN ONLY
+- `python tools/board_loop/test_board_axis_test.py`：11 项通过；wave 2 的 PLAN ONLY
   输出确认默认 skew gate 为 500，不打开串口。
 - 原生 dither-only 时钟批次：诚实执行器 8 步后残差 -2.80 ps，无锁定；
   反方向执行器只走 1 步后锁定。正负已知延迟及冻结测试均通过。
@@ -236,11 +236,11 @@ Python 扫描用 `--wave 2`，仍默认 PLAN ONLY。
   由 `butils_loop.c` include，与现有捕获/时钟事务共用生产接口。
 - `calibration_loop_c/adc_calibration_loop.h/.c`：`update_axes` 选择更新项、
   显式软件 offset 注入、实验用 clipping/tone 检查；默认仍更新全部三项。
-- `tools/board_axis_test.py`：配对步长、重复阶梯扫描、日志/CSV/JSON 和 HOLD
+- `tools/board_loop/board_axis_test.py`：配对步长、重复阶梯扫描、日志/CSV/JSON 和 HOLD
   评分。默认 PLAN ONLY，只有 `--execute` 才打开串口。
-- `tools/board_loop_log.py`：支持等待新命令的 `LOOP-TEST-END`，ERROR 返回失败。
+- `tools/board_loop/board_loop_log.py`：支持等待新命令的 `LOOP-TEST-END`，ERROR 返回失败。
 - 测试：`calibration_sim/sim_loop_tests.c`、`sim_board_axis_tests.c`、
-  `tools/test_board_axis_test.py`。
+  `tools/board_loop/test_board_axis_test.py`。
 
 这些修改目前在工作区，包含尚未跟踪的新文件，**没有创建提交**。
 继续工作时先查看 `git status`，不要覆盖用户后续修改或清理新文件。
@@ -341,7 +341,7 @@ Python 扫描用 `--wave 2`，仍默认 PLAN ONLY。
 自动化入口示例（默认只打印计划）：
 
 ```powershell
-python tools/board_axis_test.py sweep --axis skew --uart COM7 --wave 0 --points=1 --repeats 1 --out calibration_out/limits_skew_first
+python tools/board_loop/board_axis_test.py sweep --axis skew --uart COM7 --wave 0 --points=1 --repeats 1 --out calibration_out/limits_skew_first
 ```
 
 实际 COM 端口按机器确认。硬件和波形就绪后加 `--execute`；它会重新建立基准、
