@@ -444,7 +444,7 @@ back
 Run the offline checks:
 
 ```sh
-python calibration_out/_tone_free_loop_test.py
+python checks/_tone_free_loop_test.py
 python tools/loop_direction_check.py
 ```
 

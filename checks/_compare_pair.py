@@ -7,7 +7,7 @@ actuator moves at most one code per 20-frame batch either way, so its trajectory
 set by the batch size, while the gain and offset estimates are what the removed
 main tone was protecting.
 
-    python calibration_out/_compare_pair.py run1.csv run2_nocancel.csv
+    python checks/_compare_pair.py run1.csv run2_nocancel.csv
 """
 
 from __future__ import annotations

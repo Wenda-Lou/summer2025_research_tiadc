@@ -16,7 +16,7 @@ way and both are checked here, because both are invisible in a "did it converge"
    Strict mode never computes tone diagnostics; those columns must remain NaN.
    tools/test_dither_only.py separately makes every tone function raise on any call.
 
-    python calibration_out/_tone_free_loop_test.py
+    python checks/_tone_free_loop_test.py
 """
 
 from __future__ import annotations

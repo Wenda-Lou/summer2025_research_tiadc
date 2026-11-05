@@ -17,7 +17,7 @@ observable, and compares what each one leaves behind:
 The number that matters is the last one: the corrected A-B difference spur, which is
 the metric the calibration is supposed to improve.
 
-    python calibration_out/_gain_loop_test.py
+    python checks/_gain_loop_test.py
 """
 
 from __future__ import annotations

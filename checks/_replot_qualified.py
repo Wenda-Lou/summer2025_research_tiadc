@@ -14,8 +14,8 @@ from 6.0 to 6.5 (mean moves only 0.25 dB).  That is a scoring filter, not a loop
 change: raising the loop's own `min_align_margin` would cost ~40 % more captures for no
 benefit to the loop.
 
-    python calibration_out/_replot_qualified.py calibration_out/closed_loop/run1.csv
-    python calibration_out/_replot_qualified.py --min-margin 6.5 <run>.csv
+    python checks/_replot_qualified.py calibration_out/closed_loop/run1.csv
+    python checks/_replot_qualified.py --min-margin 6.5 <run>.csv
 """
 
 from __future__ import annotations

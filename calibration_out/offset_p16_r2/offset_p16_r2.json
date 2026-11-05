@@ -20,7 +20,7 @@
   "history_complete": true,
   "dropped_rows": 0,
   "run_completed": true,
-  "run_healthy": true,
+  "run_healthy": false,
   "actuator_code": 12,
   "phase_statistics": {
     "pre": {
@@ -29,18 +29,18 @@
       "accepted": 40,
       "gain_error_ppm": {
         "n": 40,
-        "mean": -665.225,
-        "sd": 2741.894053270289
+        "mean": 735.225,
+        "sd": 3044.965702198319
       },
       "offset_error_codes": {
         "n": 40,
-        "mean": 15.51725,
-        "sd": 0.6432339666850904
+        "mean": 15.26635,
+        "sd": 0.7065927108132091
       },
       "skew_error_ps": {
         "n": 40,
-        "mean": -1.4977500000000001,
-        "sd": 3.0817173762659493
+        "mean": -1.769,
+        "sd": 3.934321562079815
       }
     },
     "train": {
@@ -49,18 +49,18 @@
       "accepted": 300,
       "gain_error_ppm": {
         "n": 300,
-        "mean": -146.85,
-        "sd": 2887.240685629768
+        "mean": 263.78333333333336,
+        "sd": 2778.023989699641
       },
       "offset_error_codes": {
         "n": 300,
-        "mean": 0.14616666666666667,
-        "sd": 1.4259108168984653
+        "mean": 0.14501666666666665,
+        "sd": 1.3836477635224065
       },
       "skew_error_ps": {
         "n": 300,
-        "mean": -1.9252333333333334,
-        "sd": 3.3909214243194405
+        "mean": -2.3251333333333335,
+        "sd": 3.4190710930534043
       }
     },
     "hold": {
@@ -69,18 +69,18 @@
       "accepted": 100,
       "gain_error_ppm": {
         "n": 100,
-        "mean": -19.98,
-        "sd": 2545.8899615980376
+        "mean": -357.8,
+        "sd": 2482.495331457256
       },
       "offset_error_codes": {
         "n": 100,
-        "mean": -0.01715,
-        "sd": 0.6191867160993841
+        "mean": 0.40724,
+        "sd": 0.8630970089559382
       },
       "skew_error_ps": {
         "n": 100,
-        "mean": -2.1012,
-        "sd": 3.404998488556303
+        "mean": -2.3834,
+        "sd": 3.4149937426921095
       }
     }
   },
@@ -90,23 +90,23 @@
     "hold_accepted": 100,
     "hold_budget": 100,
     "hold_yield": 1.0,
-    "pre_mean": 15.51725,
-    "pre_observed_mean": 15.51725,
+    "pre_mean": 15.266350000000001,
+    "pre_observed_mean": 15.266350000000001,
     "gain_source": "dither_spectrum",
     "skew_route": "dither_cross_spectrum",
     "routes_consistent": true,
     "offset_n": 100,
-    "offset_mean": -0.01715,
-    "offset_sd": 0.6191867160993842,
-    "offset_se": 0.06191867160993843,
+    "offset_mean": 0.40724,
+    "offset_sd": 0.8630970089559382,
+    "offset_se": 0.08630970089559382,
     "gain_n": 100,
-    "gain_mean": -1.998e-05,
-    "gain_sd": 0.0025458899615980373,
-    "gain_se": 0.0002545889961598037,
+    "gain_mean": -0.0003578,
+    "gain_sd": 0.0024824953314572557,
+    "gain_se": 0.00024824953314572557,
     "skew_n": 100,
-    "skew_mean": -2.1012,
-    "skew_sd": 3.404998488556303,
-    "skew_se": 0.3404998488556303,
+    "skew_mean": -2.3834,
+    "skew_sd": 3.4149937426921095,
+    "skew_se": 0.34149937426921095,
     "reject_reasons": "{}",
     "hold_frozen": true,
     "hold_continues_train": true,
@@ -117,37 +117,37 @@
     "range_limit": false,
     "quantization_limited": false,
     "last_train_action": "measure-only",
-    "convergence_attempt": 238,
-    "pass": true
+    "convergence_attempt": 261,
+    "pass": false
   },
   "correction": {
     "gain_corr_a": 1.005574,
     "gain_corr_b": 0.995256,
-    "offset_a_codes": -5.26,
-    "offset_b_codes": 5.323
+    "offset_a_codes": -5.214,
+    "offset_b_codes": 5.251
   },
   "tail": {
     "window": 20,
     "feedback": "frozen",
     "gain_error_ppm": {
       "n": 20,
-      "mean": 315.15,
-      "sd": 2693.7599681095335
+      "mean": -1173.85,
+      "sd": 2506.4787477969758
     },
     "offset_error_codes": {
       "n": 20,
-      "mean": -0.1473,
-      "sd": 0.5888657339594306
+      "mean": 0.5657,
+      "sd": 0.6488903159280952
     },
     "skew_error_ps": {
       "n": 20,
-      "mean": -1.5675,
-      "sd": 2.4599890350632823
+      "mean": -2.753,
+      "sd": 2.5140407818155177
     }
   },
   "precision_validation": "independent_holdout",
   "plots": {
-    "png": "calibration_out\\offset_p16_r1.png",
-    "svg": "calibration_out\\offset_p16_r1.svg"
+    "png": "calibration_out\\offset_p16_r2\\offset_p16_r2.png",
+    "svg": "calibration_out\\offset_p16_r2\\offset_p16_r2.svg"
   }
 }

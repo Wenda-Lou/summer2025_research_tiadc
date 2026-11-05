@@ -82,7 +82,7 @@ Agreement **0.07 codes** (1.8 % of the 3.9-code mismatch), per-frame correlation
 After convergence the signed residual is ~0.1 codes. The impulse polarity sequence is
 balanced and the window estimator decouples the residual leak exactly, which is why a
 low-energy pulse can carry an unbiased DC measurement — the same property that makes the
-alignment work. Reproduce: `calibration_out/_offset_routes_test.py`.
+alignment work. Reproduce: `checks/_offset_routes_test.py`.
 
 ## 3. Dither gain cannot drive a gain loop — quantified
 

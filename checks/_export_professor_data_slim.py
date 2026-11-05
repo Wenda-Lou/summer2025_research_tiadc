@@ -11,7 +11,7 @@ record with one zero pad byte, so `np.fromfile(...).reshape(n, 2048)` decodes di
 pad byte is exactly the byte the decoder already discarded (255 complete groups use 4080 of
 the 4095 bytes).
 
-    python calibration_out/_export_professor_data_slim.py
+    python checks/_export_professor_data_slim.py
 """
 
 from __future__ import annotations

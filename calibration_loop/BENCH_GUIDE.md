@@ -147,7 +147,7 @@ drives it, which is the `--open-skew` case above. The run writes `<stem>.csv`,
 2026-09-17 a later 100-iteration run reusing `--stem run1` replaced the 300-capture
 `run1.csv` (252,730 → 84,984 bytes) together with its plot. The CSV is a run's only
 complete record — the console log keeps just the printed columns, and
-`calibration_out/_recover_run_from_log.py` rebuilds those from it, which is how that
+`checks/_recover_run_from_log.py` rebuilds those from it, which is how that
 300-run was recovered. Date the directory, e.g.
 `--out calibration_out/closed_loop_2026-09-17`.
 
@@ -223,7 +223,7 @@ Two things to expect from that, so neither reads as a fault:
   route is no longer being nulled.  The plot draws both on purpose.
 
 `tools/dither_vs_tone_gain.py` measures the disagreement directly.  The offline proof
-that the choice fixes the corrected spur is `calibration_out/_gain_loop_test.py`: on a
+that the choice fixes the corrected spur is `checks/_gain_loop_test.py`: on a
 model whose pulse gains reproduce the bench's 1.2 % disagreement, the dither route
 leaves the tone 1.18 % out with the corrected spur at -38.0 dBc, while the tone route
 nulls it and reaches **-46.9 dBc** — the model's own skew limit, 8.9 dB better.
@@ -327,7 +327,7 @@ Tee each run's console output to a file: the CSV is written only when the run
 finishes, so the log is the only record of a run that dies part-way — and the only
 thing left if a later run overwrites the CSV. On Windows PowerShell both `>` and
 `Tee-Object` write **UTF-16LE with a BOM**, so anything parsing these logs has to
-sniff the BOM instead of assuming UTF-8 (`calibration_out/_recover_run_from_log.py`
+sniff the BOM instead of assuming UTF-8 (`checks/_recover_run_from_log.py`
 does exactly that).
 
 ```bash

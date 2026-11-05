@@ -9,7 +9,7 @@ Right: run3's gain observables through the run.  The tone route is the controlle
 and goes to 1.0000; the dither route is no longer nulled and parks at ~1.012, which is
 the design cost of the choice, shown rather than hidden.
 
-    python calibration_out/_professor_figure.py
+    python checks/_professor_figure.py
 """
 
 from __future__ import annotations

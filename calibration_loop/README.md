@@ -108,7 +108,7 @@ after 20 consecutive rejects. What each route is, and why:
 Offline proof of all of it (run before any bench session that uses these routes):
 
 ```bash
-python calibration_out/_tone_free_loop_test.py   # routes against known delays + closed loop
+python checks/_tone_free_loop_test.py   # routes against known delays + closed loop
 python tools/loop_direction_check.py             # batch decision and direction latch, both routes
 ```
 

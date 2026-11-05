@@ -16,7 +16,7 @@ What is measured, and what is not yet:
   * ADC volts-per-code is DATASHEET (1.59 Vpp differential at IFC 0x0C / 16384).  Confirm it by
     driving a known 50 ohm amplitude at the ADC input and reading the codes.
 
-Run from the repo root:  python calibration_out/_dac_adc_volts.py
+Run from the repo root:  python checks/_dac_adc_volts.py
 """
 from __future__ import annotations
 

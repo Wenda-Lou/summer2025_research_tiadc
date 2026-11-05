@@ -5,7 +5,7 @@ Copies the two comparable frame sets (neutral code 24 and converged code 31) int
 ships alongside, writes an NPZ per set, and writes the README that documents the frame
 format, the acquisition setup and the numbers he can recompute from the raw bytes.
 
-    python calibration_out/_export_professor_data.py
+    python checks/_export_professor_data.py
 """
 
 from __future__ import annotations

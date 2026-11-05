@@ -16,8 +16,8 @@ Route 3 is also split by event polarity: for a linear channel the positive and n
 must give the same magnitude, so a disagreement is evidence of saturation, a DC-dependent
 window, or residual interference rather than of a gain mismatch.
 
-    python calibration_out/_gain_route_test.py
-    python calibration_out/_gain_route_test.py --state "calibration_out/response/raw/*.bin"
+    python checks/_gain_route_test.py
+    python checks/_gain_route_test.py --state "calibration_out/response/raw/*.bin"
 """
 
 from __future__ import annotations

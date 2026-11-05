@@ -13,7 +13,7 @@ The frames carry the real pulse geometry, the real 130-sample period, the real b
 sequence, quantisation, noise and a random DMA rotation, so the measurement itself is exercised,
 not just the arithmetic on top of it.
 
-    python calibration_out/_dither_ladder_test.py
+    python checks/_dither_ladder_test.py
 """
 
 from __future__ import annotations

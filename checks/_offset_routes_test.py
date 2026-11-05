@@ -14,7 +14,7 @@ ANTI-correlated (-0.69 to -0.93) with both means ~0, which cannot happen if both
 measuring one DC mismatch up to noise.  This measures all routes on the same archived
 bench frames (real hardware data, no bench time) to find out which is contaminated.
 
-    python calibration_out/_offset_routes_test.py
+    python checks/_offset_routes_test.py
 """
 
 from __future__ import annotations

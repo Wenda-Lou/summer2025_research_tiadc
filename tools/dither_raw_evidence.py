@@ -37,7 +37,7 @@ DC, so the offset column reads zero -- it is off by default and the mode used is
 Accuracy note: on captures that still hold the tone the sinusoid-removal residual is of the
 same order as the replica, which biases the cross-correlation lag towards zero.  Those runs
 are a mechanics check only; the absolute ps readout is valid on tone-free captures.
-``calibration_out/_dither_raw_test.py`` proves both, against known delays.
+``checks/_dither_raw_test.py`` proves both, against known delays.
 """
 
 from __future__ import annotations

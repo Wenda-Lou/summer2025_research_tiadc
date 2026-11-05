@@ -54,7 +54,8 @@ The repository mixes four kinds of code that support that bench:
 | `calibration_loop/` | Python impulse-dither calibration package (`python -m calibration_loop.run_calibration`). `fix_skew_export.py` repairs pre-2026-08-16 skew CSV labels from recorded board data (does not invent truncated frames). |
 | `calibration_loop_c/` | C port of `calibration_loop` (tone route: de-framing, estimator, block LMS, batch skew decision), BSP-free; compiled into `calibration_sim` and `firmware/thesis_v3_loop_appl`; tested by `calibration_sim --run-loop-tests` and against the Python loop with `export_golden.py` + `--loop-golden`. See its README. |
 | `firmware/thesis_v3_loop_appl/` | Vitis 2025.2 app: the original firmware (most sources referenced from `thesis_v3_500mhz_appl/`) plus `adc -cal loop`, which runs `calibration_loop_c` on the A53. Local files: modified `butils.c`, `butils_loop.c` (board adapter, `#include`d), `loop_waveform.h` (table of known DPG vectors, selected at run time with `adc -cal loop wave K`: 0 = 199.375 MHz, 1 = 399.375 MHz). Bench-validated 2026-10-14: closed loop converged at both tones, all transactions `OK` (see the on-board loop note under Architecture Notes). Overview, code map, logged runs and the 2026-10-14 reference results: its `README.md`. Design, build traps and bench procedure: last section of `calibration_sim/README.md`. |
-| `calibration_out/` | Example output of `calibration_loop` runs (CSV, JSON, plots). |
+| `calibration_out/` | Run outputs only (CSV, JSON, logs, plots), one folder per run or experiment: `closed_loop/` (host and board closed-loop runs, with the run1/run2 console logs), `professor_update/` (figures), `axis_*`/`gain_skew_*` (single-axis sweeps, each with its runner log), `dither_*`/`frames_*`/`pulse_sweep/`/`amplitude_sweep/` (excitation studies and archived frames), `combiner_*` (2026-11-04 RF-combiner tone-tolerance runs), `lockup_fix_backup/` (frozen-frame regression data), `misc/` (old default-name outputs of `calibration_loop`). `_direction_check/` and `_qualified_test/` are ignored scratch output of the checks. |
+| `checks/` | Offline proofs and session-figure scripts, run from the repo root (`python checks/_gain_loop_test.py`); they find the repo as their parent's parent and read data from `calibration_out/`. Moved from `calibration_out/` on 2026-11-05. |
 | `tools/` | Ad-hoc bench/host diagnostics, run from the repo root with `PYTHONPATH=.` if invoked as a path. `prepare_capture_truth_check.py` and `live_before_after.py` grade de-framing/channel ordering against `BenchModel` truth or live bytes; `half_group_lag_impact.py`, `deframe_rotation_table.py`, `compare_reconstruction.py` quantify extraction errors. `skew_step_characterize.py` measures the actuator's step response, `skew_close_loop.py` converges it with the batch decision, `skew_park.py` returns it to a chosen control code through the ACK-checked firmware transaction, and `loop_direction_check.py` proves the loop's direction guard offline against `BenchModel` for the tone route **and both dither routes**; `timing_route_check.py` compares the two tone-free timing routes against known actuator codes for whichever waveform is loaded (the loop's route choice is made from its output, not assumed). `dither_vs_tone_gain.py` compares the dither and tone routes to the gain mismatch on the same frames (and `--save-frames` archives the captures so a state can be re-analysed without bench time); `dither_raw_evidence.py` reads gain, offset and timing straight off the folded impulse replicas of tone-free captures — folding must be polarity-corrected (the balanced ± train cancels a sign-blind fold) and timing comes from the slope projection, readable as a difference between fixed states, not per frame. `dither_ladder.py` turns a ladder of captured states (16000 → 24000 → 30000 LSB) into the amplitude-linearity answer and a figure, and `dac_vs_adc_plot.py` overlays one capture on the DAC vector it came from. `board_loop_log.py` runs one `adc -cal loop ...` command on `thesis_v3_loop_appl` (optionally `--wave K` first), echoes the console and saves it as a log, stopping at `LOOP-STATUS` or on a `Command Error`. Each run is saved in its own folder (`--out calibration_out/x.log` → `calibration_out/x/x.log`, `.csv`, `.json`, `.png`, `.svg`, `.html`; a reused name becomes `x_<timestamp>/`; `--flat` restores the old side-by-side layout). `--park-after CODE` sends `adc -cal loop test park CODE` after a calibration run that ended cleanly (never after a timeout, error or `RECOVERY_REQUIRED`) and trusts it only if every `LOOP-SKEW-TXN` is `result=OK` and the last `code_after` is CODE; a failed park exits 1 but keeps the run's export. After an export it also writes `<stem>.html` beside the CSV and opens it (`--no-viewer` skips): `loop_viewer_export.py` copies `loop_viewer.html` (offline, drag-and-drop viewer for run CSVs, verbose `LOOP it=` logs and `axis_*`/`gain_skew_*` sweep folders) with that data embedded; run it by hand on any CSV or sweep folder. |
 | `rtl/axi_lite_wrapper/`, `rtl/axi_full_wrapper/` | AXI Lite / AXI Full master wrapper Verilog with SystemVerilog testbenches (Vivado xsim); `axi_lite_wrapper/ip_repo/` is the packaged Vivado IP. |
 | `docs/` | Project documents. `bench/CALIBRATION_STARTUP.md`: bench start-up checklist for the on-board loop (RF combiner setup). `bench/BENCH_SESSION_DITHER_ONLY.md`: dither-only bench session record (§7 closed loop, §F full-scale ladder). `reports/`: professor updates and meeting notes. `TIADC_definitions.md`: glossary (Chinese). `data/frequency_sweep.xlsx`: DAC output-vs-frequency sweep. |
@@ -332,7 +333,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   `tone_ratio` (logged, and drawn as the solid line in the gain panel) goes to 1.0000,
   while `g_B/g_A` settles at ~1.012 *by design*; `gain_source` in each row records
   which observable was actually used, so a silent fallback cannot look like
-  convergence.  Offline proof: `calibration_out/_gain_loop_test.py` — with
+  convergence.  Offline proof: `checks/_gain_loop_test.py` — with
   `BenchModel.pulse_gain_a/_b` reproducing the bench's 1.2 % disagreement, the dither
   route leaves the tone 1.18 % out and the corrected spur at −38.0 dBc, the tone route
   nulls it and reaches −46.9 dBc (the model's skew limit, +8.9 dB), and the sim's own
@@ -356,7 +357,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   pulse-window route reads **−3.907** codes against **−3.975** (whole-record tone-fit
   DC) and **−3.977** (plain record mean) for the same mismatch: agreement to 0.07
   codes, per-frame correlation +0.92
-  (`calibration_out/_offset_routes_test.py`).  Two traps cost time here, both worth
+  (`checks/_offset_routes_test.py`).  Two traps cost time here, both worth
   remembering: **(a)** two logged columns use *opposite* sign conventions —
   `cal_dc_difference_codes` is `mean(A) − mean(B)` while the loop's `dOffset` (and
   `offset_b_codes − offset_a_codes`) is `B − A`, so correlating them as-is yields
@@ -407,7 +408,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   spur at f_in, minus the known 1.5 % gain term, implied 17.7 ps -- a scale-biased route stops
   with a real residual ~2.8x its own deadband.  The *zero points* agreed to 0.31 code throughout
   (fold 35.18, phase 35.03, tone 34.87 -- each refitted from its own run's batch decisions by
-  `calibration_out/_session_figures.py`), so the fault is scale, not offset.  The tone route also
+  `checks/_session_figures.py`), so the fault is scale, not offset.  The tone route also
   gives the best end state this bench has produced: a tone-mode run started at that parked code
   (`tonezero_check`, 80 qualified samples from 100 captures, `gain tone` / `skew phase`,
   cancellation on) needed exactly one code (34 -> 35) to reach **+2.63 +- 0.05 ps** and held it for
@@ -440,7 +441,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   rejection in a tone-free run).  Gating on the estimator's tone fields, which stay finite on a
   tone-free capture because the fit latches onto a dither comb line, threw away 45 % of good
   frames in the model and 81 % in the first live run.  Offline proofs:
-  `calibration_out/_tone_free_loop_test.py` (both routes against known delays and closed-loop,
+  `checks/_tone_free_loop_test.py` (both routes against known delays and closed-loop,
   acquisition from a +200 ps mismatch, old-gate comparison) and `tools/loop_direction_check.py`
   (batch decision and direction latch, run for the tone route and both dither routes).  Bench
   procedure: `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §7.
@@ -479,7 +480,7 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   DAC budget is shared with the tone: a −1.5 dBFS tone is ~27 570 LSB, leaving only ~5 200 LSB
   (15.9 % FS) for the dither before the vector clips — the 30000 LSB excitation is a *tone-free*
   option.  Instrument check, including a deliberately compressing ladder that must fail:
-  `python calibration_out/_dither_ladder_test.py`.  Figures, numbers and procedure:
+  `python checks/_dither_ladder_test.py`.  Figures, numbers and procedure:
   `calibration_out/professor_update/session_fullscale.png` and `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §F
   (which holds every ladder table).
 
@@ -492,9 +493,9 @@ python tools/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"   
   rejection rate is ~20 % (almost all `align_margin` on torn UDP frames), so a
   300-sample run takes ~370 captures, and `LoopOptions.max_consecutive_rejects = 20`
   stops a run whose bench has stopped producing usable data at all.  Offline proof of
-  all of it: `calibration_out/_qualified_budget_test.py`; a run saved before this rule
+  all of it: `checks/_qualified_budget_test.py`; a run saved before this rule
   existed can be redrawn from its qualified rows with
-  `calibration_out/_replot_qualified.py <run>.csv`.
+  `checks/_replot_qualified.py <run>.csv`.
 
 - **Skew on the firmware path**: `adc -cal skew` measures only (no register
   writes).  `adc -cal skew step +/-N` **is** implemented — it is the single
@@ -670,20 +671,20 @@ experiment workflow. Never grade training residuals as independent precision.
    lives on the hardware branch (the batch skew decision and its direction latch)
    has its own offline proof: run `python tools/loop_direction_check.py` after
    touching `_skew_decision` — it covers the tone route and both dither routes.
-   Gain-loop changes have one too: `python calibration_out/_gain_loop_test.py`, which
+   Gain-loop changes have one too: `python checks/_gain_loop_test.py`, which
    uses `BenchModel.pulse_gain_a/_b` to reproduce the bench's dither-vs-tone
    disagreement and checks that the chosen observable actually nulls the tone.
    Anything touching the tone-free routes (`dither_raw.py`, `skew_batch_dither`, the
    route-dependent gates in `_reject_reason`) must also keep
-   `python calibration_out/_tone_free_loop_test.py` green: it closes the loop on both
+   `python checks/_tone_free_loop_test.py` green: it closes the loop on both
    dither routes and is the only check that catches a timing route with the wrong
    sign (a loop closing backwards still produces a smooth-looking learning curve).
    When a route choice depends on the hardware — as the two tone-free timing routes
    do — settle it with `python tools/timing_route_check.py` against known actuator
    codes rather than from the model.  Ladder/amplitude tooling has its own instrument
    check, including a deliberately compressing ladder that must fail:
-   `python calibration_out/_dither_ladder_test.py`.
-   Session-level figures come from `python calibration_out/_session_figures.py`, which
+   `python checks/_dither_ladder_test.py`.
+   Session-level figures come from `python checks/_session_figures.py`, which
    reads **only** committed run outputs and prints the numbers each panel carries (the
    three `calibration_out/professor_update/session_*.png` figures; the full tables stay in
    `docs/bench/BENCH_SESSION_DITHER_ONLY.md` §7 and §F).  If a figure and a doc disagree, the figure

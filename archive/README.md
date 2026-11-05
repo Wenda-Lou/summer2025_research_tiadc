@@ -66,3 +66,20 @@ location).
 - `axi_lite_wrapper/`, `axi_full_wrapper/` -> `rtl/`.
 - `py_UDP_interface/`, `py_to_matlab_module/`, `lwip_platform/` ->
   `archive/legacy_host/`.
+
+## Cleanup record (2026-11-05)
+
+Moves only (`git mv`). `calibration_out/` now holds run outputs only:
+
+- `calibration_out/_*.py` (18 offline checks and figure scripts) -> `checks/`.
+  They locate the repo as their parent's parent, so their data paths are
+  unchanged; run them from the repo root (`python checks/_gain_loop_test.py`).
+- Loose files regrouped: `closed_loop_run1.txt`, `closed_loop_run2_nocancel.txt`,
+  `stability_after_run1.txt` -> `closed_loop/`; `frozen_run_regression_296*` ->
+  `lockup_fix_backup/`; `dither_vs_tone*.csv` -> `dither_vs_tone_frames/`;
+  `dither_saved.*` -> `dither_saved/`; `offset_p16_r1.*`, `offset_p16_r2.*` ->
+  `offset_p16_r1/`, `offset_p16_r2/` (the per-run folder layout
+  `board_loop_log.py` now writes); `gain_skew_20261028_212902.runner.*` -> that
+  sweep's folder; `adc_data.zip`, `probe_probe.png`, `run.csv`,
+  `run_learning.png`, `run_meta.json` (old default-name outputs) -> `misc/`.
+

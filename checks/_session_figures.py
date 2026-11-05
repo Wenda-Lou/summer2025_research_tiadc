@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Session figures for the 2026-09-20 bench day — one figure per question.
 
-    python calibration_out/_session_figures.py
+    python checks/_session_figures.py
 
 Writes, into ``calibration_out/professor_update/``:
 

@@ -6,7 +6,7 @@ well-formed frame of *stale* samples.  Every downstream metric then repeats
 exactly, which reads like convergence -- a 296-iteration bench run reached gain
 ratio ``1.00000`` and offset mismatch ``0.000`` that way while its skew
 integrator walked the delay actuator to the rail.  See
-``calibration_out/frozen_run_regression_296.csv``.
+``calibration_out/lockup_fix_backup/frozen_run_regression_296.csv``.
 
 These tests drive ``HardwareBench.capture`` with fake console/socket objects, so
 they need no bench and no pyserial.

@@ -10,7 +10,7 @@ Recovered columns are exactly what the loop prints -- iteration, gain ratio, off
 mismatch, skew mismatch, calibrated SNDR and the corrected image spur.  Everything
 else in the original CSV (raw spur, per-row batch statistics, frame hashes) is gone.
 
-    python calibration_out/_recover_run_from_log.py calibration_out/closed_loop_run1.txt \
+    python checks/_recover_run_from_log.py calibration_out/closed_loop/closed_loop_run1.txt \
         --out calibration_out/closed_loop/run1_300_from_log.csv
 """
 

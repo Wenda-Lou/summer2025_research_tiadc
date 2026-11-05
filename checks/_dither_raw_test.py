@@ -13,7 +13,7 @@ real 8-word group packing with a random rotation per frame.
 Reported: recovered lag against the delay that was put in, and the per-frame scatter, which
 is the number that decides how long a state has to be recorded.
 
-    python calibration_out/_dither_raw_test.py
+    python checks/_dither_raw_test.py
 """
 
 from __future__ import annotations

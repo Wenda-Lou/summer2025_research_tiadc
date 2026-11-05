@@ -6,7 +6,7 @@ learning curve; the plot must draw only the qualified samples; and a bench that
 rejects everything must stop rather than spin.  All three are checked here against
 the bench model, with rejections injected into ``step()`` so no hardware is needed.
 
-    python calibration_out/_qualified_budget_test.py
+    python checks/_qualified_budget_test.py
 """
 
 from __future__ import annotations
