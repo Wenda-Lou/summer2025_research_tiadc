@@ -48,6 +48,7 @@ class Port:
     silent = False
     incomplete = False
     partial = False
+    park_fail = False
 
     def __init__(self, *args, **kwargs):
         self.output = b''
@@ -87,6 +88,20 @@ class Port:
                     index += 1
                 lines.append(f'LOOP-TEST-SUMMARY phase={phase} attempts=4 accepted=4 code=12')
             reply = '\r\n'.join(lines + ['LOOP-TEST-END result=OK']) + '\r\n'
+        elif command.startswith('adc -cal loop test park '):
+            target, code = int(command.split()[-1]), 12
+            lines = [f'LOOP-SKEW-TXN steps=0 result=OK code_before={code} code_after={code} stage=-']
+            while code != target:
+                step = 1 if target > code else -1
+                if self.park_fail and abs(code - 12) == 2:
+                    lines.append(f'LOOP-SKEW-TXN steps={step:+d} result=RECOVERY_REQUIRED '
+                                 f'code_before={code} code_after=-1 stage=jesd')
+                    break
+                lines.append(f'LOOP-SKEW-TXN steps={step:+d} result=OK code_before={code} '
+                             f'code_after={code + step} stage=-')
+                code += step
+            result = 'OK' if code == target else 'ERROR'
+            reply = '\r\n'.join(lines + [f'LOOP-TEST-END result={result}']) + '\r\n'
         elif command.startswith('adc -cal loop ') and command.split()[-1] == 'stream':
             self.n = int(command.split()[-2])
             if self.partial:
@@ -115,15 +130,21 @@ class Port:
     def close(self):
         self.closed = True
 
+def saved(path):
+    """Where board_loop_log.py saves a run named by --out: its own folder."""
+    return path.parent / path.stem / path.name
+
 
 class ExportTests(unittest.TestCase):
     def setUp(self):
         Port.instances.clear()
-        Port.fail = Port.silent = Port.incomplete = Port.partial = False
+        Port.fail = Port.silent = Port.incomplete = Port.partial = Port.park_fail = False
 
     def call_main(self, args):
+        # webbrowser.open is patched so a test run never opens the per-run viewer page.
         with patch.dict(sys.modules, serial=types.SimpleNamespace(Serial=Port)), \
-                patch('board_loop_log.time.sleep'), contextlib.redirect_stdout(io.StringIO()):
+                patch('board_loop_log.time.sleep'), patch('webbrowser.open'), \
+                contextlib.redirect_stdout(io.StringIO()):
             return main(args)
 
     def test_units_signed_statistics_and_coefficients(self):
@@ -185,15 +206,15 @@ class ExportTests(unittest.TestCase):
             port = Port.instances[-1]
             self.assertEqual(port.commands, ['adc -cal loop 300 stream'])
             self.assertTrue(port.closed)
-            result = json.loads(path.with_suffix('.json').read_text())
+            result = json.loads(saved(path).with_suffix('.json').read_text())
             self.assertEqual(result['exported_rows'], 300)
             self.assertEqual(result['tail']['window'], 20)
             self.assertTrue(result['run_healthy'])
-            with path.with_suffix('.csv').open(newline='') as stream:
+            with saved(path).with_suffix('.csv').open(newline='') as stream:
                 self.assertEqual(len(list(csv.DictReader(stream))), 300)
-            self.assertNotIn('LOOP-EXPORT-DATA', path.read_text())
-            self.assertTrue(path.with_suffix('.png').exists())
-            self.assertTrue(path.with_suffix('.svg').exists())
+            self.assertNotIn('LOOP-EXPORT-DATA', saved(path).read_text())
+            self.assertTrue(saved(path).with_suffix('.png').exists())
+            self.assertTrue(saved(path).with_suffix('.svg').exists())
             self.assertEqual(result['source'], 'firmware_export_v2')
 
     def test_download_only_never_requests_calibration(self):
@@ -208,27 +229,27 @@ class ExportTests(unittest.TestCase):
             command = 'adc -cal loop test run offset 4 4 4'
             self.assertEqual(self.call_main(['--out', str(path), '--cmd', command]), 0)
             self.assertEqual(Port.instances[-1].commands, [command + ' full'])
-            result = json.loads(path.with_suffix('.json').read_text())
+            result = json.loads(saved(path).with_suffix('.json').read_text())
             self.assertTrue(result['assessment']['pass'])
             self.assertEqual(result['tail']['feedback'], 'frozen')
             self.assertEqual(result['phase_statistics']['hold']['accepted'], 4)
-            with path.with_suffix('.csv').open(newline='') as stream:
+            with saved(path).with_suffix('.csv').open(newline='') as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual(len(rows), 12)
             self.assertEqual({r['phase'] for r in rows}, {'pre', 'train', 'hold'})
-            self.assertNotIn('LOOP-TEST-ROW ', path.read_text())
-            self.assertTrue(path.with_suffix('.png').exists())
+            self.assertNotIn('LOOP-TEST-ROW ', saved(path).read_text())
+            self.assertTrue(saved(path).with_suffix('.png').exists())
 
     def test_partial_stream_is_already_saved_when_uart_times_out(self):
         Port.partial = True
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'partial.log'
             self.assertEqual(self.call_main(['--out', str(path), '--timeout', '.05']), 1)
-            with path.with_suffix('.csv').open(newline='') as stream:
+            with saved(path).with_suffix('.csv').open(newline='') as stream:
                 self.assertEqual(len(list(csv.DictReader(stream))), 5)
-            self.assertNotIn('LOOP-EXPORT-DATA', path.read_text())
-            self.assertFalse(path.with_suffix('.json').exists())
-            self.assertFalse(path.with_suffix('.png').exists())
+            self.assertNotIn('LOOP-EXPORT-DATA', saved(path).read_text())
+            self.assertFalse(saved(path).with_suffix('.json').exists())
+            self.assertFalse(saved(path).with_suffix('.png').exists())
 
     def test_incomplete_calibration_still_exports_without_retry(self):
         Port.incomplete = True
@@ -236,8 +257,8 @@ class ExportTests(unittest.TestCase):
             path = Path(directory) / 'incomplete.log'
             self.assertEqual(self.call_main(['--out', str(path), '--cmd', 'adc -cal loop export']), 1)
             self.assertEqual(Port.instances[-1].commands, ['adc -cal loop export'])
-            self.assertFalse(json.loads(path.with_suffix('.json').read_text())['run_completed'])
-            self.assertTrue(path.with_suffix('.csv').exists())
+            self.assertFalse(json.loads(saved(path).with_suffix('.json').read_text())['run_completed'])
+            self.assertTrue(saved(path).with_suffix('.csv').exists())
 
     def test_uart_error_and_timeout_close_without_retry(self):
         for failure in ('fail', 'silent'):
@@ -247,9 +268,48 @@ class ExportTests(unittest.TestCase):
                 self.assertEqual(self.call_main(['--out', str(path), '--timeout', '.01']), 1)
                 self.assertEqual(Port.instances[-1].commands, ['adc -cal loop 300 stream'])
                 self.assertTrue(Port.instances[-1].closed)
-                self.assertFalse(path.with_suffix('.json').exists())
-                self.assertIn('STOPPED', path.read_text())
+                self.assertFalse(saved(path).with_suffix('.json').exists())
+                self.assertIn('STOPPED', saved(path).read_text())
                 setattr(Port, failure, False)
+
+    def test_park_after_returns_actuator_once_the_run_ends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'park.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--park-after', '24']), 0)
+            self.assertEqual(Port.instances[-1].commands,
+                             ['adc -cal loop 300 stream', 'adc -cal loop test park 24'])
+            log = saved(path).read_text()
+            self.assertIn('code=24 after 12 moves, every transaction result=OK', log)
+            self.assertTrue(saved(path).with_suffix('.json').exists())
+
+    def test_park_after_failed_ack_is_reported_not_retried(self):
+        Port.park_fail = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'park.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--park-after', '24']), 1)
+            self.assertEqual(Port.instances[-1].commands,
+                             ['adc -cal loop 300 stream', 'adc -cal loop test park 24'])
+            self.assertIn('park-after: failed', saved(path).read_text())
+            # The run's own data is still exported.
+            self.assertTrue(saved(path).with_suffix('.json').exists())
+
+    def test_park_after_never_follows_a_failed_run(self):
+        for failure in ('fail', 'silent'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                setattr(Port, failure, True)
+                path = Path(directory) / 'failed.log'
+                self.assertEqual(self.call_main(['--out', str(path), '--timeout', '.01',
+                                                 '--park-after', '24']), 1)
+                self.assertEqual(Port.instances[-1].commands, ['adc -cal loop 300 stream'])
+                self.assertIn('park-after: skipped', saved(path).read_text())
+                setattr(Port, failure, False)
+
+    def test_park_after_refused_for_bad_code_or_non_run_command(self):
+        for args in (['--park-after', '49'], ['--park-after', '-1'],
+                     ['--park-after', '24', '--cmd', 'adc -cal loop export'],
+                     ['--park-after', '24', '--cmd', 'adc -cal loop test park 12']):
+            self.assertEqual(self.call_main(args), 2)
+        self.assertFalse(Port.instances)
 
     def test_legacy_rows_need_no_carrier_fields(self):
         lines = [f'LOOP it={i} st=ok used_gain_ppm=0 doff_mc={value} skew_cps=-209 '
@@ -302,13 +362,44 @@ class ExportTests(unittest.TestCase):
         finally:
             plt.close(fig)
 
+    def test_each_run_gets_its_own_folder_and_viewer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'run.log'
+            self.assertEqual(self.call_main(['--out', str(path)]), 0)
+            folder = Path(directory) / 'run'
+            self.assertEqual(sorted(p.suffix for p in folder.iterdir()),
+                             ['.csv', '.html', '.json', '.log', '.png', '.svg'])
+            self.assertIn('capture,iteration,status', (folder / 'run.html').read_text(encoding='utf-8'))
+            self.assertFalse(list(Path(directory).glob('run.*')))
+
     def test_reused_output_stem_preserves_previous_run(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'run.log'
-            path.with_suffix('.json').write_text('previous run')
+            saved(path).parent.mkdir()
+            saved(path).with_suffix('.json').write_text('previous run')
             self.assertEqual(self.call_main(['--out', str(path)]), 0)
-            self.assertEqual(path.with_suffix('.json').read_text(), 'previous run')
-            self.assertEqual(len(list(Path(directory).glob('run_*.png'))), 1)
+            self.assertEqual(saved(path).with_suffix('.json').read_text(), 'previous run')
+            new = [d for d in Path(directory).glob('run_*') if d.is_dir()]
+            self.assertEqual(len(new), 1)
+            self.assertEqual(len(list(new[0].glob('run_*.png'))), 1)
+
+    def test_busy_port_leaves_no_empty_run_folder(self):
+        def busy(*args, **kwargs):
+            raise OSError("could not open port 'COM7': PermissionError(13)")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'run.log'
+            with patch.dict(sys.modules, serial=types.SimpleNamespace(Serial=busy)), \
+                    patch('board_loop_log.time.sleep'), patch('webbrowser.open'), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(['--out', str(path)]), 1)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_flat_layout_keeps_files_beside_out(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'run.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--flat', '--no-viewer']), 0)
+            self.assertTrue(path.with_suffix('.csv').exists())
+            self.assertFalse(path.with_suffix('.html').exists())
 
     @unittest.skipUnless(os.environ.get('LOOP_C_EXPORT_FIXTURE'), 'native C fixture not specified')
     def test_actual_production_c_export(self):

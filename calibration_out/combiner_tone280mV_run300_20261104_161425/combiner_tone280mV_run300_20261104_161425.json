@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "source": "firmware_export_v2",
+  "metadata": {
+    "run_id": "1",
+    "mode": "closed",
+    "waveform": "reference_free_dither",
+    "requested": "300",
+    "qualified": "300",
+    "captures": "340",
+    "rejected": "40",
+    "code": "13",
+    "skew_abort": "0",
+    "elapsed_ms": "37161",
+    "compute_ms_avg": "4",
+    "gsrc": "dither_spectrum",
+    "skew_route": "dither_cross_spectrum",
+    "reference_free": "1",
+    "feedback": "active",
+    "corr_a_ppm": "8686",
+    "corr_b_ppm": "-7674",
+    "offa_mc": "2876",
+    "offb_mc": "-2959",
+    "polarity": "1",
+    "deadband_cps": "1000",
+    "step_cps": "1910",
+    "mu_offset_ppm": "350000",
+    "mu_gain_ppm": "350000"
+  },
+  "waveform": "reference_free_dither",
+  "gain_source": "dither_spectrum",
+  "skew_route": "dither_cross_spectrum",
+  "requested": 300,
+  "qualified": 300,
+  "captures": 340,
+  "rejected": 40,
+  "skew_abort": 0,
+  "run_completed": true,
+  "run_healthy": true,
+  "finite_accepted_rows": 300,
+  "exported_rows": 340,
+  "total_rows": 340,
+  "dropped_rows": 0,
+  "history_complete": true,
+  "capture_failures_without_measurement": 0,
+  "actuator": {
+    "code": 13,
+    "deadband_ps": 10.0,
+    "step_ps": 19.1
+  },
+  "actuator_code": 13,
+  "correction": {
+    "equation": "(raw - offset_codes) * gain_corr",
+    "gain_corr_a": 1.008686,
+    "gain_corr_b": 0.992326,
+    "offset_a_codes": 2.876,
+    "offset_b_codes": -2.959
+  },
+  "tail": {
+    "window": 20,
+    "feedback": "active",
+    "gain_error_ppm": {
+      "n": 20,
+      "mean": 106.45,
+      "sd": 3090.4085145563045
+    },
+    "offset_error_codes": {
+      "n": 20,
+      "mean": 0.06975,
+      "sd": 1.0980042121959277
+    },
+    "skew_error_ps": {
+      "n": 20,
+      "mean": 7.679,
+      "sd": 2.514272731511252
+    }
+  },
+  "precision_validation": "training_residuals_only",
+  "plots": {
+    "png": "calibration_out\\combiner_tone280mV_run300_20261104_161425\\combiner_tone280mV_run300_20261104_161425.png",
+    "svg": "calibration_out\\combiner_tone280mV_run300_20261104_161425\\combiner_tone280mV_run300_20261104_161425.svg"
+  }
+}

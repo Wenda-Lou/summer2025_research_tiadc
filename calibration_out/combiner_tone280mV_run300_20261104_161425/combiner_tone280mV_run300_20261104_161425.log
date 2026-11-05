@@ -1,0 +1,155 @@
+# cmd: adc -cal loop 300 stream
+# port: COM7
+# start: 2026-11-04 16:14:26
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+0 result=OK code_after=24 stage=-
+LOOP-START mode=closed samples=300 waveform=reference_free_dither code=24 gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 reject_clipping=1 export=1 stream=1 run_id=1
+LOOP it=0 st=events n0=-1 rot=0 margin_x100=6304 corr_ppm=-984138 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=0 corr_b_ppm=0 offa_mc=0 offb_mc=0 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=1 st=events n0=-1 rot=0 margin_x100=5969 corr_ppm=-983246 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=5002 corr_b_ppm=-4863 offa_mc=722 offb_mc=-742 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=1 st=events n0=-1 rot=0 margin_x100=6347 corr_ppm=-984244 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=5002 corr_b_ppm=-4863 offa_mc=722 offb_mc=-742 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=4 st=events n0=-1 rot=0 margin_x100=6135 corr_ppm=-983701 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8462 corr_b_ppm=-8258 offa_mc=1609 offb_mc=-1646 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=6 st=events n0=-1 rot=0 margin_x100=6156 corr_ppm=-983757 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=9620 corr_b_ppm=-9392 offa_mc=1871 offb_mc=-1914 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=19 st=events n0=-1 rot=0 margin_x100=6086 corr_ppm=-983568 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=9196 corr_b_ppm=-8947 offa_mc=2015 offb_mc=-2064 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=24 code_after=23 stage=-
+LOOP-PROGRESS accepted=20/300 window=20 code=23 gain_ppm=2859 offset_mc=-730 skew_cps=14284
+LOOP-EVENT it=19 act=move:OK steps=-1 code=23
+LOOP it=27 st=events n0=-1 rot=0 margin_x100=7087 corr_ppm=-985889 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8516 corr_b_ppm=-8237 offa_mc=2512 offb_mc=-2574 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=27 st=events n0=-1 rot=0 margin_x100=6741 corr_ppm=-985166 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8516 corr_b_ppm=-8237 offa_mc=2512 offb_mc=-2574 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP-PROGRESS accepted=40/300 window=20 code=22 gain_ppm=-500 offset_mc=88 skew_cps=13025
+LOOP-EVENT it=39 act=move:OK steps=-1 code=22
+LOOP it=41 st=events n0=-1 rot=0 margin_x100=8674 corr_ppm=-988472 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=10394 corr_b_ppm=-10024 offa_mc=2210 offb_mc=-2267 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=45 st=events n0=-1 rot=0 margin_x100=8846 corr_ppm=-988696 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8865 corr_b_ppm=-8513 offa_mc=2123 offb_mc=-2179 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=53 st=events n0=-1 rot=0 margin_x100=8380 corr_ppm=-988067 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8859 corr_b_ppm=-8487 offa_mc=2367 offb_mc=-2429 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=54 st=events n0=-1 rot=0 margin_x100=8355 corr_ppm=-988032 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8609 corr_b_ppm=-8242 offa_mc=2341 offb_mc=-2402 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=22 code_after=21 stage=-
+LOOP-PROGRESS accepted=60/300 window=20 code=21 gain_ppm=258 offset_mc=-108 skew_cps=11731
+LOOP-EVENT it=59 act=move:OK steps=-1 code=21
+LOOP it=67 st=events n0=-1 rot=0 margin_x100=10175 corr_ppm=-990172 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=10076 corr_b_ppm=-9641 offa_mc=2902 offb_mc=-2976 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=79 st=events n0=-1 rot=0 margin_x100=10471 corr_ppm=-990449 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=9998 corr_b_ppm=-9491 offa_mc=2782 offb_mc=-2852 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=21 code_after=20 stage=-
+LOOP-PROGRESS accepted=80/300 window=20 code=20 gain_ppm=57 offset_mc=-1 skew_cps=10732
+LOOP-EVENT it=79 act=move:OK steps=-1 code=20
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=20 code_after=19 stage=-
+LOOP-PROGRESS accepted=100/300 window=20 code=19 gain_ppm=104 offset_mc=-87 skew_cps=9438
+LOOP-EVENT it=99 act=move:OK steps=-1 code=19
+LOOP it=114 st=events n0=-1 rot=0 margin_x100=15626 corr_ppm=-993600 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8221 corr_b_ppm=-7607 offa_mc=2849 offb_mc=-2929 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=19 code_after=18 stage=-
+LOOP-PROGRESS accepted=120/300 window=20 code=18 gain_ppm=381 offset_mc=-108 skew_cps=8051
+LOOP-EVENT it=119 act=move:OK steps=-1 code=18
+LOOP it=125 st=events n0=-1 rot=0 margin_x100=20152 corr_ppm=-995038 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=10738 corr_b_ppm=-10055 offa_mc=2842 offb_mc=-2925 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=130 st=events n0=-1 rot=0 margin_x100=19868 corr_ppm=-994967 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8910 corr_b_ppm=-8247 offa_mc=2768 offb_mc=-2850 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=135 st=events n0=-1 rot=0 margin_x100=21148 corr_ppm=-995271 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8490 corr_b_ppm=-7820 offa_mc=3259 offb_mc=-3347 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=18 code_after=17 stage=-
+LOOP-PROGRESS accepted=140/300 window=20 code=17 gain_ppm=-231 offset_mc=91 skew_cps=7056
+LOOP-EVENT it=139 act=move:OK steps=-1 code=17
+LOOP it=140 st=events n0=-1 rot=0 margin_x100=24282 corr_ppm=-995882 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=10233 corr_b_ppm=-9510 offa_mc=2950 offb_mc=-3032 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=156 st=events n0=-1 rot=0 margin_x100=25834 corr_ppm=-996129 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8462 corr_b_ppm=-7732 offa_mc=2911 offb_mc=-2992 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=17 code_after=16 stage=-
+LOOP-PROGRESS accepted=160/300 window=20 code=16 gain_ppm=-455 offset_mc=82 skew_cps=5696
+LOOP-EVENT it=159 act=move:OK steps=-1 code=16
+LOOP it=175 st=events n0=-1 rot=0 margin_x100=34157 corr_ppm=-997072 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=9981 corr_b_ppm=-9201 offa_mc=3250 offb_mc=-3340 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=16 code_after=15 stage=-
+LOOP-PROGRESS accepted=180/300 window=20 code=15 gain_ppm=-30 offset_mc=-173 skew_cps=4672
+LOOP-EVENT it=179 act=move:OK steps=-1 code=15
+LOOP it=185 st=events n0=-1 rot=0 margin_x100=45709 corr_ppm=-997812 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=9758 corr_b_ppm=-8967 offa_mc=3229 offb_mc=-3317 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=15 code_after=14 stage=-
+LOOP-PROGRESS accepted=200/300 window=20 code=14 gain_ppm=-102 offset_mc=-21 skew_cps=3214
+LOOP-EVENT it=199 act=move:OK steps=-1 code=14
+LOOP it=200 st=events n0=-1 rot=0 margin_x100=57612 corr_ppm=-998264 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8151 corr_b_ppm=-7355 offa_mc=3336 offb_mc=-3428 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=206 st=events n0=-1 rot=0 margin_x100=60564 corr_ppm=-998349 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=9170 corr_b_ppm=-8344 offa_mc=3194 offb_mc=-3284 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=14 code_after=13 stage=-
+LOOP-PROGRESS accepted=220/300 window=20 code=13 gain_ppm=-74 offset_mc=86 skew_cps=2006
+LOOP-EVENT it=219 act=move:OK steps=-1 code=13
+LOOP it=226 st=events n0=-1 rot=0 margin_x100=70094 corr_ppm=-998573 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=7340 corr_b_ppm=-6501 offa_mc=3434 offb_mc=-3528 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=238 st=events n0=-1 rot=0 margin_x100=76590 corr_ppm=-998694 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=7774 corr_b_ppm=-6891 offa_mc=3281 offb_mc=-3373 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=238 st=events n0=-1 rot=0 margin_x100=75919 corr_ppm=-998683 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=7774 corr_b_ppm=-6891 offa_mc=3281 offb_mc=-3373 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=239 st=events n0=-1 rot=0 margin_x100=68145 corr_ppm=-998533 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8428 corr_b_ppm=-7532 offa_mc=3069 offb_mc=-3156 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP-PROGRESS accepted=240/300 window=20 code=13 gain_ppm=320 offset_mc=27 skew_cps=850
+LOOP it=245 st=events n0=-1 rot=0 margin_x100=72175 corr_ppm=-998614 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8615 corr_b_ppm=-7708 offa_mc=2802 offb_mc=-2885 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=247 st=events n0=-1 rot=0 margin_x100=77153 corr_ppm=-998704 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8383 corr_b_ppm=-7471 offa_mc=2843 offb_mc=-2926 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=247 st=events n0=-1 rot=0 margin_x100=70629 corr_ppm=-998584 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8383 corr_b_ppm=-7471 offa_mc=2843 offb_mc=-2926 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=247 st=events n0=-1 rot=0 margin_x100=74010 corr_ppm=-998649 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8383 corr_b_ppm=-7471 offa_mc=2843 offb_mc=-2926 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP-PROGRESS accepted=260/300 window=20 code=13 gain_ppm=-369 offset_mc=9 skew_cps=684
+LOOP it=263 st=events n0=-1 rot=0 margin_x100=71568 corr_ppm=-998603 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=7056 corr_b_ppm=-6126 offa_mc=2690 offb_mc=-2769 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=263 st=events n0=-1 rot=0 margin_x100=75696 corr_ppm=-998679 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=7056 corr_b_ppm=-6126 offa_mc=2690 offb_mc=-2769 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=269 st=events n0=-1 rot=0 margin_x100=71785 corr_ppm=-998607 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=9392 corr_b_ppm=-8412 offa_mc=2735 offb_mc=-2817 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=273 st=events n0=-1 rot=0 margin_x100=68084 corr_ppm=-998531 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8389 corr_b_ppm=-7418 offa_mc=3272 offb_mc=-3361 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP-PROGRESS accepted=280/300 window=20 code=13 gain_ppm=174 offset_mc=-59 skew_cps=815
+LOOP it=282 st=events n0=-1 rot=0 margin_x100=66721 corr_ppm=-998501 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8542 corr_b_ppm=-7554 offa_mc=3364 offb_mc=-3456 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=284 st=events n0=-1 rot=0 margin_x100=70643 corr_ppm=-998584 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8247 corr_b_ppm=-7261 offa_mc=3419 offb_mc=-3512 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=289 st=events n0=-1 rot=0 margin_x100=79401 corr_ppm=-998741 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8788 corr_b_ppm=-7791 offa_mc=3079 offb_mc=-3167 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP it=293 st=events n0=-1 rot=0 margin_x100=75994 corr_ppm=-998684 gain_ppm=nan mag_ppm=nan used_gain_ppm=nan doff_mc=nan skew_cps=nan corr_a_ppm=8459 corr_b_ppm=-7462 offa_mc=3097 offb_mc=-3185 clips=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum
+LOOP-PROGRESS accepted=300/300 window=20 code=13 gain_ppm=106 offset_mc=70 skew_cps=768
+LOOP-RESULT window=20 feedback=active gain_ppm=106 gain_sd_ppm=3090 offset_mc=70 offset_sd_mc=1098 skew_cps=768 skew_sd_cps=251
+LOOP-END qualified=300/300 captures=340 rejected=40 code=13 skew_abort=0 elapsed_ms=37161 compute_ms_avg=4
+LOOP-STATUS mode=closed waveform=reference_free_dither qualified=300 captures=340 rejected=40 polarity=1 code=13 skew_abort=0 iteration=300 corr_a_ppm=8686 corr_b_ppm=-7674 offa_mc=2876 offb_mc=-2959
