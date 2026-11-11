@@ -135,7 +135,7 @@ Measured today (2026-11-04): when the tone is too large the estimator rejects ev
 ## 6. Before each run
 
 1. Press Enter in the terminal; you must see `uart-cmd$:` (confirms the board is idle and not still running the previous run).
-2. **Return the code to 24**, either:
+2. **Return the code to 24** (skip this if the previous run used `--park-after 24` and printed `every transaction result=OK`), either:
    - in the terminal: `adc -cal loop test park 24`
    - or, **after disconnecting the terminal**, in PowerShell at the repo root:
      ```powershell
@@ -147,28 +147,72 @@ Measured today (2026-11-04): when the tone is too large the estimator rejects ev
 
 ## 7. Run the calibration
 
-In PowerShell at the repo root:
+All commands run in PowerShell at the repo root, with the COM7 terminal disconnected. The tool is `tools/board_loop/board_loop_log.py`; it sends one `adc -cal loop ...` command, streams every record to the PC, and saves the results.
+
+### 7.1 Standard run (300 frames, closed loop)
+
 ```powershell
 python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/combiner_tone400mV_dither20Mhz_run300.log
 ```
 
-- Suggested file name format: `combiner_tone<amplitude>mV_dither<rate>Mhz_run300.log`; with no tone, use `combiner_notone_...`.
-- Results are saved in the `calibration_out/<name>/` folder, containing `.log`, `.csv`, `.json`, `.png`, `.svg` and `.html`. A reused name gets a timestamp appended automatically.
-- When the run finishes, the `.html` viewer opens in the browser automatically.
+Name the run `combiner_tone<amplitude>mV_dither<rate>Mhz_run300.log`. With no tone, use `combiner_notone_dither<rate>Mhz_run300.log`. If the run did not start at code 24, add the start code, e.g. `..._start12_run300.log`.
 
-**How to confirm the run succeeded**:
-- `LOOP-START` shows `code=24` and `reference_free=1`
+### 7.2 Other commands
+
+| Goal | Command (add `--uart COM7 --out calibration_out/<name>.log`) |
+|---|---|
+| Standard closed loop, 300 frames | *(no extra option)*; the default is `--cmd "adc -cal loop 300"` |
+| More frames | `--cmd "adc -cal loop 600"` |
+| Measure only; the actuator does not move | `--cmd "adc -cal loop open 60"` |
+| Return the actuator to a code when the run ends | `--park-after 12` (any code 0..48; see 7.5) |
+| Download the last run again, without recalibrating | `--cmd "adc -cal loop export"` |
+| Do not open the browser at the end | `--no-viewer` |
+| Old flat layout (files directly in `calibration_out/`) | `--flat` |
+| Longer wait for a slow run (default 1800 s) | `--timeout 3600` |
+
+`--wave` is legacy and not needed: the firmware is reference-free and does not need to know which file DPG is playing.
+
+### 7.3 Where the results go
+
+`--out calibration_out/<name>.log` saves everything in its own folder:
+
+```
+calibration_out/<name>/
+  <name>.log    compact UART console log
+  <name>.csv    every frame record (accepted and rejected)
+  <name>.json   summary: last-20-frame means, corrections, final code
+  <name>.png    curves of skew, gain, offset, corrections and code
+  <name>.svg    the same figure as a vector image
+  <name>.html   interactive viewer, opened in the browser automatically
+```
+
+If `calibration_out/<name>/` already holds a run, the new run goes to `<name>_<date>_<time>/`, so nothing is overwritten. If the run stops early, the `.log` and the rows received so far in the `.csv` are kept.
+
+To reopen or rebuild a viewer later (VS Code has no HTML preview; this opens it in the browser):
+```powershell
+python tools/board_loop/loop_viewer_export.py calibration_out/<name>/<name>.csv --open
+```
+It also takes a single-axis sweep folder, e.g. `calibration_out/axis_20261028_203116`.
+
+### 7.4 How to confirm the run succeeded
+
+At the end the console prints `RESULT qualified=... rejected=... code=...` and the last-20-frame means. Check:
+- `LOOP-START` shows `code=24` (or your chosen start code) and `reference_free=1`
 - `LOOP-END qualified=300/300`, `skew_abort=0`
 - Every `LOOP-SKEW-TXN` is `result=OK`
 - The last few batches are `inside-deadband`, and the last-20-frame means of gain, offset and skew are all close to 0
+- The command exits without `stopped:`, `error:` or `WARNING`
 
-Measure only, without moving the actuator: `--cmd "adc -cal loop open 60"`.
+### 7.5 Returning the actuator automatically (`--park-after`)
 
-Return the actuator to a chosen code automatically when the run ends: add `--park-after 12` (any code 0..48).
-- The park is sent only if the run ended cleanly; after a timeout, error or `RECOVERY_REQUIRED` it is skipped.
-- The console prints `park-after 12: code=12 after N moves, every transaction result=OK`. Anything else prints a `WARNING` and the command exits with 1; the run's data is still saved.
-- 12 is the null of the current bring-up only. After a re-Run, run once from 24 and use the code it stops at.
-- Put the start code in the next run's name, e.g. `..._start12_run300.log`, since a run started at the null is not comparable with one started at 24.
+```powershell
+python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/<name>.log --park-after 24
+```
+
+- After the run, it sends `adc -cal loop test park 24` and walks one code at a time through the ACK-checked transaction.
+- The park is sent only if the run ended cleanly. After a timeout, `Command Error` or `RECOVERY_REQUIRED` it is skipped and the log says `park-after: skipped`.
+- Success prints `park-after 24: code=24 after N moves, every transaction result=OK`. Anything else prints a `WARNING` and the command exits with 1. The run's data is still saved. Check the `LOOP-SKEW-TXN` lines in the log before the next run.
+- `--park-after 24` resets for the next matched run, which replaces step 6.2. Parking at the null (e.g. `--park-after 12`) suits steady-state or tone-limit runs, but 12 is the null of the current bring-up only. After a re-Run, run once from 24 and use the code it stops at.
 
 ---
 
