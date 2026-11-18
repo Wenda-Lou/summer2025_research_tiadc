@@ -1,5 +1,11 @@
 # Calibration start-up procedure (RF combiner setup)
 
+For the current manual mismatch PRE/TRAIN/HOLD experiment with tone and dither
+combined at the ADC input, follow [RF_COMBINER_MANUAL_TEST.md](RF_COMBINER_MANUAL_TEST.md).
+It includes baseline handling and final dither-cancelled waveform inspection.
+For that experiment, restore the saved baseline code before each point instead
+of using this older guide's blanket instruction to park at code 24.
+
 Each time you come to the lab to run the on-board closed-loop calibration, work through this checklist from top to bottom. **Confirm each step is OK before moving on to the next.**
 Applies to: `firmware/thesis_v3_loop_appl` (reference-free, dither-only on-board closed loop), on the PC whose console is COM7.
 
@@ -193,6 +199,33 @@ To reopen or rebuild a viewer later (VS Code has no HTML preview; this opens it 
 python tools/board_loop/loop_viewer_export.py calibration_out/<name>/<name>.csv --open
 ```
 It also takes a single-axis sweep folder, e.g. `calibration_out/axis_20261028_203116`.
+
+### 7.3.1 Final signal waveform after dither cancellation
+
+With the updated firmware, a completed closed run saves a fresh final frame
+using frozen coefficients and learns/subtracts dither without a supplied
+reference. Close the serial terminal and download this saved frame:
+
+```powershell
+python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/<name>/signal.csv
+```
+
+This only reads the saved frame. It saves `signal.csv`, `signal.json` and
+`signal.html`, then opens the existing viewer on the waveform page. Use
+`--no-viewer` to skip writing/opening the HTML. A/B traces share a time axis in
+ns; select a sample-window length and move its start. The page also shows A-B
+and full-frame output spectra in MHz/dBFS. It does not infer a before/after
+improvement from an output-only record.
+
+The success badge requires `status=cancelled` and a consistent same-stem JSON.
+If learning failed, the page shows the preserved corrected samples with an
+explicit non-cancelled status; the downloader exits 1. A CSV without its JSON
+is marked unconfirmed. This new output stage still needs bench validation.
+
+To reopen an existing waveform, run
+`python tools/board_loop/loop_viewer_export.py calibration_out/<name>/signal.csv --open`.
+Pass the run folder instead to embed both calibration results and signal
+waveforms in one page, or drag the CSV/JSON files into `loop_viewer.html`.
 
 ### 7.4 How to confirm the run succeeded
 

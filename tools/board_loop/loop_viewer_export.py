@@ -1,4 +1,4 @@
-"""Write a self-contained loop_viewer.html page for one exported run CSV.
+"""Write a self-contained viewer for calibration runs or final signal outputs.
 
 board_loop_log.py calls this after every export, so each run gets a page beside
 its CSV (`<stem>.html`) that opens straight onto that run: no file picking, no
@@ -21,27 +21,39 @@ EMBEDDED = re.compile(r'(<script id="embedded" type="application/json">)(.*?)(</
 
 
 def _datasets(source: Path):
-    """CSV file -> one run dataset; folder -> its sweep (summary/frames) and/or run CSVs."""
+    """Include signal status sidecars; folders may contain runs and waveforms."""
     if source.is_file():
+        files = {source.name: source.read_text(encoding='utf-8-sig')}
+        sidecar = source.with_suffix('.json')
+        if source.suffix.lower() == '.csv' and sidecar.is_file():
+            files[sidecar.name] = sidecar.read_text(encoding='utf-8-sig')
         return [{'name': source.parent.name or 'run',
-                 'files': {source.name: source.read_text(encoding='utf-8')}}]
+                 'files': files}]
+    out = []
     files = {}
     for name in ('summary.csv', 'frames.csv'):
         if (source / name).is_file():
             files[name] = (source / name).read_text(encoding='utf-8')
     if files:
-        return [{'name': source.name, 'files': files}]
-    # a gain_skew_* folder holds one sweep per axis
-    out = []
+        out.append({'name': source.name, 'files': files})
+    for csv in sorted(source.glob('*.csv')):
+        if csv.name in ('summary.csv', 'frames.csv'):
+            continue
+        with csv.open(encoding='utf-8-sig') as stream:
+            header = stream.readline().strip()
+        if header.startswith('capture,iteration,status') or header == 'sample,time_s,output_a_codes,output_b_codes':
+            out.extend(_datasets(csv))
     for sub in sorted(p for p in source.iterdir() if p.is_dir()):
-        out.extend(d for d in _datasets(sub) if 'summary.csv' in d['files'])
+        out.extend(_datasets(sub))
     return out
 
 
-def write_viewer(source, out=None, open_browser=False):
+def write_viewer(source, out=None, open_browser=False, signal=None):
     """Embed `source` (a run CSV or a sweep folder) into a copy of loop_viewer.html."""
     source = Path(source)
     datasets = _datasets(source)
+    if signal is not None:
+        datasets.extend(_datasets(Path(signal)))
     if not datasets:
         raise ValueError(f'nothing to show in {source}')
     template = TEMPLATE.read_text(encoding='utf-8')
@@ -60,7 +72,7 @@ def write_viewer(source, out=None, open_browser=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('source', help='run CSV from board_loop_log.py, or an axis_*/gain_skew_* folder')
+    ap.add_argument('source', help='calibration/signal CSV, or a run/axis_*/gain_skew_* folder')
     ap.add_argument('--out', help='HTML path (default: beside the CSV, or viewer.html in the folder)')
     ap.add_argument('--open', action='store_true', help='open the page in the default browser')
     args = ap.parse_args(argv)

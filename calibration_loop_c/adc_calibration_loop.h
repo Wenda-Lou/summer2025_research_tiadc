@@ -320,6 +320,27 @@ void adc_cal_loop_skew_batch(const adc_cal_loop_skew_frame_t *frames, int n_fram
 void adc_cal_loop_skew_batch_dither(const adc_cal_loop_skew_frame_t *frames, int n_frames,
                                     double min_margin, adc_cal_loop_skew_batch_t *out);
 
+/* Output-only learning, after feedback has stopped. No reference or waveform
+ * metadata is consumed. A dominant sinusoid and repeated sparse pulses must be
+ * identifiable; otherwise the corrected samples are passed through unchanged. */
+typedef enum {
+    ADC_CAL_LOOP_OUTPUT_UNAVAILABLE = 0,
+    ADC_CAL_LOOP_OUTPUT_CANCELLED,
+    ADC_CAL_LOOP_OUTPUT_NO_TONE,
+    ADC_CAL_LOOP_OUTPUT_NO_DITHER,
+    ADC_CAL_LOOP_OUTPUT_AMBIGUOUS
+} adc_cal_loop_output_status_t;
+
+typedef struct {
+    adc_cal_loop_output_status_t status;
+    size_t n_samples;
+    double tone_hz;
+    unsigned period_samples;
+    unsigned events;
+    double validation_db_a;
+    double validation_db_b;
+} adc_cal_loop_output_t;
+
 typedef struct {
     adc_cal_loop_config_t cfg;
     adc_cal_loop_options_t opt;
@@ -351,6 +372,10 @@ typedef struct {
     double ch_b[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
     double cal_a[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
     double cal_b[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
+    /* Separate output: cancellation never feeds the calibration estimator. */
+    double output_a[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
+    double output_b[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
+    adc_cal_loop_output_t output;
     double work_y[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
     double work_r[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
     double score[ADC_CAL_LOOP_MAX_LOOP_SAMPLES];
@@ -383,6 +408,17 @@ const char *adc_cal_loop_state_update(adc_cal_loop_state_t *state,
  * (check row->rejected), negative when the buffer could not be de-framed. */
 int adc_cal_loop_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes,
                       adc_cal_loop_row_t *row);
+
+/* Learn repeated pulse shapes and polarities from corrected samples, then
+ * subtract them. Each event uses a shape learned from OTHER events. Leaves
+ * input samples and calibration state untouched. Non-CANCELLED statuses leave
+ * an unchanged copy in output_a/b. n must be 512..MAX_CHANNEL_SAMPLES. */
+int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const double *b,
+                               size_t n);
+/* Fresh DMA frame, frozen final coefficients, then output-only cancellation.
+ * No coefficient update or actuator write. Invalid frames invalidate output. */
+int adc_cal_loop_make_output(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes);
+const char *adc_cal_loop_output_status_name(adc_cal_loop_output_status_t status);
 
 /* Capture callback for adc_cal_loop_run: fill buf, return bytes or <= 0 on failure. */
 typedef long (*adc_cal_loop_capture_fn)(void *ctx, uint8_t *buf, size_t capacity);

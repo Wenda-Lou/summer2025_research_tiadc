@@ -112,6 +112,11 @@ h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text
 .status { display: inline-flex; align-items: center; gap: 4px; font: 600 12px var(--font-mono); padding: 1px 7px; border-radius: 999px; }
 .status.pass { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
 .status.fail { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, transparent); }
+.status.unknown { color: var(--ink-2); background: var(--grid); }
+.signal-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 12px 0; }
+.signal-controls label { display: inline-flex; align-items: center; gap: 8px; }
+.signal-controls select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+.signal-controls input[type="range"] { width: min(280px, 45vw); accent-color: var(--s1); }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 760px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
 .panel { min-width: 0; }
@@ -164,10 +169,10 @@ code { font-family: var(--font-mono); font-size: 12.5px; }
   <header class="top">
     <div>
       <h1>TIADC 校準資料檢視</h1>
-      <p class="sub">讀 <code>tools/board_loop_log.py</code>、<code>tools/board_axis_test.py</code> 存下來的資料。可直接把檔案或資料夾拖進這頁：單軸掃描選 <code>summary.csv</code> + <code>frames.csv</code>（或整個 <code>axis_*</code> / <code>gain_skew_*</code> 資料夾），一般閉環選 run 的 <code>.csv</code> 或舊版逐幀 <code>.log</code>。資料只在瀏覽器裡讀取，不會上傳。</p>
+      <p class="sub">載入校準 run 的 <code>.csv</code>、逐幀 <code>.log</code> 或單軸掃描資料夾。看 dither 抵消後波形，請一起載入 <code>board_signal_output.py</code> 匯出的同名 <code>.csv</code> + <code>.json</code>；也可直接拖入整個資料夾。資料只在瀏覽器裡讀取，不會上傳。</p>
     </div>
     <div class="actions">
-      <label class="btn" for="pick-files">開啟檔案<input id="pick-files" type="file" multiple accept=".csv,.log,.txt"></label>
+      <label class="btn" for="pick-files">開啟檔案<input id="pick-files" type="file" multiple accept=".csv,.json,.log,.txt"></label>
       <label class="btn" for="pick-dir">開啟資料夾<input id="pick-dir" type="file" webkitdirectory multiple></label>
     </div>
   </header>
@@ -204,9 +209,15 @@ function num(v) {
   const x = parseFloat(s); return Number.isFinite(x) ? x : NaN;
 }
 const fin = Number.isFinite;
-function headerOf(text) { const nl = text.indexOf("\n"); return (nl < 0 ? text : text.slice(0, nl)).replace(/\r$/, ""); }
+function headerOf(text) { const nl = text.indexOf("\n"); return (nl < 0 ? text : text.slice(0, nl)).replace(/^\uFEFF/, "").replace(/\r$/, ""); }
 function classify(name, text) {
   const h = headerOf(text);
+  if (h === "sample,time_s,output_a_codes,output_b_codes") return "signal";
+  if (/\.json$/i.test(name)) {
+    try { if (JSON.parse(text).source === "frozen_board_signal_snapshot") return "signalmeta"; }
+    catch (e) { throw new Error("JSON 格式錯誤"); }
+    return null;
+  }
   if (/(^|,)hold_accepted(,|$)/.test(h) && /(^|,)point(,|$)/.test(h)) return "summary";
   if (/(^|,)phase(,|$)/.test(h) && /(^|,)experiment(,|$)/.test(h)) return "frames";
   if (h.startsWith("capture,iteration,status")) return "runcsv";
@@ -246,6 +257,28 @@ function runFromCSV(objs) {
     batch: num(o.batch_skew_ps), act: o.skew_action && o.skew_action !== "none" ? o.skew_action : "",
     phase: o.phase || ""
   })), meta: {} };
+}
+function signalFromCSV(text, meta) {
+  const objs = parseCSV(text);
+  if (objs.length < 512 || objs.length > 4096) throw new Error("輸出波形須有 512–4096 個採樣點");
+  const rows = objs.map((o, i) => {
+    const sample = Number(o.sample), t = Number(o.time_s), a = Number(o.output_a_codes), b = Number(o.output_b_codes);
+    if ([o.sample, o.time_s, o.output_a_codes, o.output_b_codes].some(v => v === undefined || v.trim() === "") ||
+        sample !== i || ![t, a, b].every(fin)) throw new Error("波形有遺漏、重複或無效的採樣點");
+    return { sample, t: t*1e9, a, b };
+  });
+  const dt = rows[1].t - rows[0].t;
+  if (!(dt > 0) || rows.some((r, i) => Math.abs(r.t - i*dt) > Math.max(1e-6, dt*1e-6)))
+    throw new Error("波形時間軸不連續或取樣間距不一致");
+  const rate = 1e9/dt;
+  if (meta) {
+    if (Number(meta.samples) !== rows.length || !fin(Number(meta.sample_rate_hz)) ||
+        Math.abs(Number(meta.sample_rate_hz)/rate - 1) > 1e-6 || meta.coefficients !== "frozen")
+      throw new Error("CSV 與 JSON 的採樣數、取樣率或凍結狀態不一致");
+    if (typeof meta.dither_cancelled !== "boolean" || (meta.status === "cancelled") !== meta.dither_cancelled)
+      throw new Error("JSON 的抵消狀態與標記不一致");
+  }
+  return { rows, rate, meta: meta || null, cancelled: !!meta && meta.status === "cancelled" && meta.dither_cancelled === true };
 }
 function frameRow(o, i) {
   return {
@@ -293,10 +326,17 @@ function addFiles(list) {
   // list: [{path, name, text}]
   const groups = new Map(); const errors = [];
   for (const f of list) {
-    const kind = classify(f.name, f.text);
+    let kind;
+    try { kind = classify(f.name, f.text); }
+    catch (e) { errors.push(f.name + "：" + e.message); continue; }
     if (!kind) continue;
     const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : (f.group || "");
-    if (kind === "summary" || kind === "frames") {
+    if (kind === "signal" || kind === "signalmeta") {
+      const base = f.name.replace(/\.(csv|json)$/i, "");
+      const k = "signal:" + dir + "/" + base;
+      if (!groups.has(k)) groups.set(k, { base, dir });
+      groups.get(k)[kind] = f;
+    } else if (kind === "summary" || kind === "frames") {
       const k = "sweep:" + dir; if (!groups.has(k)) groups.set(k, { dir, files: {} });
       groups.get(k).files[kind] = f;
     } else if (kind === "runcsv" || kind === "runlog") {
@@ -311,7 +351,13 @@ function addFiles(list) {
   let firstNew = -1;
   for (const [k, g] of groups) {
     let ds = null;
-    if (k.startsWith("sweep:")) {
+    if (k.startsWith("signal:")) {
+      if (!g.signal) { errors.push(g.base + "：請同時載入同名波形 CSV。"); continue; }
+      try {
+        const parsed = signalFromCSV(g.signal.text, g.signalmeta ? JSON.parse(g.signalmeta.text) : null);
+        ds = { kind: "signal", name: g.base, ...parsed };
+      } catch (e) { errors.push(g.base + "：" + e.message); continue; }
+    } else if (k.startsWith("sweep:")) {
       if (!g.files.summary) { errors.push((g.dir || "掃描") + "：缺少 summary.csv。"); continue; }
       let nm = (g.dir || g.files.summary.path).split("/").filter(Boolean).slice(-2).join("/") || "掃描";
       ds = buildSweep(nm, parseCSV(g.files.summary.text), g.files.frames ? parseCSV(g.files.frames.text) : null);
@@ -329,13 +375,13 @@ function addFiles(list) {
   }
   document.getElementById("msg").textContent = errors.join(" ");
   if (firstNew >= 0) { state.active = firstNew; state.selected = null; }
-  else if (!errors.length && list.length) document.getElementById("msg").textContent = "沒有認得的檔案：需要 summary.csv / frames.csv、run 的 .csv，或含 LOOP it= 的 .log。";
+  else if (!errors.length && list.length) document.getElementById("msg").textContent = "沒有認得的檔案：請載入校準 CSV / log、掃描資料夾，或輸出波形 CSV + JSON。";
   render();
 }
 async function readFiles(fileList) {
   const out = []; const tag = "drop-" + Date.now();
   for (const file of fileList) {
-    if (!/\.(csv|log|txt)$/i.test(file.name)) continue;
+    if (!/\.(csv|json|log|txt)$/i.test(file.name)) continue;
     const path = (file.webkitRelativePath || file.name).replace(/\\/g, "/");
     out.push({ path, name: file.name, text: await file.text(), group: tag });
   }
@@ -379,7 +425,11 @@ function stats(arr) {
   return { n, mean: m, sd };
 }
 function niceTicks(lo, hi, count) {
-  if (!(hi > lo)) { const d = Math.abs(lo) || 1; lo -= d * 0.5; hi += d * 0.5; }
+  // Nearly identical A/B samples can leave roundoff-sized differences. Expand
+  // the range before choosing ticks so adding a step cannot stall below a ULP.
+  if (!(hi > lo) || hi-lo < Math.max(Math.abs(lo), Math.abs(hi), 1)*1e-12) {
+    const d = Math.max(Math.abs(lo), Math.abs(hi)) || 1; lo -= d*0.5; hi += d*0.5;
+  }
   const span = hi - lo; const step0 = span / Math.max(1, count);
   const mag = Math.pow(10, Math.floor(Math.log10(step0))); const err = step0 / mag;
   const step = (err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1) * mag;
@@ -453,7 +503,7 @@ function chart(host, opt) {
         else if (s.type === "step") d += `H${px}V${py}`; else d += `L${px},${py}`;
         prevY = py;
       }
-      g += `<path d="${d}" stroke="${s.color}" stroke-width="2" fill="none" stroke-linejoin="round"/>`;
+      g += `<path d="${d}" stroke="${s.color}" stroke-width="2" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""} fill="none" stroke-linejoin="round"/>`;
     }
   }
   if (opt.rejects && opt.rejects.length) {
@@ -600,7 +650,7 @@ function trajectory(container, rows, opts) {
 function renderChips() {
   const host = document.getElementById("datasets");
   host.innerHTML = state.datasets.map((d, i) =>
-    `<button class="chip" aria-pressed="${i === state.active}" data-i="${i}"><span class="kind">${d.kind === "sweep" ? d.axis + " 掃描" : "run"}</span><b>${esc(d.name)}</b></button>`).join("");
+    `<button class="chip" aria-pressed="${i === state.active}" data-i="${i}"><span class="kind">${d.kind === "sweep" ? d.axis + " 掃描" : d.kind === "signal" ? "輸出波形" : "run"}</span><b>${esc(d.name)}</b></button>`).join("");
   host.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => { state.active = +b.dataset.i; state.selected = null; render(); }));
 }
 function tile(k, v, small) { return `<div class="tile"><div class="k">${k}</div><div class="v">${v}${small ? ` <small>${small}</small>` : ""}</div></div>`; }
@@ -636,6 +686,117 @@ function renderRun(view, d) {
     </section>`;
   bindZoom(view);
   trajectory(view.querySelector(".traj"), rows, { group: "run", xName: "幀", skewBand: { y0: -10, y1: 10 } });
+}
+
+/* ---------- frozen signal output ---------- */
+function signalSpectrum(rows, rate, key) {
+  let n = 1; while (n < rows.length) n *= 2;
+  const re = new Float64Array(n), im = new Float64Array(n);
+  const mean = rows.reduce((s, r) => s + r[key], 0)/rows.length;
+  let weight = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const w = 0.5 - 0.5*Math.cos(2*Math.PI*i/(rows.length-1));
+    re[i] = (rows[i][key]-mean)*w; weight += w;
+  }
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const cr = Math.cos(-2*Math.PI/len), ci = Math.sin(-2*Math.PI/len);
+    for (let base = 0; base < n; base += len) {
+      let wr = 1, wi = 0;
+      for (let j = 0; j < len/2; j++) {
+        const a = base+j, b = a+len/2;
+        const vr = wr*re[b]-wi*im[b], vi = wr*im[b]+wi*re[b];
+        const next = wr*cr-wi*ci;
+        re[b] = re[a]-vr; im[b] = im[a]-vi; re[a] += vr; im[a] += vi;
+        wi = wr*ci+wi*cr; wr = next;
+      }
+    }
+  }
+  const points = [];
+  for (let k = 1; k <= n/2; k++) {
+    const amplitude = Math.hypot(re[k], im[k])*(k === n/2 ? 1 : 2)/weight;
+    points.push([k*rate/n/1e6, 20*Math.log10(Math.max(amplitude/8192, 1e-8))]);
+  }
+  return points;
+}
+
+function renderSignal(view, d) {
+  const n = d.rows.length;
+  const known = !!d.meta;
+  const status = d.cancelled ? `<span class="status pass">已抵消 dither</span>` :
+    known ? `<span class="status fail">未抵消 · ${esc(d.meta.status || "unknown")}</span>` :
+    `<span class="status unknown">抵消狀態未確認</span>`;
+  const title = d.cancelled ? "抵消 dither 後的波形" : "輸出波形（未確認抵消）";
+  const note = !known ? "缺少同名 JSON，不能確認抵消狀態；請把 CSV 與 JSON 一起重新載入。" :
+    !d.cancelled ? "此快照未通過 dither 抵消，顯示的是保留的校正采樣，不能當成僅剩 main tone。" :
+    "最終凍結系數處理的一幀 A/B 實際采樣；保留 main tone 與采樣噪聲。";
+  const peakToPeak = key => Math.max(...d.rows.map(r => r[key])) - Math.min(...d.rows.map(r => r[key]));
+  const windows = [...new Set([64, 128, 512, n].filter(w => w <= n))];
+  d.signalWindow = windows.includes(d.signalWindow) ? d.signalWindow : 128;
+  d.signalStart = Math.max(0, Math.min(n-d.signalWindow, d.signalStart || 0));
+  view.innerHTML = `
+    <div class="tiles">
+      ${tile("Dither 抵消", status)}
+      ${tile("採樣點 / 通道", n)}
+      ${tile("取樣率", fmtU(d.rate/1e6, 3), "MSPS")}
+      ${tile("時間跨度", fmtU(d.rows[n-1].t, 3), "ns")}
+      ${tile("A / B 峰峰值", `${fmtU(peakToPeak("a"), 2)} / ${fmtU(peakToPeak("b"), 2)}`, "codes")}
+    </div>
+    <section class="card" style="margin-top:16px">
+      <h2>${title}</h2><p class="note">${note} 這是已保存的一幀，並非連續即時資料。</p>
+      <div class="signal-controls">
+        <label>顯示範圍 <select id="signal-window" aria-label="波形顯示範圍">${windows.map(w =>
+          `<option value="${w}" ${w === d.signalWindow ? "selected" : ""}>${w === n ? "全部" : w} 採樣點</option>`).join("")}</select></label>
+        <label>起點 <input id="signal-start" aria-label="波形起始採樣點" type="range" min="0" max="${n-d.signalWindow}" value="${d.signalStart}" step="1"></label>
+        <span id="signal-span" class="note"></span>
+      </div>
+      <div id="signal-time" class="chart"></div>
+      ${legendHTML([{ name: "通道 A", color: "var(--s1)" }, { name: "通道 B（虛線）", color: "var(--s2)" }])}
+      <p class="note" style="margin-top:8px">橫軸：時間（ns） · 縱軸：ADC codes；移動滑鼠查看同一時間的 A/B 數值。</p>
+      <h2 style="margin-top:18px">輸出通道差 A−B</h2>
+      <div id="signal-difference" class="chart"></div>
+    </section>
+    <section class="card" style="margin-top:16px">
+      <h2>輸出頻譜</h2><p class="note">使用完整快照，去除 DC 並加 Hann 窗；橫軸 MHz，縱軸 dBFS（14-bit ADC 峰值 8192 codes）。此圖不代表抵消前後改善量。</p>
+      <div id="signal-spectrum" class="chart"></div>
+      ${legendHTML([{ name: "通道 A", color: "var(--s1)" }, { name: "通道 B（虛線）", color: "var(--s2)" }])}
+    </section>`;
+  const windowSelect = view.querySelector("#signal-window"), startSlider = view.querySelector("#signal-start");
+  const drawTime = () => {
+    groups.delete("signal-time");
+    const rows = d.rows.slice(d.signalStart, d.signalStart+d.signalWindow);
+    const base = { x: [rows[0].t, rows[rows.length-1].t], height: 260, group: "signal-time", unit: "codes",
+      xFormat: x => `時間 ${x.toFixed(3)} ns · sample ${Math.round(x*d.rate/1e9)}` };
+    chart(view.querySelector("#signal-time"), { ...base, label: "A/B 輸出波形", series: [
+      { name: "通道 A", color: "var(--s1)", type: "line", pts: rows.map(r => [r.t, r.a]) },
+      { name: "通道 B", color: "var(--s2)", dash: "5 3", type: "line", pts: rows.map(r => [r.t, r.b]) }
+    ] });
+    chart(view.querySelector("#signal-difference"), { ...base, height: 150, label: "輸出通道差 A−B", series: [
+      { name: "A−B", color: "var(--s1)", type: "line", pts: rows.map(r => [r.t, r.a-r.b]) }
+    ] });
+    view.querySelector("#signal-span").textContent = `sample ${rows[0].sample}–${rows[rows.length-1].sample}`;
+  };
+  windowSelect.addEventListener("change", () => {
+    d.signalWindow = +windowSelect.value;
+    d.signalStart = Math.min(d.signalStart, n-d.signalWindow);
+    startSlider.max = n-d.signalWindow; startSlider.value = d.signalStart;
+    startSlider.disabled = d.signalWindow === n; drawTime();
+  });
+  startSlider.disabled = d.signalWindow === n;
+  startSlider.addEventListener("input", () => { d.signalStart = +startSlider.value; drawTime(); });
+  drawTime();
+  if (!d.spectra) d.spectra = [signalSpectrum(d.rows, d.rate, "a"), signalSpectrum(d.rows, d.rate, "b")];
+  chart(view.querySelector("#signal-spectrum"), { x: [0, d.rate/2e6], height: 250,
+    y: [-140, Math.max(0, ...d.spectra.flat().map(p => p[1]))], unit: "dBFS", label: "輸出幅度譜",
+    xFormat: x => `頻率 ${x.toFixed(3)} MHz`, series: [
+      { name: "通道 A", color: "var(--s1)", type: "line", pts: d.spectra[0], dp: 2 },
+      { name: "通道 B", color: "var(--s2)", dash: "5 3", type: "line", pts: d.spectra[1], dp: 2 }
+    ] });
 }
 
 function renderSweep(view, d) {
@@ -764,7 +925,8 @@ function render() {
   const view = document.getElementById("view");
   const d = state.datasets[state.active];
   if (!d) { view.innerHTML = `<div class="empty">還沒有資料。用右上角的按鈕，或把 <code>calibration_out</code> 裡的檔案／資料夾拖進來。</div>`; return; }
-  if (d.kind === "sweep") renderSweep(view, d); else renderRun(view, d);
+  if (d.kind === "signal") renderSignal(view, d);
+  else if (d.kind === "sweep") renderSweep(view, d); else renderRun(view, d);
 }
 let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 120); });
 

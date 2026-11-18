@@ -437,11 +437,21 @@ static int loop_test_check_isolation(unsigned axes)
 static int loop_test_run(unsigned axes, unsigned pre, unsigned train, unsigned hold)
 {
     loop_test_phase_t p;
+    /* Never expose a previous test's output after a failed new test. */
+    memset(&g_board_loop.output, 0, sizeof(g_board_loop.output));
     if (!g_loop_test_baseline_valid || g_loop_test_wave != g_board_loop_wave ||
         loop_test_check_isolation(axes) != 0 || loop_test_init(&g_loop_test_baseline) != 0) return -1;
     if (loop_test_phase("pre", 0U, pre, &p) != 0) return -1;
     if (loop_test_phase("train", axes, train, &p) != 0) return -1;
-    return loop_test_phase("hold", 0U, hold, &p);
+    if (loop_test_phase("hold", 0U, hold, &p) != 0) return -1;
+    /* The independent HOLD has finished. A separate fresh frame uses exactly
+     * its frozen state and current manual injection, without changing scores,
+     * coefficients, frame budgets, or the physical actuator. */
+    const long bytes = board_loop_capture(NULL, g_board_loop_frame, sizeof(g_board_loop_frame));
+    if (bytes > 0)
+        (void)adc_cal_loop_make_output(&g_board_loop, g_board_loop_frame, (size_t)bytes);
+    board_loop_output_status();
+    return 0;
 }
 
 static void loop_test_help(void)
@@ -449,6 +459,7 @@ static void loop_test_help(void)
     xil_printf("LOOP-TEST-HELP (reference-free dither-only; no waveform selection)\r\n");
     xil_printf("  adc -cal loop test baseline TRAIN HOLD   Calibrate all; save state, code and registers.\r\n");
     xil_printf("  adc -cal loop test run offset|gain|skew PRE TRAIN HOLD\r\n");
+    xil_printf("      Manual mismatch first; run ends with a separate frozen signal snapshot (loop output).\r\n");
     xil_printf("  adc -cal loop test offset A|B CODES     SOFTWARE post-ADC offset, -4096..4096.\r\n");
     xil_printf("  adc -cal loop test ifc A|B CODE         Local 0x1910: 0,10,11,12,13,14,15.\r\n");
     xil_printf("  adc -cal loop test dcfilter A|B on|off  Local DC filter; NOT an offset DAC.\r\n");

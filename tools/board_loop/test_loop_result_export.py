@@ -49,6 +49,8 @@ class Port:
     incomplete = False
     partial = False
     park_fail = False
+    signal_status = None
+    signal_download_fail = False
 
     def __init__(self, *args, **kwargs):
         self.output = b''
@@ -73,6 +75,15 @@ class Port:
             if self.incomplete:
                 lines[1] = lines[1].replace(f'requested={self.n}', f'requested={self.n+1}')
             reply = '\r\n'.join(lines) + '\r\n'
+        elif command == 'adc -cal loop output':
+            if self.signal_download_fail:
+                reply = 'LOOP-SIGNAL-END result=ERROR reason=no-output\r\n'
+            else:
+                reply = '\r\n'.join([
+                    f'LOOP-SIGNAL-BEGIN version=1 samples=512 status={self.signal_status} '
+                    'sample_rate_hz=1300000000 coefficients=frozen',
+                    *(f'LOOP-SIGNAL-DATA {i},123456,-789123' for i in range(512)),
+                    f'LOOP-SIGNAL-END result=OK samples=512 status={self.signal_status}']) + '\r\n'
         elif command.startswith('adc -cal loop test run offset '):
             lines = []
             index = 0
@@ -87,6 +98,8 @@ class Port:
                                  'clips=0 gsrc=dither_mag skew_route=dither_phase')
                     index += 1
                 lines.append(f'LOOP-TEST-SUMMARY phase={phase} attempts=4 accepted=4 code=12')
+            if self.signal_status:
+                lines.append(f'LOOP-OUTPUT status={self.signal_status} samples=512 coefficients=frozen')
             reply = '\r\n'.join(lines + ['LOOP-TEST-END result=OK']) + '\r\n'
         elif command.startswith('adc -cal loop test park '):
             target, code = int(command.split()[-1]), 12
@@ -108,8 +121,11 @@ class Port:
                 self.output += ('LOOP-START stream=1 run_id=7\r\n' +
                                 '\r\n'.join(stream_packet(10)[:7]) + '\r\n').encode()
                 return
+            streamed = stream_packet(self.n)
+            if self.signal_status:
+                streamed.insert(-1, f'LOOP-OUTPUT status={self.signal_status} samples=512 coefficients=frozen')
             reply = (f'LOOP-START samples={self.n} export=1 stream=1 run_id=7\r\n'
-                     + '\r\n'.join(stream_packet(self.n)) + '\r\n' +
+                     + '\r\n'.join(streamed) + '\r\n' +
                      f'LOOP-PROGRESS accepted={self.n}/{self.n}\r\n'
                      f'LOOP-END qualified={self.n}/{self.n} captures={self.n} rejected=0\r\n'
                      f'LOOP-STATUS qualified={self.n} captures={self.n} rejected=0 code=12 skew_abort=0\r\n')
@@ -120,6 +136,10 @@ class Port:
     def read(self, count):
         result, self.output = self.output[:count], self.output[count:]
         return result
+
+    def readline(self):
+        end = self.output.find(b'\n')
+        return self.read(end+1 if end >= 0 else len(self.output))
 
     def flush(self):
         pass
@@ -139,6 +159,8 @@ class ExportTests(unittest.TestCase):
     def setUp(self):
         Port.instances.clear()
         Port.fail = Port.silent = Port.incomplete = Port.partial = Port.park_fail = False
+        Port.signal_status = None
+        Port.signal_download_fail = False
 
     def call_main(self, args):
         # webbrowser.open is patched so a test run never opens the per-run viewer page.
@@ -250,6 +272,61 @@ class ExportTests(unittest.TestCase):
             self.assertNotIn('LOOP-EXPORT-DATA', saved(path).read_text())
             self.assertFalse(saved(path).with_suffix('.json').exists())
             self.assertFalse(saved(path).with_suffix('.png').exists())
+
+    def test_manual_three_stage_test_downloads_separate_final_signal(self):
+        Port.signal_status = 'cancelled'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'manual_offset.log'
+            command = 'adc -cal loop test run offset 4 4 4'
+            self.assertEqual(self.call_main(['--out', str(path), '--cmd', command]), 0)
+            self.assertEqual(Port.instances[-1].commands, [command+' full', 'adc -cal loop output'])
+            stem = saved(path)
+            summary = json.loads(stem.with_suffix('.json').read_text())
+            self.assertTrue(summary['assessment']['pass'])
+            with stem.with_suffix('.csv').open() as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 12)
+            self.assertEqual({r['phase'] for r in rows}, {'pre', 'train', 'hold'})
+            signal = stem.with_name(stem.stem+'_signal.csv')
+            self.assertEqual(json.loads(signal.with_suffix('.json').read_text())['samples'], 512)
+            page = stem.with_suffix('.html').read_text(encoding='utf-8')
+            from loop_viewer_export import EMBEDDED
+            files = json.loads(EMBEDDED.search(page).group(2))['datasets']
+            names = {name for ds in files for name in ds['files']}
+            self.assertIn(signal.name, names)
+            self.assertIn(stem.with_suffix('.csv').name, names)
+            self.assertNotIn('LOOP-SIGNAL-DATA', stem.read_text())
+
+    def test_cancellation_status_does_not_regrade_hold(self):
+        Port.signal_status = 'ambiguous'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'ambiguous.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--cmd',
+                                            'adc -cal loop test run offset 4 4 4']), 0)
+            stem = saved(path)
+            self.assertTrue(json.loads(stem.with_suffix('.json').read_text())['assessment']['pass'])
+            signal = stem.with_name(stem.stem+'_signal.json')
+            self.assertFalse(json.loads(signal.read_text())['dither_cancelled'])
+
+    def test_no_signal_option_keeps_three_stage_commands_unchanged(self):
+        Port.signal_status = 'cancelled'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'no_signal.log'
+            command = 'adc -cal loop test run offset 4 4 4'
+            self.assertEqual(self.call_main(['--out', str(path), '--cmd', command, '--no-signal']), 0)
+            self.assertEqual(Port.instances[-1].commands, [command+' full'])
+            self.assertFalse(saved(path).with_name(path.stem+'_signal.csv').exists())
+
+    def test_signal_transfer_failure_retains_calibration_and_never_parks(self):
+        Port.signal_status = 'cancelled'
+        Port.signal_download_fail = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'failure.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--park-after', '24']), 1)
+            self.assertEqual(Port.instances[-1].commands,
+                             ['adc -cal loop 300 stream', 'adc -cal loop output'])
+            self.assertTrue(saved(path).with_suffix('.csv').exists())
+            self.assertIn('signal export failed', saved(path).read_text())
 
     def test_incomplete_calibration_still_exports_without_retry(self):
         Port.incomplete = True

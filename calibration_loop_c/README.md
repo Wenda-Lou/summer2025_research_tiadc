@@ -1,5 +1,52 @@
 # calibration_loop_c
 
+2026-11-17: a separate **output-only** learned dither canceller now follows a
+completed board closed run. It takes a fresh frame with the final frozen gain/
+offset coefficients and physical skew state. Calibration itself is unchanged.
+Manual single-axis PRE/TRAIN/HOLD tests also create a separate output frame
+after HOLD, retaining the same frozen coefficients and manual perturbation.
+That frame is excluded from independent HOLD scores and frame budgets.
+`adc_calibration_loop_output.h` discovers the main-tone frequency by FFT and
+robust fitting, then learns pulse spacing, shape and signs from the remaining
+samples. It subtracts learned pulse replicas from the actual corrected samples;
+it does not replace the signal with a synthetic sine. No supplied waveform,
+period, polarity sequence, or reference is used. A/B retain their own phases.
+
+The supported signal is a dominant single sinusoid plus repeated sparse signed
+pulses of stable shape/amplitude, with integer sample spacing. At least six
+complete events are required; detected pulse support (including guard samples)
+must occupy at most one third of a period. Even events learn the shape used on
+odd events and vice versa. Both channels must show at least 6 dB validation
+improvement, residual pulse error consistent with the background noise, and a
+tone-consistent non-pulse region. Otherwise corrected samples pass through with
+`no-tone`, `no-dither` (no detectable pulse outliers), or `ambiguous`; invalid
+frames report `unavailable`. These statuses must never be called successful
+cancellation. Noise and any unidentifiable common DC remain in the signal.
+
+Core API: `adc_cal_loop_make_output()` processes a new DMA frame without
+coefficient updates or actuator writes; `adc_cal_loop_cancel_dither()` accepts
+already corrected A/B arrays. `loop.output_a/b` hold the separate result and
+`loop.output` its status/sample count and cross-event validation statistics.
+Another capture invalidates that snapshot. `cal_a/b` and the feedback estimator
+never consume cancelled samples. The calibration tone-fit prohibition still
+applies to feedback, not this separate output stage. Offline validation only;
+the new output stage has not been tested on the bench.
+
+After rebuilding/downloading the firmware and running `adc -cal loop N`,
+`LOOP-OUTPUT status=cancelled` indicates successful learning on its final frame.
+Download the saved signal (no new capture) with:
+
+```powershell
+python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv
+```
+
+This uses `adc -cal loop output` over UART and writes CSV/JSON plus a self-contained
+HTML page in the existing loop viewer, opened automatically (`--no-viewer`
+skips it). The viewer displays A/B time traces, A-B and output spectra; it
+requires the matching JSON to confirm cancellation. A non-cancelled
+snapshot is saved with its explicit status and exits 1. The ordinary `udp`
+command still sends raw DMA samples; the physical dither generator stays on.
+
 2026-10-28: the board now enables `options.reference_free` by default. This
 branch uses only simultaneous A/B broadband dither samples and the ADC sample
 rate. It does not build/use `loop_ref`, pulse geometry, polarity tables, or tone
