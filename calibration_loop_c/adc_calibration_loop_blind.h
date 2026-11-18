@@ -35,18 +35,23 @@ static void blind_fft(double *re, double *im, int n)
 static int blind_estimate(adc_cal_loop_t *loop, const double *a, const double *b,
                           size_t count, adc_cal_loop_block_estimate_t *out)
 {
-    int n = 1, bins = 0;
+    int n = 1, bins = 0, line_lo = 0, line_hi = -1;
     double ma = 0.0, mb = 0.0, peak = 0.0, sw = 0.0, sw2 = 0.0;
     double xx = 0.0, xy = 0.0, pa = 0.0, pb = 0.0, error = 0.0;
     double *ar = loop->score, *ai, *br, *bi;
+    double total = 0.0, power_scale = 1.0;
     memset(out, 0, sizeof(*out));
     channel_estimate_reset(&out->ch_a); channel_estimate_reset(&out->ch_b);
     out->tone_ratio = out->skew_phase_ps = out->skew_fold_ps = NAN;
     out->gain_mag_ratio = out->skew_slope_ps = out->skew_used_ps = NAN;
     out->gain_ratio = out->offset_mismatch_codes = NAN;
     out->mag_a = out->mag_b = NAN;
+    out->spectrum.status = "invalid-size";
+    out->spectrum.effective_bins = out->spectrum.phase_rms = NAN;
+    out->spectrum.power_a = out->spectrum.power_b = NAN;
     if (count < 256 || count > ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES) return -1;
     while ((size_t)(2 * n) <= count) n *= 2;
+    out->spectrum.nfft = n;
     ai = ar + n; br = ai + n; bi = br + n;
     for (int i = 0; i < n; ++i) { ma += a[i]; mb += b[i]; }
     ma /= n; mb /= n;
@@ -59,10 +64,51 @@ static int blind_estimate(adc_cal_loop_t *loop, const double *a, const double *b
     for (int k = 2; k < n * 2 / 5; ++k) {
         const double p = sqrt((ar[k]*ar[k] + ai[k]*ai[k]) *
                               (br[k]*br[k] + bi[k]*bi[k]));
-        if (p > peak) peak = p;
+        total += p;
+        if (p > peak) { peak = p; out->spectrum.peak_bin = k; }
     }
+    out->spectrum.status = "no-energy";
     if (!(peak > 0.0)) return 0; /* invalid estimate, rejected by normal gates */
+    /* A dominant narrowband component must not set the broadband threshold or
+     * the gain/delay fit weights. Locate it from the samples only. Re-window
+     * with a four-term Blackman-Harris taper before excluding the line: merely
+     * deleting Hann's main lobe leaves strong off-bin sidelobes that can look
+     * like broadband excitation. No sinusoid is fitted or subtracted, and the
+     * output-only tone estimator is never called here. */
+    if (peak > 0.10 * total) {
+        double window_energy = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const double theta = 6.2831853071795864769 * i / (n - 1);
+            const double w = 0.35875 - 0.48829*cos(theta) +
+                             0.14128*cos(2.0*theta) - 0.01168*cos(3.0*theta);
+            ar[i] = (a[i] - ma) * w; br[i] = (b[i] - mb) * w;
+            ai[i] = bi[i] = 0.0;
+            window_energy += w*w;
+        }
+        blind_fft(ar, ai, n); blind_fft(br, bi, n);
+        peak = 0.0;
+        for (int k = 2; k < n * 2 / 5; ++k) {
+            const double p = sqrt((ar[k]*ar[k] + ai[k]*ai[k]) *
+                                  (br[k]*br[k] + bi[k]*bi[k]));
+            if (p > peak) { peak = p; out->spectrum.peak_bin = k; }
+        }
+        line_lo = out->spectrum.peak_bin - 6;
+        line_hi = out->spectrum.peak_bin + 6;
+        if (line_lo < 2) line_lo = 2;
+        if (line_hi >= n * 2 / 5) line_hi = n * 2 / 5 - 1;
+        out->spectrum.excluded_bins = line_hi - line_lo + 1;
+        /* Preserve the original Hann-equivalent absolute energy gate. */
+        power_scale = 0.375 * (n - 1) / window_energy;
+        peak = 0.0;
+        for (int k = 2; k < n * 2 / 5; ++k) {
+            const double p = sqrt((ar[k]*ar[k] + ai[k]*ai[k]) *
+                                  (br[k]*br[k] + bi[k]*bi[k]));
+            if ((k < line_lo || k > line_hi) && p > peak) peak = p;
+        }
+        if (!(peak > 0.0)) return 0;
+    }
     for (int k = 2; k < n * 2 / 5; ++k) {
+        if (k >= line_lo && k <= line_hi) continue;
         const double aa = ar[k]*ar[k] + ai[k]*ai[k];
         const double bb = br[k]*br[k] + bi[k]*bi[k];
         const double w = sqrt(aa * bb);
@@ -74,10 +120,18 @@ static int blind_estimate(adc_cal_loop_t *loop, const double *a, const double *b
         bins++; sw += w; sw2 += w*w; xx += w*omega*omega;
         xy += w*omega*phase; pa += aa; pb += bb;
     }
-    if (bins < 8 || !(xx > 0.0) || sw*sw < 4.0*sw2) return 0;
+    out->spectrum.bins = bins;
+    out->spectrum.effective_bins = sw2 > 0.0 ? sw*sw / sw2 : 0.0;
+    out->spectrum.power_a = power_scale * pa / (n*(double)n);
+    out->spectrum.power_b = power_scale * pb / (n*(double)n);
+    out->spectrum.status = "few-bins";
+    if (bins < 8 || !(xx > 0.0)) return 0;
+    out->spectrum.status = "concentrated";
+    if (sw*sw < 4.0*sw2) return 0;
     const double delay = xy / xx;
     const double ratio = sqrt(pb / pa);
     for (int k = 2; k < n * 2 / 5; ++k) {
+        if (k >= line_lo && k <= line_hi) continue;
         const double w = sqrt((ar[k]*ar[k] + ai[k]*ai[k]) *
                               (br[k]*br[k] + bi[k]*bi[k]));
         if (w < peak * 0.01) continue;
@@ -88,8 +142,13 @@ static int blind_estimate(adc_cal_loop_t *loop, const double *a, const double *b
     }
     /* Fail closed on incompatible spectra, poor excitation, or excess noise.
      * No claim that a narrowband tone or a constant can identify this mode. */
-    if (error / sw > 0.0225 || pa / (n*(double)n) < 4.0 ||
-        pb / (n*(double)n) < 4.0) return 0;
+    out->spectrum.phase_rms = sqrt(error / sw);
+    out->spectrum.status = "phase-spread";
+    if (error / sw > loop->opt.max_spectral_phase_rms *
+                     loop->opt.max_spectral_phase_rms) return 0;
+    out->spectrum.status = "low-energy";
+    if (out->spectrum.power_a < 4.0 || out->spectrum.power_b < 4.0) return 0;
+    out->spectrum.status = "ok";
     const double dc = mb - ratio * ma;
     out->ch_a.offset_codes = -dc / (2.0 * ratio);
     out->ch_b.offset_codes = dc / 2.0;

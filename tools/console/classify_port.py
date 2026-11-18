@@ -4,7 +4,7 @@ Sends a distinctive marker.  If the port returns exactly that marker and
 nothing else, it is a loopback / local echo, not a command console.  A real
 firmware console answers with a help menu or a prompt.
 
-    python tools/console/classify_port.py --port COM7
+    python tools/console/classify_port.py --port COM5
     python tools/console/classify_port.py --port COM5          # console candidate
 """
 

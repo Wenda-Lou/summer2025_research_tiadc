@@ -1,0 +1,89 @@
+{
+  "arguments": {
+    "mode": "suite",
+    "uart": "COM5",
+    "out": "calibration_out/axis_suite_20261118_180755",
+    "execute": true,
+    "no_signal": false,
+    "no_viewer": false,
+    "reuse_baseline": false,
+    "timeout": 1800.0,
+    "pre": 40,
+    "train": 600,
+    "hold": 100,
+    "baseline_train": 600,
+    "baseline_hold": 100,
+    "gain_gate_ppm": 600000,
+    "skew_gate_milli": 500,
+    "deadband_ps": 10.0,
+    "step_ps": 19.1,
+    "batch": 20,
+    "min_yield": 0.8,
+    "window": 20,
+    "channel": "B",
+    "acquire_phase_mrad": 750,
+    "axes": "skew",
+    "offset_points": null,
+    "gain_points": null,
+    "skew_mode": "absolute",
+    "skew_points": "16,20,24,28,32",
+    "repeats": 1,
+    "wave": null,
+    "tolerance": null
+  },
+  "tolerance": {
+    "offset": 0.5,
+    "gain": 0.001,
+    "skew": 10.0
+  },
+  "points": {
+    "offset": [],
+    "gain": [],
+    "skew": [
+      16,
+      20,
+      24,
+      28,
+      32
+    ]
+  },
+  "started_utc": "2026-11-18T23:07:56.091166+00:00",
+  "completed": true,
+  "restored": true,
+  "units": {
+    "offset": "calibrated output codes",
+    "gain": "B/A - 1",
+    "skew": "ps"
+  },
+  "baseline": {
+    "valid": "1",
+    "snapshot": "1",
+    "wave": "3",
+    "code": "12",
+    "fault": "0"
+  },
+  "baseline_ifc": 12,
+  "skew_point_mode": "absolute",
+  "executable_points": {
+    "offset": [],
+    "gain": [],
+    "skew": [
+      16,
+      20,
+      24,
+      28,
+      32
+    ]
+  },
+  "skipped_points": [],
+  "coverage_complete": true,
+  "requested_tests": 5,
+  "skipped_tests": 0,
+  "board_quality": {
+    "acquisition_phase_mrad": "750",
+    "hold_phase_mrad": "150"
+  },
+  "active_point": null,
+  "ended_utc": "2026-11-18T23:17:41.254022+00:00",
+  "recorded_tests": 5
+}

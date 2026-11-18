@@ -5,7 +5,7 @@ back.  Read-only with respect to the board: `help` changes no state.
 
 Usage:
     python tools/console/find_console.py
-    python tools/console/find_console.py --ports COM4,COM5,COM6,COM7
+    python tools/console/find_console.py --ports COM5,COM4,COM6
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def probe(port: str, baud: int) -> tuple[bool, str]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--ports", default="COM4,COM5,COM6,COM7,COM3,COM8")
+    ap.add_argument("--ports", default="COM5,COM4,COM6,COM3,COM8")
     ap.add_argument("--baud", type=int, default=BAUD)
     args = ap.parse_args(argv)
 

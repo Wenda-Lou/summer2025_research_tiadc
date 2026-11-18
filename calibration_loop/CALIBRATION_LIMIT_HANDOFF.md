@@ -1,5 +1,135 @@
 # AI 交接记录：单项 offset / gain / skew 校准极限
 
+## 2026-11-18 最新：skew 改扫绝对码 0..32
+
+用户再次明确“只允许0-48就扫0-32”。suite skew 默认改为绝对硬件码 0→32，
+步长 1，共 33 档，点值直接作为 park 目标，不再加基准 N。Offset +32→−32
+65 档、IFC 1.36→2.04 Vpp 七档保持原值；默认一轮共 105 档，无默认 SKIP。
+元数据标明 skew_point_mode=absolute，逐点保存 target_code、relative_code_offset；
+目标恰好等于基准才标为 control，目标 0 若不同于基准仍必须核对移动 ACK。
+suite 可显式 --skew-mode relative 保留相对自定义点（超界才 SKIP）；旧单轴
+sweep 的 skew points 仍相对基准，避免静默改变既有入口语义。仅主机修改，
+无需重新编译固件。整轮模拟测试核对 park 0,1,...,32 与全部 105 次测试。
+验证：17 项 suite 协议测试与 14 项既有单轴测试共 31 项通过，覆盖绝对码 0
+的 ACK 不可省略、基准码 control 判定，以及绝对/相对模式元数据；没有运行
+真实台架全扫描。
+
+## 2026-11-18 前次全范围设定（相对 skew 默认已被上文替代）
+
+用户纠正单点自动化：offset 要 +32→−32，gain IFC 要从最小量程 1.36 Vpp
+到最大 2.04 Vpp，skew 经确认是相对实际基准 −32→+32；两种整数扫描均步长 1。
+suite 默认改为 offset 65 档、IFC 10,11,12,13,14,15,0 七档、skew 65 请求档。
+IFC 是满量程顺序，不是幅度增益升序。基准相同档位保留为 control。
+硬件 skew 仅绝对码 0..48，无法实现任一基准下的完整 65 档。因此合法档执行，
+超界档明确记 SKIP 到 skipped.csv/meta.json，不发送、不钳位，不伪造测量。
+N=12 时一轮 137 请求、117 可执行、20 SKIP；元数据记录 coverage_complete。
+全 IFC 跨度捕获默认 suite gain_gate_ppm=600000（单轴 sweep 仍为 200000），
+HOLD 精度不变。复用基准仍要求配置匹配、不重写 config，可显式选旧 gain gate。
+完整阶段仅因范围/质量门控拒绝时保存 FAIL 并继续下一点；未知 ERROR、采集/
+通信故障、事务故障、clipping、方向保护仍停止。PRE 即失败的导出仍保留 axis。
+汇总查看器按轴拆分混合 summary/frames，避免相同 point/repeat 串轴显示。
+验证：16 项 suite 协议测试及既有导出/单轴/信号/查看器文件测试合计 68 项
+通过，含一整轮 N=12 的 117 次实际模拟测试及 20 个 SKIP 的顺序核对。
+仅主机代码与文档改动，无需再次编译固件；未连接真实台架执行全范围扫描。
+
+## 2026-11-18 初版三项自动化（单点默认已由上文替代）
+
+用户明确要求把三项 mismatch 参数修改自动化，取代之前只做手动流程的偏好。
+新增 `board_axis_test.py suite --uart COM5 --execute`：只读检查新 ELF 的路由/
+spectral_line_rejection/gain_freeze 标记，配置并建立一次有效基准，再按轮执行
+offset/gain/skew 的 restore→注入→PRE/TRAIN/HOLD→保存曲线/快照，最后 restore。
+默认每项一次、B offset +32、按实际 IFC 满量程顺序选择不同的邻码、按实际
+基准 code 选择合法邻码；不假定 IFC=12 或 code=24。可自定义三项 points 与
+repeats；--reuse-baseline 只读验证并复用，不重写 config 或重新训练。
+--execute 默认关闭；未运行真实台架。每点独立 HOLD、评分不变；正常 HOLD
+失败继续下一点，不自动重训。基准失败、硬件/方向故障、clipping、超时或
+波形下载异常停止，保留已完成与部分数据，不做自动恢复写入。
+支持只读下载每点 LOOP-OUTPUT 并保存信号 CSV/JSON；--no-signal 可跳过。
+每点 HTML 与汇总 viewer.html 沿用现有查看器，默认最后只打开一次；
+--no-viewer 跳过页面。实际数据输出 axis_suite_<timestamp>，新增离线串口
+协议测试 test_board_axis_suite.py。
+验证：新增 13 项 suite 离线协议测试通过；连同既有单轴、信号、导出和
+查看器文件测试共 64 项通过（含原生 C 导出/波形包 fixture）。真实 Chrome
+无头浏览器测试因 GPU 进程启动失败、备用模式超时未完成；未改查看器模板。
+本次只修改主机脚本/文档，不需要再次编译固件，但需先加载此前已生成的
+带 gain_freeze=training_mean 的新 ELF。没有自动连接真实 COM5 或运行台架。
+
+## 2026-11-18 range500 实测全帧通过；修正 gain 冻结末态噪声
+
+`combiner_baseline_range500`：TRAIN 600/600、HOLD 100/100，控制码 24→12，
+12 次 -1 事务全部 OK，无 abort。HOLD offset -0.03294 codes、skew -1.9044 ps
+通过；gain +2836.39 ppm 超出基准 ±2000 ppm，valid=0，原失败记录保留。
+TRAIN 最后 100 个尝试都在 code=12。当前 gain 原先直接冻结 LMS 末帧，
+修正策略沿用 offset 已有的 min(100, TRAIN/2) 尾窗、至少 20 合格帧要求。
+用每帧 PRE-update 增益还原原始比值：log(r_native)=log(r_est)+log(cA)-log(cB)。
+尾窗平均 log(r_native)，保留最终 common geometric gain，只冻结相对校正；
+控制码移动即清空统计，末次失败/拒绝/故障不应用。仅 baseline_train 与
+单轴 gain TRAIN 生效，HOLD 完全不参与训练，门限和学习率不变。
+最后 TRAIN 行同步新系数，HOLD 从该状态开始。新增日志
+`source=dither_gain_training_mean`；status 路由标记 `gain_freeze=training_mean`。
+
+旧 CSV 的离线反事实：只由训练末段估计 r_native=1.0090130，原 HOLD gain
+若使用该冻结比例约为 +651.66 ppm；这不是新实测，不改判旧记录。结果：
+calibration_sim/output/gain_training_freeze_replay/analysis.json。
+全套 C 9048 项、18 场景、14 流水线场景通过，覆盖末帧 3% outlier、
+单轴 TRAIN/HOLD 状态连续与 HOLD 真实增益漂移仍失败。新策略需下载新 ELF，
+仅 config 命令不能启用。下一轮保持相同合路输入重新建立 baseline。
+
+## 2026-11-18 修正后上板：频谱通过，测试默认 acquisition 范围不一致
+
+`combiner_baseline_fixed` 已上板。全部 700 次的频谱检查通过；695 次被
+skew_range 拒绝，TRAIN 5/600、HOLD 0/100，控制码始终 24，没有移动。
+初始 skew 均值 208.59 ps，旧 test 默认 skew_milli=250 只允许 192.31 ps。
+普通 reference_free loop 和自动 axis 工具均已用 500，手动 test 仍为 250。
+现将手动 test 启动默认值对齐为 500；显式 config 仍按用户设置。
+这是进入闭环前的捕获范围，不是 HOLD 精度门限；未改 HOLD/deadband/方向保护。
+旧 ELF 可直接 `adc -cal loop test config 200000 500 1000 1910 20` 后重建基准，
+无需重刷；新编译 ELF 启动默认即为 500。补充了实际 board wrapper 的默认值
+与显式覆盖检查，以及 210 ps 初始偏差在旧门限拒绝、新范围闭环后独立 HOLD。
+验证：loop 原生/板端 wrapper 共 3295 项通过；Vitis ELF 编译、链接通过。
+结果位于 calibration_sim/output/combiner_acquisition_gate_fix/。本次没有自动
+操作台架；下一轮应在现有 ELF 先明确设置 skew_milli=500 后记录新 baseline。
+
+## 2026-11-18 合路频谱门控修正
+
+用户要求修复合路全拒帧。reference_free 估计器从 ADC 互谱发现主导窄带峰，
+峰值占频段总权重大于 10% 时改用四项 Blackman-Harris 窗抑制旁瓣，屏蔽
+峰值左右各 6 个 FFT bins，再用剩余宽带频点确定门限并估计 gain/skew。
+没有正弦拟合，没有输入 tone 频率/模板，输出阶段 tone fit 不进入反馈。
+剩余激励仍须通过 bins>=8、有效频点>=4、相位一致性和绝对能量检查；
+能量归一化到原 Hann 标度。未改变 baseline/HOLD 门限。
+
+原四档合路离线复现目前每档 8/8 通过；补充无 dither 的单音/噪声拒绝、
+main tone 与 dither 不同 gain/phase 的观测隔离、强主音闭环和独立 HOLD。
+状态路由新增 spectral_line_rejection=1，便于确认 ELF 是否已更新。
+新 ELF 下载后 RAM 基准清空，须正常 bring-up 并在相同合路条件下重建基准。
+真实构建产物：firmware/thesis_v3_loop_appl/build/thesis_v3_loop_appl.elf。
+验证：全套 C 9003 项、18 场景、14 流水线场景通过；PC 原生 C 导出与波形
+包解码通过。Vitis 实际编译、链接通过。四组强主音、两种极性/脉冲间隔的
+一步一码 skew 闭环 TRAIN 300 + 独立 HOLD 40 通过；HOLD gain -179..293 ppm、
+offset +0.015..0.082 codes、skew +5.18..5.48 ps（deadband 10 ps）。
+本次未连接串口操作台架，尚不代表板上验证通过。具体结果见
+[`COMBINER_REJECTION_DIAGNOSIS.md`](../docs/bench/COMBINER_REJECTION_DIAGNOSIS.md)。
+
+## 2026-11-18 合路 baseline 全拒绝的排查
+
+用户按 manual 跑的是 test baseline，不是普通 loop。新日志分别是：
+`combiner_baseline_20261118_140702`（用户确认 dither-only）：TRAIN 571/600、
+HOLD 100/100，但 offset +0.580 codes、gain -3439 ppm 超出基准门限，
+所以 valid=0、restore 被拒；skew -1.51 ps 通过。
+前后两次合路 baseline 则均为 TRAIN 0/600，全为 events，没有进入 HOLD。
+
+生产 C 离线复现了主音影响频谱门控的机制：当前以整个互谱最高峰的 1%
+选频点，再要求 bins>=8、有效频点数>=4；有 dither 时仍会因主音较强而
+few-bins/concentrated。旧日志没有原始 ADC 帧，尚不能确认板上具体分支。
+新增只读 spectrum 诊断及 LOOP-TEST-SPECTRUM 行，区分 no-energy、few-bins、
+concentrated、phase-spread、low-energy；未改门限、反馈或 HOLD 评分。
+需重新构建/下载 ELF 后再采诊断；未声称修复合路校准。
+离线验证：C 全套 6939 项、18 场景、14 流水线场景通过；PC 原生 C 导出与
+signal 包解码两项通过。本次未构建 Vitis ELF、未连接串口操作台架。
+详细证据、离线复现及字段单位：
+[`COMBINER_REJECTION_DIAGNOSIS.md`](../docs/bench/COMBINER_REJECTION_DIAGNOSIS.md)。
+
 ## 2026-11-18 手动 mismatch 的三阶段测试
 
 用户要沿用手动增加 mismatch，然后 PRE/TRAIN/HOLD 的流程；不是自动扫描。
@@ -26,7 +156,7 @@
 噪声与不可辨识的共同 DC 不会被当成 dither 一起删除。
 
 串口 `LOOP-OUTPUT` 报告状态；`adc -cal loop output` 只读最后输出快照。
-PC：`python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv`。
+PC：`python tools/board_loop/board_signal_output.py --uart COM5 --out calibration_out/signal.csv`。
 CSV/JSON 明确记录是否 cancelled，失败时不声称已经只剩主 tone。
 波形下载现在还会生成并打开同名 HTML，沿用现有 loop_viewer：A/B 时域、
 采样窗口、A-B 和输出频谱；--no-viewer 可关闭。已有 CSV 可经
@@ -95,10 +225,10 @@ HOLD 统计和判断使用独立冻结数据。普通 loop 的功能保留，校
 参数、dither 路线和时钟事务保持不变。
 
 下载新 ELF、正常上电/加载匹配满量程 dither TXT 后，关闭占用串口的
-终端，在仓库根目录运行一条电脑指令（COM7 按实际修改）：
+终端，在仓库根目录运行一条电脑指令（COM5 按实际修改）：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/dither_run.log
 ```
 
 PC 用一条 `adc -cal loop 300 stream` 完成校准和全程传输。每条校准记录
@@ -375,7 +505,7 @@ Python 扫描用 `--wave 2`，仍默认 PLAN ONLY。
 自动化入口示例（默认只打印计划）：
 
 ```powershell
-python tools/board_loop/board_axis_test.py sweep --axis skew --uart COM7 --wave 0 --points=1 --repeats 1 --out calibration_out/limits_skew_first
+python tools/board_loop/board_axis_test.py sweep --axis skew --uart COM5 --wave 0 --points=1 --repeats 1 --out calibration_out/limits_skew_first
 ```
 
 实际 COM 端口按机器确认。硬件和波形就绪后加 `--execute`；它会重新建立基准、

@@ -683,6 +683,9 @@ static void test_reference_free(sim_assert_context_t *ctx)
             SIM_ASSERT_NEAR(ctx, est.skew_used_ps, dt*1e12/1.3e9, 1.0);
             SIM_ASSERT_NEAR(ctx, est.ch_b.offset_codes*2.0, -8.36, 0.01);
             SIM_ASSERT_TRUE(ctx, est.dither_margin > 6.0);
+            SIM_ASSERT_TRUE(ctx, strcmp(est.spectrum.status, "ok") == 0);
+            SIM_ASSERT_TRUE(ctx, est.spectrum.bins >= 8);
+            SIM_ASSERT_TRUE(ctx, est.spectrum.effective_bins >= 4.0);
             /* Arbitrary/invalid waveform metadata cannot affect the result. */
             g_loop.cfg.dither_period_dac = -77; g_loop.cfg.n_events = -1;
             g_loop.cfg.dither_scale_lsb = NAN; g_loop.cfg.sig_cycles = 777;
@@ -691,10 +694,244 @@ static void test_reference_free(sim_assert_context_t *ctx)
     for (int i = 0; i < 1024; ++i) a[i] = b[i] = 7.0;
     adc_cal_loop_estimate_block(&g_loop, a, b, 1024, -1, 0, 0, 0, &est);
     SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.skew_used_ps));
+    SIM_ASSERT_TRUE(ctx, strcmp(est.spectrum.status, "no-energy") == 0);
     for (int i = 0; i < 1024; ++i) a[i] = b[i] = 100*cos(2*LT_PI*100*i/1024);
     adc_cal_loop_estimate_block(&g_loop, a, b, 1024, -1, 0, 0, 0, &est);
     SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.skew_used_ps));
+    SIM_ASSERT_TRUE(ctx, strcmp(est.spectrum.status, "ok") != 0);
+    SIM_ASSERT_TRUE(ctx, est.spectrum.excluded_bins > 0);
+    /* Weak broadband energy and incompatible phases need distinct diagnostics;
+     * neither may leave a usable gain/delay or call the tone estimator. */
+    for (int mode = 0; mode < 2; ++mode) {
+        for (int i = 0; i < 1024; ++i) {
+            a[i] = b[i] = 0.0;
+            for (int k = 9; k < 120; k += 3) {
+                const double amp = mode == 0 ? 0.01 : 35.0;
+                const double phase = k*k*0.713;
+                const double w = 2*LT_PI*k/1024;
+                a[i] += amp*cos(w*i + phase);
+                b[i] += amp*cos(w*i + phase + (mode == 0 ? 0.0 : 0.8*sin(k)));
+            }
+        }
+        adc_cal_loop_estimate_block(&g_loop, a, b, 1024, -1, 0, 0, 0, &est);
+        SIM_ASSERT_TRUE(ctx, strcmp(est.spectrum.status,
+                                   mode == 0 ? "low-energy" : "phase-spread") == 0);
+        SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.gain_mag_ratio));
+        SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.skew_used_ps));
+        /* Experimental acquisition can admit a broader phase spread without
+         * disabling the energy/identifiability gates. Restoring the original
+         * limit rejects the same incompatible frame again. */
+        g_loop.opt.max_spectral_phase_rms = 0.75;
+        adc_cal_loop_estimate_block(&g_loop, a, b, 1024, -1, 0, 0, 0, &est);
+        SIM_ASSERT_TRUE(ctx, strcmp(est.spectrum.status, mode == 0 ? "low-energy" : "ok") == 0);
+        if (mode == 1) {
+            SIM_ASSERT_TRUE(ctx, est.spectrum.phase_rms > 0.15 && est.spectrum.phase_rms < 0.75);
+            SIM_ASSERT_TRUE(ctx, lt_isfinite(est.skew_used_ps));
+        }
+        g_loop.opt.max_spectral_phase_rms = 0.15;
+        adc_cal_loop_estimate_block(&g_loop, a, b, 1024, -1, 0, 0, 0, &est);
+        SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.skew_used_ps));
+    }
     SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_test_tone_calls(0), 0);
+}
+
+static void test_blind_combiner_input(sim_assert_context_t *ctx, FILE *summary)
+{
+    const double levels[] = {-120.0, -30.0, -18.0, -6.0};
+    adc_cal_loop_config_t physical, hardware = {0};
+    adc_cal_loop_options_t opt;
+    static uint8_t raw[2*LT_WORDS];
+    adc_cal_loop_default_config(&physical);
+    physical.dither_edge_dac = physical.dither_top_dac = 4;
+    physical.dither_scale_lsb = 2400.0;
+    physical.dither_period_dac = 130;
+    physical.n_events = physical.n_dac_points / 130;
+    for (int k = 0; k < physical.n_events; ++k) physical.polarity[k] = k%3 ? -1 : 1;
+    hardware.fs_dac = 1.3e9; hardware.adc_ratio = 1;
+    adc_cal_loop_default_options(&opt);
+    opt.reference_free = opt.tone_free = opt.reject_clipping = 1;
+    opt.update_axes = 0;
+    adc_cal_loop_test_tone_calls(1);
+    for (unsigned level = 0; level < sizeof(levels)/sizeof(levels[0]); ++level) {
+        lt_bench_t bench;
+        unsigned accepted = 0;
+        physical.amp_dbfs = levels[level];
+        lt_bench_init(&bench, &physical, 829U);
+        bench.noise = 0.4;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, NULL), 0);
+        const adc_cal_loop_state_t frozen = g_loop.state;
+        for (int frame = 0; frame < 8; ++frame) {
+            adc_cal_loop_row_t row;
+            const long bytes = lt_capture(&bench, raw, sizeof(raw));
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, raw, (size_t)bytes, &row), 0);
+            const adc_cal_loop_spectrum_diagnostics_t *s = &row.est.spectrum;
+            accepted += row.rejected == ADC_CAL_LOOP_REJECT_NONE;
+            SIM_ASSERT_EQ_INT(ctx, row.clipped_samples, 0);
+            SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+            SIM_ASSERT_NEAR(ctx, row.est.gain_mag_ratio, bench.gain_b, 0.001);
+            SIM_ASSERT_NEAR(ctx, row.est.skew_used_ps, bench.skew_b_ps, 2.0);
+            adc_cal_loop_state_t after = g_loop.state;
+            after.iteration = frozen.iteration; /* accepted-frame bookkeeping */
+            SIM_ASSERT_TRUE(ctx, memcmp(&frozen, &after, sizeof(frozen)) == 0);
+            SIM_ASSERT_EQ_INT(ctx, g_loop.state.iteration, accepted);
+            fprintf(summary, "combiner diagnostic tone_dbfs=%g frame=%d st=%s "
+                    "reason=%s nfft=%d peak_bin=%d bins=%d neff=%.6f phase_rms=%.6f "
+                    "power_a=%.6f power_b=%.6f\n", levels[level], frame,
+                    row.rejected == ADC_CAL_LOOP_REJECT_NONE ? "ok" :
+                        adc_cal_loop_reject_name(row.rejected), s->status, s->nfft,
+                    s->peak_bin, s->bins, s->effective_bins, s->phase_rms, s->power_a, s->power_b);
+        }
+        SIM_ASSERT_EQ_INT(ctx, accepted, 8);
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_test_tone_calls(0), 0);
+}
+
+static void test_blind_tone_without_dither(sim_assert_context_t *ctx)
+{
+    const double frequencies[] = {0.003, 0.01237, 0.07123, 0.1533653846, 0.31, 0.399, 0.47};
+    const double amplitudes[] = {20.0, 1000.0, 7500.0};
+    static double a[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES], b[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
+    adc_cal_loop_config_t hardware = {0};
+    adc_cal_loop_options_t opt;
+    lt_bench_t noise = {0}; noise.rng = 71623U;
+    hardware.fs_dac = 1.3e9; hardware.adc_ratio = 1;
+    adc_cal_loop_default_options(&opt); opt.reference_free = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, NULL), 0);
+    adc_cal_loop_test_tone_calls(1);
+    for (int n = 256; n <= ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES; n *= 2) {
+        for (unsigned f = 0; f < sizeof(frequencies)/sizeof(frequencies[0]); ++f) {
+            for (unsigned amp = 0; amp < sizeof(amplitudes)/sizeof(amplitudes[0]); ++amp) {
+                for (int noisy = 0; noisy < 3; ++noisy) {
+                    adc_cal_loop_block_estimate_t est;
+                    const double sigma = noisy == 2 ? 8.0 : noisy*0.4;
+                    for (int i = 0; i < n; ++i) {
+                        const double phase = 2.0*LT_PI*frequencies[f]*i + 0.713;
+                        a[i] = 3.0 + amplitudes[amp]*cos(phase) + sigma*lt_gauss(&noise);
+                        b[i] = -5.0 + 1.021*amplitudes[amp]*cos(phase + 0.037) +
+                               sigma*lt_gauss(&noise);
+                    }
+                    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_estimate_block(&g_loop, a, b,
+                                      (size_t)n, -1, 0, 0, 0, &est), 0);
+                    SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.gain_mag_ratio));
+                    SIM_ASSERT_TRUE(ctx, !lt_isfinite(est.skew_used_ps));
+                    SIM_ASSERT_EQ_INT(ctx, est.ch_a.n_events_used, 0);
+                }
+            }
+        }
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_test_tone_calls(0), 0);
+}
+
+static void test_blind_dither_observable_with_main(sim_assert_context_t *ctx)
+{
+    /* A different main-tone gain/phase must not replace the broadband dither
+     * observable. All frequency/phase values here belong to the signal source,
+     * not the estimator configuration. */
+    const double frequencies[] = {0.07123, 0.1533653846, 0.31};
+    double a[1024], b[1024];
+    adc_cal_loop_config_t hardware = {0};
+    adc_cal_loop_options_t opt;
+    hardware.fs_dac = 1.3e9; hardware.adc_ratio = 1;
+    adc_cal_loop_default_options(&opt); opt.reference_free = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, NULL), 0);
+    adc_cal_loop_test_tone_calls(1);
+    for (unsigned f = 0; f < sizeof(frequencies)/sizeof(frequencies[0]); ++f) {
+        for (int sign = -1; sign <= 1; sign += 2) {
+            adc_cal_loop_block_estimate_t est;
+            const double dt = sign*0.15;
+            for (int i = 0; i < 1024; ++i) {
+                const double phase = 2.0*LT_PI*frequencies[f]*i;
+                a[i] = 3.0 + 6000.0*cos(phase);
+                b[i] = -5.0 + 1.14*6000.0*cos(phase + 0.27);
+                for (int k = 9; k < 350; k += 3) {
+                    const double w = 2.0*LT_PI*k/1024;
+                    const double phi = k*k*0.713;
+                    a[i] += 35.0*cos(w*i + phi);
+                    b[i] += 1.021*35.0*cos(w*(i + dt) + phi);
+                }
+            }
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_estimate_block(&g_loop, a, b,
+                              1024, -1, 0, 0, 0, &est), 0);
+            SIM_ASSERT_TRUE(ctx, strcmp(est.spectrum.status, "ok") == 0);
+            SIM_ASSERT_TRUE(ctx, est.spectrum.excluded_bins > 0);
+            SIM_ASSERT_NEAR(ctx, est.gain_mag_ratio, 1.021, 0.0005);
+            SIM_ASSERT_NEAR(ctx, est.skew_used_ps, dt*1e12/1.3e9, 2.0);
+        }
+    }
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_test_tone_calls(0), 0);
+}
+
+static void test_blind_combiner_closed_loop(sim_assert_context_t *ctx, FILE *summary)
+{
+    for (int inverted = 0; inverted < 2; ++inverted) {
+        for (int period = 130; period <= 260; period += 130) {
+            adc_cal_loop_config_t physical, hardware = {0};
+            adc_cal_loop_options_t opt;
+            adc_cal_loop_actuator_t act;
+            lt_bench_t bench;
+            static uint8_t raw[2*LT_WORDS];
+            adc_cal_loop_default_config(&physical);
+            physical.amp_dbfs = -6.0;
+            physical.dither_edge_dac = physical.dither_top_dac = 4;
+            physical.dither_scale_lsb = 2400.0;
+            physical.dither_period_dac = period;
+            physical.n_events = physical.n_dac_points / period;
+            for (int k = 0; k < physical.n_events; ++k) physical.polarity[k] = k%3 ? -1 : 1;
+            lt_bench_init(&bench, &physical, (unsigned)(period + inverted));
+            bench.noise = 0.4; bench.skew_b_ps = 210.0; bench.invert_b = inverted;
+            hardware.fs_dac = 1.3e9; hardware.adc_ratio = 1;
+            adc_cal_loop_default_options(&opt);
+            opt.reference_free = opt.tone_free = opt.reject_clipping = 1;
+            opt.max_skew_samples = 0.5;
+            adc_cal_loop_default_actuator(&act);
+            act.ctx = &bench; act.request_steps = lt_request_steps;
+            /* Reproduce the bench deadlock: a valid ~210 ps estimate exceeds
+             * the old 0.25-sample test gate, so no actuator batch can start. */
+            const lt_bench_t initial_bench = bench;
+            opt.max_skew_samples = 0.25;
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, &act), 0);
+            {
+                adc_cal_loop_row_t rejected;
+                const long bytes = lt_capture(&bench, raw, sizeof(raw));
+                SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, raw, (size_t)bytes, &rejected), 0);
+                SIM_ASSERT_TRUE(ctx, strcmp(rejected.est.spectrum.status, "ok") == 0);
+                SIM_ASSERT_EQ_INT(ctx, rejected.rejected, ADC_CAL_LOOP_REJECT_SKEW_RANGE);
+                SIM_ASSERT_EQ_INT(ctx, bench.moves, 0);
+                SIM_ASSERT_EQ_INT(ctx, g_loop.state.iteration, 0);
+            }
+            bench = initial_bench;
+            opt.max_skew_samples = 0.5;
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, &act), 0);
+            adc_cal_loop_test_tone_calls(1);
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 300, lt_capture, &bench,
+                              NULL, NULL, raw, sizeof(raw)), 300);
+            g_loop.opt.update_axes = 0;
+            const adc_cal_loop_state_t frozen = g_loop.state;
+            double gain = 0.0, offset = 0.0, skew = 0.0;
+            for (int frame = 0; frame < 40; ++frame) {
+                adc_cal_loop_row_t row;
+                const long bytes = lt_capture(&bench, raw, sizeof(raw));
+                SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, raw, (size_t)bytes, &row), 0);
+                SIM_ASSERT_EQ_INT(ctx, row.rejected, ADC_CAL_LOOP_REJECT_NONE);
+                SIM_ASSERT_EQ_INT(ctx, row.clipped_samples, 0);
+                adc_cal_loop_state_t after = g_loop.state;
+                after.iteration = frozen.iteration;
+                SIM_ASSERT_TRUE(ctx, memcmp(&frozen, &after, sizeof(frozen)) == 0);
+                gain += row.est.gain_mag_ratio - 1.0;
+                offset += row.est.offset_mismatch_codes;
+                skew += row.est.skew_used_ps;
+            }
+            SIM_ASSERT_NEAR(ctx, gain/40.0, 0.0, 0.001);
+            SIM_ASSERT_NEAR(ctx, offset/40.0, 0.0, 0.5);
+            SIM_ASSERT_NEAR(ctx, skew/40.0, 0.0, 10.0);
+            SIM_ASSERT_TRUE(ctx, !g_loop.skew_abort);
+            SIM_ASSERT_TRUE(ctx, bench.moves > 0);
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_test_tone_calls(0), 0);
+            fprintf(summary, "combined closed loop inverted=%d period=%d train=300 hold=40 "
+                    "gain_ppm=%g offset_codes=%g skew_ps=%g\n", inverted, period,
+                    gain/40.0*1e6, offset/40.0, skew/40.0);
+        }
+    }
 }
 
 static void test_blind_closed_loop(sim_assert_context_t *ctx, FILE *summary)
@@ -851,7 +1088,7 @@ static void test_learned_dither_output(sim_assert_context_t *ctx, FILE *summary)
 
     /* Actual reference-free calibration of tone+dither, then a fresh frozen
      * frame. The learned output must not alter the converged controller. */
-    cfg.amp_dbfs = -30.0;
+    cfg.amp_dbfs = -6.0;
     lt_bench_init(&bench, &cfg, 829U);
     bench.noise = 0.4;
     adc_cal_loop_actuator_t act;
@@ -896,6 +1133,10 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_single_axis_experiments(ctx);
     test_dither_only(ctx, summary);
     test_reference_free(ctx);
+    test_blind_combiner_input(ctx, summary);
+    test_blind_tone_without_dither(ctx);
+    test_blind_dither_observable_with_main(ctx);
+    test_blind_combiner_closed_loop(ctx, summary);
     test_blind_closed_loop(ctx, summary);
     test_learned_dither_output(ctx, summary);
     sim_board_axis_tests_run(ctx, summary);

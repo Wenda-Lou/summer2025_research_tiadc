@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "source": "single_axis_test",
+  "axis": null,
+  "metadata": {
+    "mode": "single_axis",
+    "feedback_by_phase": {
+      "baseline_train": "selected axes",
+      "baseline_hold": "frozen"
+    }
+  },
+  "requested": 700,
+  "qualified": 700,
+  "budget_unit": "attempts",
+  "captures": 700,
+  "rejected": 0,
+  "exported_rows": 700,
+  "total_rows": 700,
+  "history_complete": true,
+  "dropped_rows": 0,
+  "run_completed": true,
+  "run_healthy": true,
+  "actuator_code": 12,
+  "phase_statistics": {
+    "baseline_train": {
+      "attempts": 600,
+      "budget": 600,
+      "accepted": 600,
+      "gain_error_ppm": {
+        "n": 600,
+        "mean": 56.708333333333336,
+        "sd": 5789.388603926672
+      },
+      "offset_error_codes": {
+        "n": 600,
+        "mean": -0.02174833333333333,
+        "sd": 0.8215785053163729
+      },
+      "skew_error_ps": {
+        "n": 600,
+        "mean": 43.9218,
+        "sd": 68.66439494854241
+      }
+    },
+    "baseline_hold": {
+      "attempts": 100,
+      "budget": 100,
+      "accepted": 100,
+      "gain_error_ppm": {
+        "n": 100,
+        "mean": 410.65,
+        "sd": 4779.049716145872
+      },
+      "offset_error_codes": {
+        "n": 100,
+        "mean": 0.23285,
+        "sd": 0.7118698294213656
+      },
+      "skew_error_ps": {
+        "n": 100,
+        "mean": -3.1065,
+        "sd": 6.256527157353916
+      }
+    }
+  },
+  "assessment": null,
+  "correction": {
+    "gain_corr_a": 1.005413,
+    "gain_corr_b": 0.997494,
+    "offset_a_codes": 2.409,
+    "offset_b_codes": -2.466
+  },
+  "tail": {
+    "window": 20,
+    "feedback": "frozen",
+    "gain_error_ppm": {
+      "n": 20,
+      "mean": 710.8,
+      "sd": 4845.989069649032
+    },
+    "offset_error_codes": {
+      "n": 20,
+      "mean": 0.368,
+      "sd": 0.5754815832253705
+    },
+    "skew_error_ps": {
+      "n": 20,
+      "mean": -3.401,
+      "sd": 6.393449690688777
+    }
+  },
+  "precision_validation": "independent_holdout",
+  "plots": {
+    "png": "calibration_out\\axis_suite_20261118_155214\\baseline.png",
+    "svg": "calibration_out\\axis_suite_20261118_155214\\baseline.svg"
+  }
+}

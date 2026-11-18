@@ -12,7 +12,7 @@ retain their corrected samples and report a non-cancelled status.
 `adc -cal loop output` reads that stored final A/B snapshot over UART. On the PC:
 
 ```powershell
-python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv
+python tools/board_loop/board_signal_output.py --uart COM5 --out calibration_out/signal.csv
 ```
 
 The CSV/JSON include cancellation status; the downloader also generates/opens
@@ -92,10 +92,10 @@ also default to compact phase/window/summary output. PC tools append a one-shot
 Single-axis CSV/JSON/PNG/SVG files distinguish PRE/TRAIN/HOLD and frozen statistics.
 
 For all frame records and automatic plots, close the serial terminal and run
-from the repository root (replace COM7 with the actual port):
+from the repository root (replace COM5 with the actual port):
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/dither_run.log
 ```
 
 The PC sends one calibration command, `adc -cal loop 300 stream`. Every frame
@@ -391,8 +391,8 @@ adc -cal loop [help]     usage
    `adc -cal skew step 0`. Expect `neutral_initialized=YES` and code 24.
 4. **Close the serial terminal** (Tera Term, PuTTY, the Vitis serial monitor).
    The logging script needs the COM port to itself.
-5. Find the console COM port. On the 2026-10-14 laptop it was `COM7`
-   (CP2108 interface 0). Check Device Manager on another PC.
+5. Use `COM5` for the current bench console.
+   Check Device Manager on another PC.
 
 ### 5.3 Run with a log
 
@@ -402,10 +402,10 @@ Run from the **repository root**, with `pyserial` installed (`pip install pyseri
 cd C:\TIDIAC\summer2025_research_tiadc
 
 # quick check, no actuator writes (~20 s)
-python tools/board_loop/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/open20_dither.log
+python tools/board_loop/board_loop_log.py --uart COM5 --wave 3 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/open20_dither.log
 
 # full closed loop, 300 samples; duration depends on the estimator/bench
-python tools/board_loop/board_loop_log.py --uart COM7 --wave 3 --cmd "adc -cal loop 300" --out calibration_out/closed_loop/run_dither_board.log
+python tools/board_loop/board_loop_log.py --uart COM5 --wave 3 --cmd "adc -cal loop 300" --out calibration_out/closed_loop/run_dither_board.log
 ```
 
 What [`tools/board_loop/board_loop_log.py`](../../tools/board_loop/board_loop_log.py) does:

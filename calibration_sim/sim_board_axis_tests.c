@@ -23,12 +23,17 @@ static double bt_hold_offset_bias, bt_hold_offset_slope;
 static unsigned bt_hold_frames;
 static unsigned bt_train_frames;
 static bool bt_train_last_outlier;
+static bool bt_train_last_gain_outlier;
+static double bt_hold_gain_bias;
 static double bt_exported_train_offset_b;
+static double bt_exported_train_gain_a, bt_exported_train_gain_b;
 static char bt_output[65536];
 static size_t bt_output_n;
 static unsigned bt_stream_rows;
 static unsigned bt_capture_calls, bt_output_calls, bt_capture_fail_at;
 static int bt_output_fail;
+static bool bt_spectrum_reject;
+static unsigned bt_relaxed_phase_frames, bt_strict_phase_frames;
 static adc_cal_loop_state_t bt_output_state;
 static double bt_output_offset[2];
 static unsigned bt_output_axes;
@@ -53,6 +58,10 @@ static void board_loop_print_row(const adc_cal_loop_row_t *row)
 {
     if (g_board_loop.opt.update_axes == ADC_CAL_LOOP_AXIS_OFFSET)
         bt_exported_train_offset_b = row->offset_b_state;
+    if (g_board_loop.opt.update_axes == ADC_CAL_LOOP_AXIS_GAIN) {
+        bt_exported_train_gain_a = row->gain_corr_a;
+        bt_exported_train_gain_b = row->gain_corr_b;
+    }
     xil_printf("LOOP st=%d\n", (int)row->rejected);
 }
 static int bt_reg_slot(uint16_t reg) { return reg == 0x1910U ? 0 : reg == 0x0701U ? 1 : 2; }
@@ -111,22 +120,40 @@ static int bt_make_output(adc_cal_loop_t *loop, const uint8_t *raw, size_t n)
 }
 static int bt_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n, adc_cal_loop_row_t *row)
 {
+    if (fabs(loop->opt.max_spectral_phase_rms - 0.75) < 1e-12) bt_relaxed_phase_frames++;
+    if (fabs(loop->opt.max_spectral_phase_rms - 0.15) < 1e-12) bt_strict_phase_frames++;
     double mu_o = loop->state.mu_offset, mu_g = loop->state.mu_gain;
     (void)raw; (void)n;
     memset(row, 0, sizeof(*row));
+    if (bt_spectrum_reject) {
+        row->rejected = ADC_CAL_LOOP_REJECT_TOO_FEW_EVENTS;
+        row->est.spectrum.status = "concentrated";
+        row->est.spectrum.nfft = 512;
+        row->est.spectrum.peak_bin = 79;
+        row->est.spectrum.bins = 17;
+        row->est.spectrum.effective_bins = 2.125;
+        row->est.spectrum.phase_rms = NAN;
+        row->est.spectrum.power_a = 400.0;
+        row->est.spectrum.power_b = 420.0;
+        return 0;
+    }
     row->est.ch_a.offset_codes = (3.0 + loop->opt.input_offset[0] - loop->state.offset_a) * loop->state.gain_corr_a;
     row->est.ch_b.offset_codes = (-5.0 + loop->opt.input_offset[1] - loop->state.offset_b) * loop->state.gain_corr_b;
     if ((loop->opt.update_axes & ADC_CAL_LOOP_AXIS_OFFSET) != 0U) {
         if (bt_train_last_outlier && bt_train_frames == 59U)
             row->est.ch_b.offset_codes += 3.0 * loop->state.gain_corr_b;
-        bt_train_frames++;
     }
+    if (loop->opt.update_axes != 0U) bt_train_frames++;
     if (loop->opt.update_axes == 0U) {
         row->est.ch_b.offset_codes += bt_hold_offset_bias + bt_hold_offset_slope * (double)bt_hold_frames;
         bt_hold_frames++;
     }
     row->est.ch_a.tone_amplitude = 100.0 * loop->state.gain_corr_a;
     row->est.ch_b.tone_amplitude = 100.0 * loop->state.gain_corr_b;
+    if (bt_train_last_gain_outlier && bt_train_frames == 60U && loop->opt.update_axes != 0U)
+        row->est.ch_b.tone_amplitude *= 1.03;
+    if (loop->opt.update_axes == 0U)
+        row->est.ch_b.tone_amplitude *= 1.0 + bt_hold_gain_bias;
     row->est.tone_ratio = row->est.ch_b.tone_amplitude / row->est.ch_a.tone_amplitude;
     row->est.mag_a = row->est.ch_a.tone_amplitude;
     row->est.mag_b = row->est.ch_b.tone_amplitude;
@@ -171,6 +198,21 @@ void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary)
     adc_cal_loop_state_t baseline;
     int writes;
     fprintf(summary, "\n== board axis-test command/SPI spies ==\n");
+    /* The manual entry must acquire the same initial skew as ordinary loop.
+     * Explicit experiment settings still override that default. */
+    SIM_ASSERT_EQ_INT(ctx, g_loop_test_skew_milli, 500);
+    {
+        adc_cal_loop_options_t opt, ordinary;
+        adc_cal_loop_actuator_t act;
+        loop_test_configure(&opt, &act);
+        adc_cal_loop_default_options(&ordinary);
+        loop_waveform_options(3U, &ordinary);
+        SIM_ASSERT_NEAR(ctx, opt.max_skew_samples, ordinary.max_skew_samples, 0.0);
+        SIM_ASSERT_TRUE(ctx, bt_command("config 200000 250 1000 1910 20"));
+        loop_test_configure(&opt, &act);
+        SIM_ASSERT_NEAR(ctx, opt.max_skew_samples, 0.25, 0.0);
+        SIM_ASSERT_TRUE(ctx, bt_command("config 200000 500 1000 1910 20"));
+    }
     /* Legacy waveform IDs do not select references in blind mode. */
     SIM_ASSERT_TRUE(ctx, bt_command("baseline 40 10"));
     SIM_ASSERT_TRUE(ctx, g_board_loop.opt.reference_free);
@@ -280,6 +322,20 @@ void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary)
     SIM_ASSERT_EQ_INT(ctx, g_board_loop.opt.gain_observable, ADC_CAL_LOOP_GAIN_DITHER_MAG);
     SIM_ASSERT_NEAR(ctx, g_board_loop.cfg.amp_dbfs, 0.0, 0.0);
     SIM_ASSERT_TRUE(ctx, strstr(bt_output, "gain=dither_spectrum skew=dither_cross_spectrum") != NULL);
+    SIM_ASSERT_TRUE(ctx, bt_command("quality 750"));
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "acquisition_phase_mrad=750 hold_phase_mrad=150") != NULL);
+    SIM_ASSERT_TRUE(ctx, !bt_command("quality 751"));
+    SIM_ASSERT_TRUE(ctx, !bt_command("quality 149"));
+    bt_relaxed_phase_frames = bt_strict_phase_frames = 0U;
+    SIM_ASSERT_TRUE(ctx, bt_command("run skew 4 40 8"));
+    SIM_ASSERT_EQ_INT(ctx, bt_relaxed_phase_frames, 44U);
+    SIM_ASSERT_EQ_INT(ctx, bt_strict_phase_frames, 8U);
+    SIM_ASSERT_NEAR(ctx, g_board_loop.opt.max_spectral_phase_rms, 0.15, 0.0);
+    bt_relaxed_phase_frames = bt_strict_phase_frames = 0U;
+    SIM_ASSERT_TRUE(ctx, bt_command("baseline 40 10"));
+    SIM_ASSERT_EQ_INT(ctx, bt_relaxed_phase_frames, 0U);
+    SIM_ASSERT_EQ_INT(ctx, bt_strict_phase_frames, 50U);
+    SIM_ASSERT_TRUE(ctx, bt_command("quality 150"));
     baseline = g_loop_test_baseline;
     SIM_ASSERT_TRUE(ctx, bt_command("offset B 32"));
     SIM_ASSERT_TRUE(ctx, bt_command("run offset 4 40 8"));
@@ -377,6 +433,35 @@ void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary)
     SIM_ASSERT_NEAR(ctx, g_loop_test_baseline.offset_b, baseline.offset_b, 0.0);
     bt_train_last_outlier = false;
     SIM_ASSERT_TRUE(ctx, bt_command("restore"));
+    /* A 3% last-frame dither-ratio outlier must not freeze the feedback's
+     * full endpoint error. The training-only 30-frame geometric mean leaves
+     * 1.03^(-1/30), then fresh HOLD independently checks that frozen ratio. */
+    bt_train_last_gain_outlier = true;
+    SIM_ASSERT_TRUE(ctx, bt_command("baseline 60 100"));
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "source=dither_gain_training_mean samples=30") != NULL);
+    SIM_ASSERT_NEAR(ctx, g_loop_test_baseline.gain_corr_b / g_loop_test_baseline.gain_corr_a,
+                    pow(1.03, -1.0/30.0), 1e-10);
+    SIM_ASSERT_NEAR(ctx, g_loop_test_baseline.mu_gain, 0.35, 0.0);
+    bt_train_last_gain_outlier = false;
+    SIM_ASSERT_TRUE(ctx, bt_command("baseline 40 10"));
+    SIM_ASSERT_TRUE(ctx, bt_command("restore"));
+    bt_train_last_gain_outlier = true;
+    SIM_ASSERT_TRUE(ctx, bt_command("run gain 4 60 100 full"));
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "source=dither_gain_training_mean samples=30 code=24 phase=train") != NULL);
+    SIM_ASSERT_NEAR(ctx, g_board_loop.state.gain_corr_b / g_board_loop.state.gain_corr_a,
+                    pow(1.03, -1.0/30.0), 1e-10);
+    SIM_ASSERT_NEAR(ctx, bt_exported_train_gain_a, g_board_loop.state.gain_corr_a, 0.0);
+    SIM_ASSERT_NEAR(ctx, bt_exported_train_gain_b, g_board_loop.state.gain_corr_b, 0.0);
+    bt_train_last_gain_outlier = false;
+    /* The independent HOLD must still reject a real post-freeze gain drift,
+     * without adapting its coefficients or relaxing the 2000-ppm gate. */
+    bt_hold_gain_bias = 0.01;
+    SIM_ASSERT_TRUE(ctx, !bt_command("baseline 60 100"));
+    SIM_ASSERT_TRUE(ctx, !g_loop_test_baseline_valid);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "axis=gain pass=0 mean_ppm=10000 limit_ppm=2000") != NULL);
+    SIM_ASSERT_NEAR(ctx, g_board_loop.state.gain_corr_b / g_board_loop.state.gain_corr_a, 1.0, 1e-10);
+    bt_hold_gain_bias = 0.0;
+    SIM_ASSERT_TRUE(ctx, bt_command("baseline 40 10"));
     /* Exercise the production recorder/exporter, including a rejected frame
      * and a DMA capture with no measurement. Export must not touch hardware. */
     bt_output_n = 0U; bt_output[0] = '\0';
@@ -461,4 +546,15 @@ void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary)
     SIM_ASSERT_EQ_INT(ctx, bt_moves, output_moves);
     SIM_ASSERT_EQ_INT(ctx, bt_writes, output_writes);
     fprintf(summary, "\n== production C signal fixture ==\n%s", bt_output);
+    /* A spectral failure during baseline must explain the existing events
+     * rejection, keep the baseline invalid and never start independent HOLD. */
+    bt_spectrum_reject = true;
+    SIM_ASSERT_TRUE(ctx, !bt_command("baseline 2 2"));
+    SIM_ASSERT_TRUE(ctx, !g_loop_test_baseline_valid);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-TEST-SPECTRUM phase=baseline_train attempt=0 "
+                               "reason=concentrated nfft=512 peak_bin=79 bins=17") != NULL);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "neff_milli=2125 phase_mrad=nan power_a=400 power_b=420") != NULL);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-TEST-PHASE phase=baseline_hold") == NULL);
+    fprintf(summary, "\n== production C spectral rejection fixture ==\n%s", bt_output);
+    bt_spectrum_reject = false;
 }

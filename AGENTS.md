@@ -1,5 +1,37 @@
 # AGENTS.md
 
+2026-11-18 skew-sweep follow-up: manual `loop test quality PHASE_MRAD` and suite
+`--acquire-phase-mrad` permit an explicit 150--750 mrad spectral phase RMS gate
+for PRE/TRAIN only. Default is 150; baseline, HOLD and output stay at 150.
+De-framing margin, excitation gates, ACK/direction checks and HOLD precision
+remain unchanged. Final bench run axis_suite_20261118_180755 passed all five
+skew points 16,20,24,28,32 at strict independent HOLD, each reaching code 12.
+This is one repeat per point, without independent timing metrology or output
+cancellation confirmation. Across separate runs offset passed 47/65 and gain
+0/7 at their unchanged statistical limits. Do not claim full three-axis precision
+or joint convergence. Batch=20 means
+at most 15 single-code moves in 300 attempts; use TRAIN=600 for code 32 toward
+the observed baseline code 12. See docs/bench/COMBINER_REJECTION_DIAGNOSIS.md.
+
+Latest user workflow request (2026-11-18): automate all three mismatch tests.
+`tools/board_loop/board_axis_test.py suite --uart COM5 --execute` now builds one
+valid baseline, then restores/injects/runs offset, gain and skew independently,
+downloads each advertised frozen output, and restores at normal completion.
+The default is plan-only; `--reuse-baseline` validates the existing baseline
+without rewriting config. Latest corrected scan defaults: B offset +32 down to
+-32 by one code; all IFC full-scale settings 1.36 to 2.04 Vpp in code order
+10,11,12,13,14,15,0; latest skew correction is absolute hardware codes 0 through
+32, step one (33 points), not baseline offsets. One round has 105 points and
+no unreachable defaults. Metadata records absolute target and baseline-relative
+offset separately. `--skew-mode relative` explicitly enables relative custom
+points, with unreachable targets recorded as SKIP and never clamped. The suite gain acquisition gate
+defaults to 600000 ppm to cover the IFC span; HOLD precision is unchanged.
+One repeat, PRE/TRAIN/HOLD 40/300/100. Completed acquisition-quality rejection
+and ordinary HOLD failure are recorded as FAIL and the next point continues;
+hardware/communication faults stop without automatic recovery writes.
+No hardware was exercised for this host automation change. Procedure/options:
+`docs/bench/RF_COMBINER_MANUAL_TEST.md`; tests `test_board_axis_suite.py`.
+
 Latest output requirement (2026-11-17): after calibration, cancel the injected
 dither from the corrected signal while preserving the main tone. This stage
 must also be reference-free: learn pulse spacing, shape and signs from ADC
@@ -186,17 +218,17 @@ on-board loop, section 7 of `calibration_sim/README.md` (`BOARD_TEST_PLAN.md`, t
 old staged `adc -cal` plan, was removed in `ea96ba9`). These are manual hardware
 procedures; do not attempt them without the bench.
 
-The COM port is per machine: the examples say `COM3`/`COM5`, and `tools/` defaults
-to `COM5`, but on another PC the ZCU102 console may enumerate elsewhere (it was
-`COM7`, CP2108 interface 0, on the 2026-10-14 laptop) — pass `--uart` explicitly.
+The current bench console uses `COM5`, and host tools default to `COM5`.
+The COM port is per machine; check Device Manager and pass `--uart` explicitly
+when using another PC.
 The host NIC must carry the static `192.168.1.100`; a link-local `169.254.x.x`
 address shows up as every capture failing with `no UDP frame`.
 
 On-board loop runs, with the console disconnected from the port first:
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/<stem>.log
-python tools/board_loop/board_loop_log.py --uart COM7 --wave 0 --cmd "adc -cal loop 300"     --out calibration_out/closed_loop/<stem>.log
+python tools/board_loop/board_loop_log.py --uart COM5 --wave 0 --cmd "adc -cal loop open 20" --out calibration_out/closed_loop/<stem>.log
+python tools/board_loop/board_loop_log.py --uart COM5 --wave 0 --cmd "adc -cal loop 300"     --out calibration_out/closed_loop/<stem>.log
 ```
 
 `--wave` must name the vector the DPG is playing (the firmware resets it to 0 at boot).
@@ -636,7 +668,7 @@ Regular loop logs now show 20-accepted-frame progress and a last-20 RESULT.
 capture or writes. `butils_loop_results.c` keeps a separate RAM snapshot and
 the latest 4000 rows, with explicit dropped-row accounting. Reboot or a new
 regular run clears it; test commands do not overwrite the saved snapshot.
-`python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/run.log`
+`python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/run.log`
 runs one `adc -cal loop 300 stream` command, incrementally saves ALL records
 in CSV, then creates JSON and full-run PNG/SVG curves. Bulk data is excluded
 from the compact human UART log; streaming is not limited by the RAM snapshot.

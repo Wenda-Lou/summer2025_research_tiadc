@@ -591,7 +591,7 @@ desktop-tested, not yet bench-validated; rebuild/download the ELF and follow
 Normal runs now print one PROGRESS per 20 accepted frames, a last-20 RESULT,
 events/rejections and final status. Every row is retained in a separate bounded
 RAM snapshot (latest 4000 rows; overwritten rows are reported). PC command
-`python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/run.log`
+`python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/run.log`
 calibrates 300 frames and saves `.log`, physical-unit `.csv` and result `.json`.
 `--cmd "adc -cal loop export"` downloads the saved regular run without another
 calibration. Export does not write hardware; the new interface is offline-tested

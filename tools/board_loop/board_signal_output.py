@@ -1,6 +1,6 @@
 """Download the final signal snapshot after `adc -cal loop N`.
 
-    python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv
+    python tools/board_loop/board_signal_output.py --uart COM5 --out calibration_out/signal.csv
 
 No waveform parameters or references are supplied. This reads saved RAM only:
 it does not capture, recalibrate, actuate, or stop the physical dither source.

@@ -1,0 +1,65 @@
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-PHASE phase=baseline_train axes=7 budget=600 code=12 phase_limit_mrad=150
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=19 accepted=20 offset_mc=-915 gain_ppm=1494 skew_cps=-361
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=39 accepted=20 offset_mc=51 gain_ppm=82 skew_cps=-411
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=59 accepted=20 offset_mc=-47 gain_ppm=256 skew_cps=118
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=79 accepted=20 offset_mc=45 gain_ppm=-514 skew_cps=-184
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=99 accepted=20 offset_mc=34 gain_ppm=-496 skew_cps=-336
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=119 accepted=20 offset_mc=-114 gain_ppm=541 skew_cps=91
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=139 accepted=20 offset_mc=11 gain_ppm=346 skew_cps=-220
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=159 accepted=20 offset_mc=112 gain_ppm=205 skew_cps=-78
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=179 accepted=20 offset_mc=7 gain_ppm=-526 skew_cps=-235
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=199 accepted=20 offset_mc=-14 gain_ppm=-121 skew_cps=-337
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=219 accepted=20 offset_mc=-63 gain_ppm=-465 skew_cps=-48
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=239 accepted=20 offset_mc=-158 gain_ppm=532 skew_cps=-195
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=259 accepted=20 offset_mc=64 gain_ppm=745 skew_cps=-20
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=279 accepted=20 offset_mc=145 gain_ppm=-469 skew_cps=40
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=299 accepted=20 offset_mc=-59 gain_ppm=-227 skew_cps=-222
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=319 accepted=20 offset_mc=-6 gain_ppm=641 skew_cps=-423
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=339 accepted=20 offset_mc=-69 gain_ppm=-726 skew_cps=50
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=359 accepted=20 offset_mc=91 gain_ppm=53 skew_cps=-187
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=379 accepted=20 offset_mc=15 gain_ppm=327 skew_cps=-87
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=399 accepted=20 offset_mc=19 gain_ppm=93 skew_cps=-251
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=419 accepted=20 offset_mc=-12 gain_ppm=146 skew_cps=-5
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=439 accepted=20 offset_mc=23 gain_ppm=-604 skew_cps=-87
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=459 accepted=20 offset_mc=61 gain_ppm=360 skew_cps=-188
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=479 accepted=20 offset_mc=-18 gain_ppm=137 skew_cps=-179
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=499 accepted=20 offset_mc=36 gain_ppm=-806 skew_cps=-135
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=519 accepted=20 offset_mc=-50 gain_ppm=222 skew_cps=-209
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=539 accepted=20 offset_mc=82 gain_ppm=607 skew_cps=-57
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=559 accepted=20 offset_mc=-93 gain_ppm=260 skew_cps=-32
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=579 accepted=20 offset_mc=84 gain_ppm=-170 skew_cps=-24
+LOOP-TEST-FREEZE source=dither_training_mean samples=100 code=12 phase=baseline_train offa_mc=2769 offb_mc=-2783
+LOOP-TEST-FREEZE source=dither_gain_training_mean samples=100 code=12 phase=baseline_train corr_a_ppm=6155 corr_b_ppm=-3597
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=599 accepted=20 offset_mc=132 gain_ppm=45 skew_cps=-144
+LOOP-TEST-SUMMARY phase=baseline_train attempts=600 accepted=600 code=12 abort=0 offset_mc=-20 offset_sd_mc=906 gain_ppm=66 gain_sd_ppm=5410 skew_cps=-145 skew_sd_cps=605
+LOOP-TEST-PHASE phase=baseline_hold axes=0 budget=100 code=12 phase_limit_mrad=150
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=19 accepted=20 offset_mc=76 gain_ppm=574 skew_cps=-322
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=39 accepted=20 offset_mc=-324 gain_ppm=-1278 skew_cps=-311
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=59 accepted=20 offset_mc=24 gain_ppm=963 skew_cps=-139
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=79 accepted=20 offset_mc=185 gain_ppm=-669 skew_cps=0
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=99 accepted=20 offset_mc=-762 gain_ppm=-1820 skew_cps=-65
+LOOP-TEST-SUMMARY phase=baseline_hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-160 offset_sd_mc=748 gain_ppm=-446 gain_sd_ppm=4802 skew_cps=-167 skew_sd_cps=679
+LOOP-TEST-BASELINE-CHECK kind=yield accepted=100 budget=100 required_percent=80 pass=1
+LOOP-TEST-BASELINE-CHECK kind=finite-statistics pass=1
+LOOP-TEST-BASELINE-CHECK axis=offset pass=1 mean_mc=-160 limit_mc=500
+LOOP-TEST-BASELINE-CHECK axis=gain pass=1 mean_ppm=-446 limit_ppm=2000
+LOOP-TEST-BASELINE-CHECK axis=skew pass=1 mean_cps=-167 limit_cps=1204
+LOOP-TEST-BASELINE valid=1 snapshot=1 wave=3 code=12 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=12
+LOOP-TEST-CONFIG gain_ppm=600000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-QUALITY acquisition_phase_mrad=750 hold_phase_mrad=150
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1
+LOOP-TEST-SNAPSHOT channel=0 ifc=12 dc1=2 dc2=191
+LOOP-TEST-SNAPSHOT channel=1 ifc=12 dc1=2 dc2=191
+LOOP-TEST-END result=OK

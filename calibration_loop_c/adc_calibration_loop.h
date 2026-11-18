@@ -123,6 +123,21 @@ typedef enum {
     ADC_CAL_LOOP_SKEW_SOURCE_DITHER_CROSS_SPECTRUM
 } adc_cal_loop_skew_source_t;
 
+/* Observation-only diagnostics for the reference-free spectral gates. Powers
+ * are Hann-equivalent windowed FFT sums / nfft^2 (ADC codes squared), not
+ * input-tone power; a line-exclusion taper is normalised to the same scale. */
+typedef struct {
+    const char *status;
+    int nfft;
+    int peak_bin;
+    int bins;
+    int excluded_bins;       /* data-selected narrowband line and its leakage guard */
+    double effective_bins;
+    double phase_rms;
+    double power_a;
+    double power_b;
+} adc_cal_loop_spectrum_diagnostics_t;
+
 typedef struct {
     adc_cal_loop_channel_estimate_t ch_a;
     adc_cal_loop_channel_estimate_t ch_b;
@@ -145,6 +160,7 @@ typedef struct {
     double phase_b;
     double dither_margin;
     int rotation;
+    adc_cal_loop_spectrum_diagnostics_t spectrum;
 } adc_cal_loop_block_estimate_t;
 
 typedef struct {
@@ -207,6 +223,7 @@ typedef struct {
     int require_tone;           /* refuse a fallback when grading tone gain */
     int tone_free;              /* dither_mag / dither_phase; no tone fallback */
     int reference_free;         /* A/B relative spectrum; only ADC sample rate is required */
+    double max_spectral_phase_rms; /* radians; default .15; experimental acquisition up to .75 */
 } adc_cal_loop_options_t;
 
 void adc_cal_loop_default_state(adc_cal_loop_state_t *state);
