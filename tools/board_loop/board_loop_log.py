@@ -13,6 +13,11 @@ browser after the export; --no-viewer skips it.
 --park-after CODE returns the skew actuator to CODE after a run that ended
 cleanly, through the firmware's ACK-checked `adc -cal loop test park CODE`;
 it is never sent after a timeout, error or RECOVERY_REQUIRED.
+After a calibration run that ended cleanly, --waveform-frames N (default 2)
+captures N raw ADC frames over UDP before the park, and again after a
+successful park: <stem>_waveform.csv/.png, and a waveform section in the
+viewer (final A/B with the run's correction applied, A-B before and after).
+Read-only; needs the NIC at 192.168.1.100. 0 disables.
 PC mode streams every record into CSV and PNG/SVG curves. Data packets are
 kept out of the human UART log. Requires the matching firmware and matplotlib.
 """
@@ -150,6 +155,32 @@ def park_actuator(ser, log, target, ended, lines, timeout=120.0):
     return True, f'code={target} after {moves} moves, every transaction result=OK'
 
 
+def final_code(lines):
+    """Actuator code the run ended at, from its LOOP-STATUS / LOOP-END line."""
+    for line in reversed(lines):
+        if line.startswith(('LOOP-STATUS ', 'LOOP-END ')):
+            code = fields(line).get('code', '')
+            if code.lstrip('-').isdigit():
+                return int(code)
+    return None
+
+
+def _final_waveform():
+    if __package__:
+        from . import final_waveform
+    else:
+        import final_waveform
+    return final_waveform
+
+
+def grab_waveform(ser, log, rx, state, code, n_frames):
+    """Capture raw ADC frames at the current actuator state; [] when none arrives."""
+    log.write(f'# waveform: capturing {n_frames} frame(s), state={state}, code={code}\n')
+    frames = _final_waveform().capture(ser, log, rx, n_frames)
+    log.write(f'# waveform: {len(frames)}/{n_frames} frame(s) received ({state})\n')
+    return [(state, code, frames)] if frames else []
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -169,9 +200,16 @@ def main(argv=None):
     ap.add_argument('--park-after', type=int, metavar='CODE',
                     help='after a run that ended cleanly, return the skew actuator to CODE (0..48) '
                          'with adc -cal loop test park CODE; every move must ACK result=OK')
+    ap.add_argument('--waveform-frames', type=int, default=2, metavar='N',
+                    help='after a calibration run that ended cleanly, capture N raw ADC frames over UDP '
+                         '(before --park-after moves the actuator, and again after the park) and add the '
+                         'final waveform to the viewer; 0 disables. Needs the NIC at 192.168.1.100')
     args = ap.parse_args(argv)
     if args.park_after is not None and not 0 <= args.park_after <= 48:
         print('--park-after must be a control code from 0 to 48')
+        return 2
+    if args.waveform_frames < 0:
+        print('--waveform-frames must be 0 or more')
         return 2
     tokens = args.cmd.split()
     if tokens[:3] != ['adc', '-cal', 'loop'] or any(c in args.cmd for c in '\r\n'):
@@ -219,7 +257,10 @@ def main(argv=None):
               tokens[3:4] == ['wave'] else 'LOOP-STATUS')
     ser = None
     data_file = None
+    rx = None
     lines = []
+    wave_captures = []
+    wave_note = None
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         ser = serial.Serial(args.uart, 115200, timeout=0.5)
@@ -248,9 +289,23 @@ def main(argv=None):
                 ended = read_until(ser, log, marker, args.timeout, lines, writer, data_file)
             if ended != 'ok':
                 log.write(f'# STOPPED: {ended}\n')
+            # The final waveform is read-only and must come before --park-after moves the
+            # actuator; never after a fault, where the board may still be busy.
+            if (streaming and args.waveform_frames and ended == 'ok' and
+                    not any('RECOVERY_REQUIRED' in line for line in lines)):
+                try:
+                    rx = _final_waveform().open_receiver()
+                except OSError as exc:
+                    wave_note = f'skipped: UDP port 6666 unavailable ({exc})'
+                if rx is not None:
+                    wave_captures += grab_waveform(ser, log, rx, 'final', final_code(lines),
+                                                   args.waveform_frames)
             if args.park_after is not None:
                 park_ok, park_message = park_actuator(ser, log, args.park_after, ended, lines)
                 log.write(f'# park-after: {park_message}\n')
+                if park_ok and wave_captures:
+                    wave_captures += grab_waveform(ser, log, rx, 'parked', args.park_after,
+                                                   args.waveform_frames)
         if data_file is not None:
             data_file.close()
             data_file = None
@@ -286,6 +341,20 @@ def main(argv=None):
                 print(f'  {label}: mean={mean} SD={sd}')
             print(f'csv: {csv_path}\njson: {json_path}')
             print(f"png: {summary['plots']['png']}\nsvg: {summary['plots']['svg']}")
+            if wave_captures:
+                try:
+                    fw = _final_waveform()
+                    w_csv, w_png, w_rows = fw.save(out, wave_captures, summary.get('correction'))
+                    print(f'waveform: {w_csv}' + (f'\nwaveform png: {w_png}' if w_png else ''))
+                    for state, code, frames in wave_captures:
+                        rms = fw.rms_difference(w_rows, state)
+                        print(f'  {state} (code {code}, {len(frames)} frame(s)): '
+                              f'RMS(A-B) = {rms:.2f} codes' + (' after correction' if state == 'final' else ''))
+                except (OSError, ValueError) as exc:
+                    print(f'waveform not saved: {exc}')
+            elif streaming and args.waveform_frames and ended == 'ok':
+                print('waveform: ' + (wave_note or 'no frame received; check that the NIC is '
+                                      '192.168.1.100 and the firewall lets Python receive UDP 6666'))
             if not args.no_viewer:
                 if __package__:
                     from .loop_viewer_export import write_viewer
@@ -315,6 +384,8 @@ def main(argv=None):
             data_file.close()
         if ser is not None:
             ser.close()
+        if rx is not None:
+            rx.close()
         # A run that failed before writing anything (e.g. the COM port was busy)
         # must not leave an empty run folder behind.
         if out.parent.is_dir() and not any(out.parent.iterdir()):

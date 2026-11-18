@@ -210,6 +210,7 @@ function classify(name, text) {
   if (/(^|,)hold_accepted(,|$)/.test(h) && /(^|,)point(,|$)/.test(h)) return "summary";
   if (/(^|,)phase(,|$)/.test(h) && /(^|,)experiment(,|$)/.test(h)) return "frames";
   if (h.startsWith("capture,iteration,status")) return "runcsv";
+  if (h.startsWith("state,code,frame,sample")) return "waveform";
   if (/^LOOP it=/m.test(text)) return "runlog";
   if (/^LOOP-(START|PROGRESS)/m.test(text)) return "compactlog";
   return null;
@@ -246,6 +247,25 @@ function runFromCSV(objs) {
     batch: num(o.batch_skew_ps), act: o.skew_action && o.skew_action !== "none" ? o.skew_action : "",
     phase: o.phase || ""
   })), meta: {} };
+}
+function waveFromCSV(objs) {
+  // board_loop_log.py <stem>_waveform.csv: one block per state (final, parked), first frame used
+  const out = {};
+  for (const o of objs) {
+    const st = o.state; if (!st) continue;
+    const s = out[st] || (out[st] = { code: num(o.code), frames: new Set(), t: [], a: [], b: [], aRaw: [], bRaw: [] });
+    s.frames.add(o.frame);
+    if (num(o.frame) !== 0) continue;
+    s.t.push(num(o.time_ns)); s.a.push(num(o.a_cal)); s.b.push(num(o.b_cal));
+    s.aRaw.push(num(o.a_raw)); s.bRaw.push(num(o.b_raw));
+  }
+  for (const s of Object.values(out)) s.nFrames = s.frames.size;
+  return out;
+}
+function rmsDiff(a, b) {
+  let s = 0, n = 0;
+  for (let i = 0; i < a.length; i++) if (fin(a[i]) && fin(b[i])) { const d = a[i] - b[i]; s += d * d; n++; }
+  return n ? Math.sqrt(s / n) : NaN;
 }
 function frameRow(o, i) {
   return {
@@ -291,12 +311,15 @@ function buildSweep(name, summaryObjs, frameObjs) {
 const state = { datasets: [], active: -1, selected: null, zoom: "all" };
 function addFiles(list) {
   // list: [{path, name, text}]
-  const groups = new Map(); const errors = [];
+  const groups = new Map(); const errors = []; const waves = new Map();
   for (const f of list) {
     const kind = classify(f.name, f.text);
     if (!kind) continue;
     const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : (f.group || "");
-    if (kind === "summary" || kind === "frames") {
+    if (kind === "waveform") {
+      // <stem>_waveform.csv belongs to the run <stem>.csv in the same folder
+      waves.set("run:" + dir + "/" + f.name.replace(/_waveform\.csv$/i, ""), f);
+    } else if (kind === "summary" || kind === "frames") {
       const k = "sweep:" + dir; if (!groups.has(k)) groups.set(k, { dir, files: {} });
       groups.get(k).files[kind] = f;
     } else if (kind === "runcsv" || kind === "runlog") {
@@ -321,12 +344,15 @@ function addFiles(list) {
       const parsed = g.kind === "runlog" ? runFromLog(g.run.text) : runFromCSV(parseCSV(g.run.text));
       if (!parsed.rows.length) { errors.push(g.run.name + "：找不到逐幀資料。"); continue; }
       ds = { kind: "run", name: g.base, rows: parsed.rows, meta: parsed.meta || {}, source: g.kind };
+      const w = waves.get(k);
+      if (w) { ds.wave = waveFromCSV(parseCSV(w.text)); waves.delete(k); }
     }
     const existing = state.datasets.findIndex(d => d.name === ds.name && d.kind === ds.kind);
     if (existing >= 0) state.datasets[existing] = ds; else state.datasets.push(ds);
     const idx = existing >= 0 ? existing : state.datasets.length - 1;
     if (firstNew < 0) firstNew = idx;
   }
+  for (const w of waves.values()) errors.push(w.name + "：這是最終波形檔，請和同名的 run .csv 一起載入。");
   document.getElementById("msg").textContent = errors.join(" ");
   if (firstNew >= 0) { state.active = firstNew; state.selected = null; }
   else if (!errors.length && list.length) document.getElementById("msg").textContent = "沒有認得的檔案：需要 summary.csv / frames.csv、run 的 .csv，或含 LOOP it= 的 .log。";
@@ -636,6 +662,40 @@ function renderRun(view, d) {
     </section>`;
   bindZoom(view);
   trajectory(view.querySelector(".traj"), rows, { group: "run", xName: "幀", skewBand: { y0: -10, y1: 10 } });
+  if (d.wave && d.wave.final) renderWave(view, d.wave);
+}
+function renderWave(view, w) {
+  const f = w.final, p = w.parked;
+  const SHOW_NS = 400;  // about four 10 MHz dither slots
+  const cut = s => s.t.findIndex(t => t > SHOW_NS);
+  const take = (s, key) => { const n = cut(s) < 0 ? s.t.length : cut(s); return s.t.slice(0, n).map((t, i) => [t, s[key][i]]); };
+  const diff = (s, ka, kb) => { const n = cut(s) < 0 ? s.t.length : cut(s); return s.t.slice(0, n).map((t, i) => [t, s[ka][i] - s[kb][i]]); };
+  const rmsF = rmsDiff(f.a, f.b), rmsP = p ? rmsDiff(p.aRaw, p.bRaw) : NaN;
+  const sec = document.createElement("section"); sec.className = "card"; sec.style.marginTop = "16px";
+  sec.innerHTML = `
+    <div class="detailhead"><div><h2>最終 ADC 波形</h2><p class="note">run 結束時（code ${fmtU(f.code, 0)}）抓的原始 ADC 資料，在電腦上套用這次 run 最後的 gain/offset 修正：(raw − offset) × gain。板子只把修正用在估計值上，不會改 ADC 輸出；skew 則是實際移動了取樣時脈（code）。${p ? `對照組是 park 回 code ${fmtU(p.code, 0)} 之後抓的、沒有任何修正的資料。` : ""}只顯示第 1 幀的前 ${SHOW_NS} ns。</p></div></div>
+    <div class="tiles">
+      ${tile("A−B RMS，校準後", fmtU(rmsF, 2), "codes")}
+      ${p ? tile(`A−B RMS，code ${fmtU(p.code, 0)}、無修正`, fmtU(rmsP, 2), "codes") : ""}
+      ${p && fin(rmsF) && fin(rmsP) && rmsF > 0 ? tile("A−B 改善", fmt(20 * Math.log10(rmsP / rmsF), 1), "dB") : ""}
+      ${tile("擷取幀數", f.nFrames + (p ? " + " + p.nFrames : ""))}
+    </div>
+    <div class="grid2 wavegrid" style="margin-top:12px"></div>`;
+  view.appendChild(sec);
+  const grid = sec.querySelector(".wavegrid"), s1 = "var(--s1)", s2 = "var(--s2)", muted = "var(--muted)";
+  const x = [0, Math.min(SHOW_NS, Math.max(...f.t.filter(fin)))];
+  const base = { x, group: "wave", height: 200, unit: "codes", xFormat: v => `${v.toFixed(2)} ns` };
+  panel(grid, `校準後 A、B <span style="color:var(--muted);font-weight:400">(codes，已修正)</span>`,
+    [{ name: "通道 A", color: s1 }, { name: "通道 B", color: s2 }],
+    Object.assign({}, base, { label: "final waveform", series: [
+      { name: "通道 A", color: s1, type: "line", pts: take(f, "a"), dp: 1 },
+      { name: "通道 B", color: s2, type: "line", pts: take(f, "b"), dp: 1 }] }));
+  const series = [{ name: `校準後（code ${fmtU(f.code, 0)}，已修正）`, color: s1, type: "line", pts: diff(f, "a", "b"), dp: 1 }];
+  const legend = [{ name: series[0].name, color: s1 }];
+  if (p) { series.unshift({ name: `code ${fmtU(p.code, 0)}，無修正`, color: muted, type: "line", pts: diff(p, "aRaw", "bRaw"), dp: 1 });
+           legend.unshift({ name: series[0].name, color: muted }); }
+  panel(grid, `A − B <span style="color:var(--muted);font-weight:400">(codes)</span>`, legend,
+    Object.assign({}, base, { label: "A minus B", zero: true, series }));
 }
 
 function renderSweep(view, d) {

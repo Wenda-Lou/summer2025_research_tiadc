@@ -15,6 +15,7 @@ from unittest.mock import patch
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import numpy as np
 
 from board_loop_log import main
 from loop_result_export import WIRE_COLUMNS, decode_results
@@ -88,6 +89,12 @@ class Port:
                     index += 1
                 lines.append(f'LOOP-TEST-SUMMARY phase={phase} attempts=4 accepted=4 code=12')
             reply = '\r\n'.join(lines + ['LOOP-TEST-END result=OK']) + '\r\n'
+        elif command == 'dma -d':
+            reply = 'Resetting DMA...\r\nDMA status after reset: 0x00000001\r\n'
+        elif command == 'dma -w':
+            reply = 'Starting DMA capture of 4095 bytes...\r\nDMA capture complete.\r\n'
+        elif command == 'udp':
+            reply = 'UDP: frame sent\r\n'
         elif command.startswith('adc -cal loop test park '):
             target, code = int(command.split()[-1]), 12
             lines = [f'LOOP-SKEW-TXN steps=0 result=OK code_before={code} code_after={code} stage=-']
@@ -130,6 +137,40 @@ class Port:
     def close(self):
         self.closed = True
 
+def synthetic_frame(rotation=3, n=1020):
+    """Raw DMA bytes in the board's [A A A A B B B B] layout, boundary at `rotation`."""
+    t = np.arange(n)
+    a = (600 * np.sin(2 * np.pi * 0.1533 * t)).astype(int)
+    b = (a * 0.98 + 7).astype(int)
+    words = [0] * rotation
+    for g in range(n // 4):
+        words += list(a[4 * g:4 * g + 4]) + list(b[4 * g:4 * g + 4])
+    return (np.array(words, dtype='<i2') << 2).tobytes(), a, b
+
+
+class Receiver:
+    """Stands in for the UDP socket: returns Receiver.frame, or nothing when None."""
+    frame = None
+    opened = 0
+
+    def __init__(self):
+        Receiver.opened += 1
+
+    def drain(self):
+        pass
+
+    def receive(self):
+        return Receiver.frame
+
+    def close(self):
+        pass
+
+
+def adc_commands(port):
+    """The board commands that are not part of the read-only waveform capture."""
+    return [c for c in port.commands if c not in ('dma -d', 'dma -w', 'udp')]
+
+
 def saved(path):
     """Where board_loop_log.py saves a run named by --out: its own folder."""
     return path.parent / path.stem / path.name
@@ -139,11 +180,14 @@ class ExportTests(unittest.TestCase):
     def setUp(self):
         Port.instances.clear()
         Port.fail = Port.silent = Port.incomplete = Port.partial = Port.park_fail = False
+        Receiver.frame = None
+        Receiver.opened = 0
 
     def call_main(self, args):
         # webbrowser.open is patched so a test run never opens the per-run viewer page.
         with patch.dict(sys.modules, serial=types.SimpleNamespace(Serial=Port)), \
                 patch('board_loop_log.time.sleep'), patch('webbrowser.open'), \
+                patch('final_waveform.open_receiver', Receiver), patch('final_waveform.time.sleep'), \
                 contextlib.redirect_stdout(io.StringIO()):
             return main(args)
 
@@ -204,7 +248,7 @@ class ExportTests(unittest.TestCase):
             path = Path(directory) / 'run.log'
             self.assertEqual(self.call_main(['--uart', 'TEST', '--out', str(path)]), 0)
             port = Port.instances[-1]
-            self.assertEqual(port.commands, ['adc -cal loop 300 stream'])
+            self.assertEqual(adc_commands(port), ['adc -cal loop 300 stream'])
             self.assertTrue(port.closed)
             result = json.loads(saved(path).with_suffix('.json').read_text())
             self.assertEqual(result['exported_rows'], 300)
@@ -276,7 +320,7 @@ class ExportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'park.log'
             self.assertEqual(self.call_main(['--out', str(path), '--park-after', '24']), 0)
-            self.assertEqual(Port.instances[-1].commands,
+            self.assertEqual(adc_commands(Port.instances[-1]),
                              ['adc -cal loop 300 stream', 'adc -cal loop test park 24'])
             log = saved(path).read_text()
             self.assertIn('code=24 after 12 moves, every transaction result=OK', log)
@@ -287,7 +331,7 @@ class ExportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'park.log'
             self.assertEqual(self.call_main(['--out', str(path), '--park-after', '24']), 1)
-            self.assertEqual(Port.instances[-1].commands,
+            self.assertEqual(adc_commands(Port.instances[-1]),
                              ['adc -cal loop 300 stream', 'adc -cal loop test park 24'])
             self.assertIn('park-after: failed', saved(path).read_text())
             # The run's own data is still exported.
@@ -303,6 +347,53 @@ class ExportTests(unittest.TestCase):
                 self.assertEqual(Port.instances[-1].commands, ['adc -cal loop 300 stream'])
                 self.assertIn('park-after: skipped', saved(path).read_text())
                 setattr(Port, failure, False)
+
+    def test_final_waveform_is_captured_before_park_and_shown(self):
+        Receiver.frame, a, b = synthetic_frame()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'wave.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--park-after', '24']), 0)
+            capture = ['dma -d', 'dma -w', 'udp'] * 2
+            self.assertEqual(Port.instances[-1].commands,
+                             ['adc -cal loop 300 stream'] + capture +
+                             ['adc -cal loop test park 24'] + capture)
+            wave = saved(path).with_name('wave_waveform.csv')
+            with wave.open(newline='') as stream:
+                rows = list(csv.DictReader(stream))
+            final = [r for r in rows if r['state'] == 'final' and r['frame'] == '0']
+            parked = [r for r in rows if r['state'] == 'parked' and r['frame'] == '0']
+            self.assertEqual(len(final), 1020)
+            self.assertEqual({r['code'] for r in final}, {'12'})
+            self.assertEqual({r['code'] for r in parked}, {'24'})
+            # de-framed at the right boundary, and the run's final correction applied
+            self.assertEqual([int(r['a_raw']) for r in final[:50]], list(a[:50]))
+            self.assertEqual([int(r['b_raw']) for r in final[:50]], list(b[:50]))
+            self.assertAlmostEqual(float(final[5]['a_cal']), (a[5] - 3.0) * 1.01, places=2)
+            self.assertAlmostEqual(float(final[5]['b_cal']), (b[5] + 5.0) * 0.99, places=2)
+            self.assertEqual(parked[5]['a_cal'], str(float(a[5])))
+            self.assertTrue(wave.with_suffix('.png').exists())
+            self.assertIn('state,code,frame,sample', saved(path).with_suffix('.html').read_text(encoding='utf-8'))
+
+    def test_waveform_can_be_disabled_and_never_follows_a_failed_run(self):
+        Receiver.frame = synthetic_frame()[0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'off.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--waveform-frames', '0']), 0)
+            self.assertEqual(Port.instances[-1].commands, ['adc -cal loop 300 stream'])
+            self.assertFalse(saved(path).with_name('off_waveform.csv').exists())
+        Port.fail = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'failed.log'
+            self.assertEqual(self.call_main(['--out', str(path), '--timeout', '.01']), 1)
+            self.assertEqual(Port.instances[-1].commands, ['adc -cal loop 300 stream'])
+            self.assertEqual(Receiver.opened, 0)
+
+    def test_missing_udp_frames_do_not_fail_the_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'nonic.log'
+            self.assertEqual(self.call_main(['--out', str(path)]), 0)
+            self.assertFalse(saved(path).with_name('nonic_waveform.csv').exists())
+            self.assertTrue(saved(path).with_suffix('.html').exists())
 
     def test_park_after_refused_for_bad_code_or_non_run_command(self):
         for args in (['--park-after', '49'], ['--park-after', '-1'],

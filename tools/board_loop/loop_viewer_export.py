@@ -23,8 +23,12 @@ EMBEDDED = re.compile(r'(<script id="embedded" type="application/json">)(.*?)(</
 def _datasets(source: Path):
     """CSV file -> one run dataset; folder -> its sweep (summary/frames) and/or run CSVs."""
     if source.is_file():
-        return [{'name': source.parent.name or 'run',
-                 'files': {source.name: source.read_text(encoding='utf-8')}}]
+        files = {source.name: source.read_text(encoding='utf-8')}
+        # board_loop_log.py's final ADC waveform for this run, if it was captured
+        wave = source.with_name(source.stem + '_waveform.csv')
+        if wave.is_file():
+            files[wave.name] = wave.read_text(encoding='utf-8')
+        return [{'name': source.parent.name or 'run', 'files': files}]
     files = {}
     for name in ('summary.csv', 'frames.csv'):
         if (source / name).is_file():

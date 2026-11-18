@@ -166,6 +166,7 @@ Name the run `combiner_tone<amplitude>mV_dither<rate>Mhz_run300.log`. With no to
 | Measure only; the actuator does not move | `--cmd "adc -cal loop open 60"` |
 | Return the actuator to a code when the run ends | `--park-after 12` (any code 0..48; see 7.5) |
 | Download the last run again, without recalibrating | `--cmd "adc -cal loop export"` |
+| More frames for the final waveform (default 2), or none | `--waveform-frames 5`, or `--waveform-frames 0` |
 | Do not open the browser at the end | `--no-viewer` |
 | Old flat layout (files directly in `calibration_out/`) | `--flat` |
 | Longer wait for a slow run (default 1800 s) | `--timeout 3600` |
@@ -184,6 +185,8 @@ calibration_out/<name>/
   <name>.png    curves of skew, gain, offset, corrections and code
   <name>.svg    the same figure as a vector image
   <name>.html   interactive viewer, opened in the browser automatically
+  <name>_waveform.csv   raw ADC frames at the end of the run (see 7.6)
+  <name>_waveform.png   final A/B and A−B, before and after
 ```
 
 If `calibration_out/<name>/` already holds a run, the new run goes to `<name>_<date>_<time>/`, so nothing is overwritten. If the run stops early, the `.log` and the rows received so far in the `.csv` are kept.
@@ -212,7 +215,19 @@ python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/<nam
 - After the run, it sends `adc -cal loop test park 24` and walks one code at a time through the ACK-checked transaction.
 - The park is sent only if the run ended cleanly. After a timeout, `Command Error` or `RECOVERY_REQUIRED` it is skipped and the log says `park-after: skipped`.
 - Success prints `park-after 24: code=24 after N moves, every transaction result=OK`. Anything else prints a `WARNING` and the command exits with 1. The run's data is still saved. Check the `LOOP-SKEW-TXN` lines in the log before the next run.
-- `--park-after 24` resets for the next matched run, which replaces step 6.2. Parking at the null (e.g. `--park-after 12`) suits steady-state or tone-limit runs, but 12 is the null of the current bring-up only. After a re-Run, run once from 24 and use the code it stops at.
+- `--park-after 24` resets for the next matched run, which replaces step 6.2.
+
+### 7.6 Final ADC waveform
+
+After a run that ended cleanly, the tool captures 2 raw ADC frames over UDP (`dma -d`, `dma -w`, `udp`). It does this **before** `--park-after` moves the actuator, so the frames show the calibrated state. After a successful park it captures 2 more at the parked code, as the "before" reference. Capturing is read-only.
+
+- The viewer gets a **最終 ADC 波形** section with two plots:
+  - A and B at the final code, with the run's final gain/offset correction applied on the PC: `(raw − offset) × gain`. The board applies this correction only to its estimates, never to the ADC output.
+  - A − B, final and corrected, against parked and uncorrected.
+
+  It also shows the RMS of A − B for both states, and the improvement in dB.
+- It needs the host NIC at **192.168.1.100**, and the Windows firewall must allow Python to receive UDP on port 6666. If no frame arrives, the run is still saved and the console prints `waveform: no frame received ...`.
+- With `--park-after 24` the "before" frames are the start state: code 24, no correction. Without `--park-after` only the final frames are captured. Parking at the null (e.g. `--park-after 12`) suits steady-state or tone-limit runs, but 12 is the null of the current bring-up only. After a re-Run, run once from 24 and use the code it stops at.
 
 ---
 
