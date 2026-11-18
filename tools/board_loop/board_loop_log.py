@@ -18,6 +18,9 @@ captures N raw ADC frames over UDP before the park, and again after a
 successful park: <stem>_waveform.csv/.png, and a waveform section in the
 viewer (final A/B with the run's correction applied, A-B before and after).
 Read-only; needs the NIC at 192.168.1.100. 0 disables.
+When firmware reports a final signal snapshot (including PRE/TRAIN/HOLD tests),
+download it read-only and include its waveform in the same viewer. --no-signal
+skips that download. HOLD grading remains independent of cancellation status.
 PC mode streams every record into CSV and PNG/SVG curves. Data packets are
 kept out of the human UART log. Requires the matching firmware and matplotlib.
 """
@@ -197,6 +200,8 @@ def main(argv=None):
     ap.add_argument('--no-export', action='store_true', help='UART progress only; no CSV or plots')
     ap.add_argument('--no-viewer', action='store_true',
                     help='do not write/open <stem>.html (loop_viewer.html with this run embedded)')
+    ap.add_argument('--no-signal', action='store_true',
+                    help='skip reading the final frozen waveform snapshot, if one is available')
     ap.add_argument('--park-after', type=int, metavar='CODE',
                     help='after a run that ended cleanly, return the skew actuator to CODE (0..48) '
                          'with adc -cal loop test park CODE; every move must ACK result=OK')
@@ -261,6 +266,8 @@ def main(argv=None):
     lines = []
     wave_captures = []
     wave_note = None
+    signal_path = None
+    signal_error = None
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         ser = serial.Serial(args.uart, 115200, timeout=0.5)
@@ -289,9 +296,30 @@ def main(argv=None):
                 ended = read_until(ser, log, marker, args.timeout, lines, writer, data_file)
             if ended != 'ok':
                 log.write(f'# STOPPED: {ended}\n')
+            output = next((fields(line) for line in reversed(lines)
+                           if line.startswith('LOOP-OUTPUT ')), None)
+            if (ended == 'ok' and not args.no_export and not args.no_signal and
+                    output and int(output.get('samples', '0')) > 0 and
+                    output.get('status') != 'unavailable'):
+                if __package__:
+                    from .board_signal_output import read_saved_signal
+                else:
+                    from board_signal_output import read_saved_signal
+                try:
+                    decoder = read_saved_signal(ser, min(args.timeout, 120.0))
+                    candidate = out.with_name(out.stem + '_signal.csv')
+                    meta = decoder.save(candidate)
+                    signal_path = candidate
+                    log.write(f"# signal: {candidate} cancellation={meta['status']}\n")
+                    print(f"SIGNAL cancellation={meta['status']}: {candidate} (separate from HOLD assessment)")
+                except (OSError, ValueError, KeyError) as exc:
+                    signal_error = str(exc)
+                    log.write(f'# signal export failed: {exc}\n')
+                    print(f'signal export failed: {exc}; calibration records retained')
             # The final waveform is read-only and must come before --park-after moves the
-            # actuator; never after a fault, where the board may still be busy.
-            if (streaming and args.waveform_frames and ended == 'ok' and
+            # actuator; never after a fault (or a failed signal download), where the board
+            # may still be busy.
+            if (streaming and args.waveform_frames and ended == 'ok' and not signal_error and
                     not any('RECOVERY_REQUIRED' in line for line in lines)):
                 try:
                     rx = _final_waveform().open_receiver()
@@ -301,7 +329,8 @@ def main(argv=None):
                     wave_captures += grab_waveform(ser, log, rx, 'final', final_code(lines),
                                                    args.waveform_frames)
             if args.park_after is not None:
-                park_ok, park_message = park_actuator(ser, log, args.park_after, ended, lines)
+                park_ok, park_message = park_actuator(ser, log, args.park_after,
+                    'signal-export-error' if signal_error else ended, lines)
                 log.write(f'# park-after: {park_message}\n')
                 if park_ok and wave_captures:
                     wave_captures += grab_waveform(ser, log, rx, 'parked', args.park_after,
@@ -362,7 +391,7 @@ def main(argv=None):
                     from loop_viewer_export import write_viewer
                 try:
                     # The run's own page: loop_viewer.html with this CSV embedded, opened now.
-                    print(f'viewer: {write_viewer(csv_path, open_browser=True)}')
+                    print(f'viewer: {write_viewer(csv_path, open_browser=True, signal=signal_path)}')
                 except (OSError, ValueError) as exc:
                     print(f'viewer not written: {exc}')
             if not summary['history_complete']:
@@ -371,7 +400,7 @@ def main(argv=None):
                 print('HOLD assessment: ' + ('PASS' if summary['assessment']['pass'] else 'FAIL'))
             elif not summary['run_healthy']:
                 print('Run incomplete, aborted or missing finite residuals; see JSON/log')
-            return 0 if summary['run_healthy'] and summary['history_complete'] and not park_failed else 1
+            return 0 if summary['run_healthy'] and summary['history_complete'] and not park_failed and not signal_error else 1
         return 1 if park_failed else 0
     except (OSError, ValueError) as exc:
         print(f'error: {exc}; UART log: {out}')

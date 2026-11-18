@@ -27,6 +27,11 @@ static double bt_exported_train_offset_b;
 static char bt_output[65536];
 static size_t bt_output_n;
 static unsigned bt_stream_rows;
+static unsigned bt_capture_calls, bt_output_calls, bt_capture_fail_at;
+static int bt_output_fail;
+static adc_cal_loop_state_t bt_output_state;
+static double bt_output_offset[2];
+static unsigned bt_output_axes;
 
 static void xil_printf(const char *fmt, ...)
 {
@@ -81,11 +86,28 @@ static const char *board_loop_reject_tag(adc_cal_loop_reject_t rejected)
 }
 #define BUTILS_LOOP_FRAGMENT 1
 #include "../firmware/thesis_v3_loop_appl/butils_loop_results.c"
+#include "../firmware/thesis_v3_loop_appl/butils_loop_output.c"
 #undef BUTILS_LOOP_FRAGMENT
 static long board_loop_capture(void *ctx, uint8_t *buf, size_t cap)
 {
     (void)ctx; (void)buf; (void)cap;
-    return bt_capture_fail ? -1L : 1L;
+    bt_capture_calls++;
+    return bt_capture_fail || bt_capture_calls == bt_capture_fail_at ? -1L : 1L;
+}
+static int bt_make_output(adc_cal_loop_t *loop, const uint8_t *raw, size_t n)
+{
+    (void)raw; (void)n;
+    bt_output_calls++;
+    bt_output_state = loop->state;
+    bt_output_offset[0] = loop->opt.input_offset[0];
+    bt_output_offset[1] = loop->opt.input_offset[1];
+    bt_output_axes = loop->opt.update_axes;
+    memset(&loop->output, 0, sizeof(loop->output));
+    if (bt_output_fail) return -1;
+    /* Physics/real DMA output are covered by sim_loop_tests, not this spy. */
+    loop->output.status = ADC_CAL_LOOP_OUTPUT_NO_TONE;
+    loop->output.n_samples = 512;
+    return 0;
 }
 static int bt_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n, adc_cal_loop_row_t *row)
 {
@@ -125,7 +147,9 @@ static int bt_step(adc_cal_loop_t *loop, const uint8_t *raw, size_t n, adc_cal_l
 
 #define BUTILS_LOOP_FRAGMENT 1
 #define adc_cal_loop_step bt_step
+#define adc_cal_loop_make_output bt_make_output
 #include "../firmware/thesis_v3_loop_appl/butils_loop_test.c"
+#undef adc_cal_loop_make_output
 #undef adc_cal_loop_step
 #undef BUTILS_LOOP_FRAGMENT
 
@@ -136,6 +160,7 @@ static int bt_command(const char *args)
     bt_output_n = 0U;
     bt_output[0] = '\0';
     bt_train_frames = 0U;
+    bt_capture_calls = bt_output_calls = 0U;
     (void)strtok(line, " ");
     board_loop_test_command();
     return strstr(bt_output, "LOOP-TEST-END result=OK") != NULL;
@@ -259,10 +284,39 @@ void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary)
     SIM_ASSERT_TRUE(ctx, bt_command("offset B 32"));
     SIM_ASSERT_TRUE(ctx, bt_command("run offset 4 40 8"));
     SIM_ASSERT_NEAR(ctx, g_board_loop.state.offset_b - baseline.offset_b, 32.0, 0.01);
+    SIM_ASSERT_EQ_INT(ctx, bt_capture_calls, 53);
+    SIM_ASSERT_EQ_INT(ctx, bt_output_calls, 1);
+    SIM_ASSERT_EQ_INT(ctx, bt_output_axes, 0);
+    SIM_ASSERT_TRUE(ctx, memcmp(&bt_output_state, &g_board_loop.state, sizeof(bt_output_state)) == 0);
+    SIM_ASSERT_NEAR(ctx, bt_output_offset[1], 32.0, 0.0);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "phase=hold attempts=8 accepted=8") != NULL);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-OUTPUT status=no-tone samples=512") != NULL);
     SIM_ASSERT_TRUE(ctx, bt_command("restore"));
     SIM_ASSERT_TRUE(ctx, bt_command("ifc B 13"));
     SIM_ASSERT_TRUE(ctx, bt_command("run gain 4 4 4"));
+    SIM_ASSERT_EQ_INT(ctx, bt_capture_calls, 13);
+    SIM_ASSERT_EQ_INT(ctx, bt_output_calls, 1);
+    SIM_ASSERT_EQ_INT(ctx, bt_output_axes, 0);
+    SIM_ASSERT_TRUE(ctx, memcmp(&bt_output_state, &g_board_loop.state, sizeof(bt_output_state)) == 0);
     SIM_ASSERT_TRUE(ctx, strstr(bt_output, "gain_ppm=0") != NULL);
+    /* Missing output cannot change a completed HOLD into a calibration retry. */
+    bt_capture_fail_at = 13;
+    SIM_ASSERT_TRUE(ctx, bt_command("run gain 4 4 4"));
+    SIM_ASSERT_EQ_INT(ctx, bt_output_calls, 0);
+    SIM_ASSERT_EQ_INT(ctx, g_board_loop.output.n_samples, 0);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-OUTPUT status=unavailable") != NULL);
+    bt_capture_fail_at = 0;
+    bt_output_fail = 1;
+    SIM_ASSERT_TRUE(ctx, bt_command("run gain 4 4 4"));
+    SIM_ASSERT_EQ_INT(ctx, bt_output_calls, 1);
+    SIM_ASSERT_EQ_INT(ctx, g_board_loop.output.n_samples, 0);
+    bt_output_fail = 0;
+    SIM_ASSERT_TRUE(ctx, bt_command("restore"));
+    SIM_ASSERT_TRUE(ctx, bt_command("park 25"));
+    SIM_ASSERT_TRUE(ctx, bt_command("run skew 4 4 4"));
+    SIM_ASSERT_EQ_INT(ctx, bt_output_calls, 1);
+    SIM_ASSERT_EQ_INT(ctx, bt_output_axes, 0);
+    SIM_ASSERT_TRUE(ctx, memcmp(&bt_output_state, &g_board_loop.state, sizeof(bt_output_state)) == 0);
     SIM_ASSERT_TRUE(ctx, bt_command("restore"));
     SIM_ASSERT_TRUE(ctx, bt_command("step 24 4"));
     SIM_ASSERT_EQ_INT(ctx, bt_code, 24);
@@ -385,4 +439,26 @@ void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary)
     SIM_ASSERT_EQ_INT(ctx, board_loop_result_row(BOARD_LOOP_HISTORY_CAPACITY - 1U)->capture,
                       BOARD_LOOP_HISTORY_CAPACITY + 3U);
     SIM_ASSERT_EQ_INT(ctx, bt_stream_rows, BOARD_LOOP_HISTORY_CAPACITY + 3U);
+    bt_output_n = 0U; bt_output[0] = '\0';
+    memset(&g_board_loop.output, 0, sizeof(g_board_loop.output));
+    board_loop_output_export();
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-SIGNAL-END result=ERROR reason=no-output") != NULL);
+    g_board_loop.output.status = ADC_CAL_LOOP_OUTPUT_CANCELLED;
+    g_board_loop.output.n_samples = 512;
+    g_board_loop.output.tone_hz = 199375000.0;
+    for (size_t i = 0; i < 512; ++i) {
+        g_board_loop.output_a[i] = 123.456;
+        g_board_loop.output_b[i] = -789.123;
+    }
+    bt_output_n = 0U; bt_output[0] = '\0';
+    const adc_cal_loop_state_t output_state = g_board_loop.state;
+    const int output_moves = bt_moves, output_writes = bt_writes;
+    board_loop_output_status();
+    board_loop_output_export();
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-OUTPUT status=cancelled samples=512 reference_free=1 coefficients=frozen") != NULL);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-SIGNAL-DATA 511,123456,-789123") != NULL);
+    SIM_ASSERT_TRUE(ctx, memcmp(&output_state, &g_board_loop.state, sizeof(output_state)) == 0);
+    SIM_ASSERT_EQ_INT(ctx, bt_moves, output_moves);
+    SIM_ASSERT_EQ_INT(ctx, bt_writes, output_writes);
+    fprintf(summary, "\n== production C signal fixture ==\n%s", bt_output);
 }

@@ -750,6 +750,139 @@ static void test_blind_closed_loop(sim_assert_context_t *ctx, FILE *summary)
     }
 }
 
+static void test_learned_dither_output(sim_assert_context_t *ctx, FILE *summary)
+{
+    static double a[2048], b[2048], truth_a[2048], truth_b[2048];
+    adc_cal_loop_config_t cfg = {0};
+    adc_cal_loop_options_t opt;
+    lt_bench_t noise = {0}; noise.rng = 3817163;
+    cfg.fs_dac = 1.3e9; cfg.adc_ratio = 1;
+    adc_cal_loop_default_options(&opt); opt.reference_free = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, NULL), 0);
+    const adc_cal_loop_state_t state = g_loop.state;
+    for (int test = 0; test < 6; ++test) {
+        const int period = test%2 ? 65 : 130;
+        const double freq = 0.1533653846 + test*0.01731;
+        const double edge = test < 4 ? 2.0 : 3.0;
+        double raw_error = 0.0, clean_error = 0.0, max_error_b = 0.0;
+        unsigned untouched = 0U;
+        for (int i = 0; i < 2048; ++i) {
+            const int slot = (i+41)/period;
+            const double sign = (slot*slot+3*slot)%7 < 3 ? -1.0 : 1.0;
+            const double pos = (i+41)%period - 17.37;
+            truth_a[i] = 3.0 + 800.0*sin(2.0*LT_PI*freq*i+0.31);
+            truth_b[i] = -5.0 + 816.0*sin(2.0*LT_PI*freq*(i+0.025)+0.31);
+            a[i] = truth_a[i] + sign*600.0*adc_cal_loop_pulse(pos, edge, 2.0) + lt_gauss(&noise);
+            b[i] = truth_b[i] + sign*612.0*adc_cal_loop_pulse(pos+0.025, edge, 2.0) + lt_gauss(&noise);
+            raw_error += (a[i]-truth_a[i])*(a[i]-truth_a[i]);
+        }
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_cancel_dither(&g_loop, a, b, 2048), 0);
+        fprintf(summary, "output test=%d status=%s period=%u events=%u tone_hz=%g cv_db=%g/%g\n",
+                test, adc_cal_loop_output_status_name(g_loop.output.status),
+                g_loop.output.period_samples, g_loop.output.events, g_loop.output.tone_hz,
+                g_loop.output.validation_db_a, g_loop.output.validation_db_b);
+        SIM_ASSERT_EQ_INT(ctx, g_loop.output.status, ADC_CAL_LOOP_OUTPUT_CANCELLED);
+        SIM_ASSERT_EQ_INT(ctx, g_loop.output.period_samples, period);
+        SIM_ASSERT_NEAR(ctx, g_loop.output.tone_hz/1.3e9, freq, 0.000001);
+        for (int i = 0; i < 2048; ++i) {
+            clean_error += (g_loop.output_a[i]-truth_a[i])*(g_loop.output_a[i]-truth_a[i]);
+            max_error_b = fmax(max_error_b, fabs(g_loop.output_b[i]-truth_b[i]));
+            if (g_loop.output_a[i] == a[i]) untouched++;
+        }
+        SIM_ASSERT_TRUE(ctx, max_error_b < 10.0);
+        SIM_ASSERT_TRUE(ctx, untouched > 2048U*3U/4U);
+        SIM_ASSERT_TRUE(ctx, clean_error < raw_error/100.0);
+        SIM_ASSERT_TRUE(ctx, sqrt(clean_error/2048) < 2.0);
+        adc_cal_loop_tone_fit_t fit;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_fit_tone(g_loop.output_a, 2048, freq, 0, &fit), 0);
+        SIM_ASSERT_NEAR(ctx, fit.amplitude, 800.0, 0.2);
+        SIM_ASSERT_NEAR(ctx, fit.a, 800.0*sin(0.31), 0.2);
+        SIM_ASSERT_NEAR(ctx, fit.b, 800.0*cos(0.31), 0.2);
+        SIM_ASSERT_TRUE(ctx, memcmp(&state, &g_loop.state, sizeof(state)) == 0);
+        /* Unused waveform/tone metadata cannot affect learned cancellation. */
+        g_loop.cfg.dither_period_dac = -77; g_loop.cfg.sig_cycles = -991;
+    }
+    /* A clean sinusoid is passed through; noise, multiple tones and irregular
+     * pulses must never be returned as a successful dither cancellation. */
+    for (int kind = 0; kind < 4; ++kind) {
+        for (int i = 0; i < 2048; ++i) {
+            a[i] = b[i] = kind == 1 ? lt_gauss(&noise) : 800*sin(2*LT_PI*0.173251*i);
+            if (kind == 2) a[i] = b[i] = a[i] + 300*sin(2*LT_PI*0.27131*i);
+            if (kind == 3 && i%137 < 4) a[i] = b[i] = a[i] + ((i/137)%3+1)*100.0;
+        }
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_cancel_dither(&g_loop, a, b, 2048), 0);
+        SIM_ASSERT_TRUE(ctx, g_loop.output.status != ADC_CAL_LOOP_OUTPUT_CANCELLED);
+        SIM_ASSERT_TRUE(ctx, memcmp(a, g_loop.output_a, sizeof(a)) == 0);
+        SIM_ASSERT_TRUE(ctx, memcmp(b, g_loop.output_b, sizeof(b)) == 0);
+    }
+    a[17] = NAN;
+    SIM_ASSERT_TRUE(ctx, adc_cal_loop_cancel_dither(&g_loop, a, b, 2048) < 0);
+    SIM_ASSERT_EQ_INT(ctx, g_loop.output.n_samples, 0);
+    SIM_ASSERT_EQ_INT(ctx, g_loop.output.status, ADC_CAL_LOOP_OUTPUT_UNAVAILABLE);
+    SIM_ASSERT_TRUE(ctx, adc_cal_loop_cancel_dither(&g_loop, b, b, 511) < 0);
+
+    /* Exercise the public frozen-output path on an actual packed DMA frame,
+     * including opposite ADC polarity, final gain/offset, and random framing. */
+    adc_cal_loop_default_config(&cfg);
+    lt_bench_t bench;
+    lt_bench_init(&bench, &cfg, 397U);
+    cfg.dither_edge_dac = 4; cfg.dither_top_dac = 4;
+    cfg.amp_dbfs = -12.0; cfg.dither_scale_lsb = 2400.0;
+    cfg.dither_period_dac = 130; cfg.n_events = cfg.n_dac_points/130;
+    for (int k = 0; k < cfg.n_events; ++k) cfg.polarity[k] = k%3 ? -1 : 1;
+    bench.noise = 0.4;
+    adc_cal_loop_config_t hardware = {0}; hardware.fs_dac = 1.3e9; hardware.adc_ratio = 1;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, NULL), 0);
+    g_loop.state.offset_a = bench.offset_a;
+    g_loop.state.offset_b = bench.offset_b;
+    g_loop.state.gain_corr_b = 1.0/bench.gain_b;
+    const adc_cal_loop_state_t frozen = g_loop.state;
+    uint8_t raw[2*LT_WORDS];
+    const long bytes = lt_capture(&bench, raw, sizeof(raw));
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_make_output(&g_loop, raw, (size_t)bytes), 0);
+    SIM_ASSERT_EQ_INT(ctx, g_loop.output.status, ADC_CAL_LOOP_OUTPUT_CANCELLED);
+    SIM_ASSERT_TRUE(ctx, memcmp(&frozen, &g_loop.state, sizeof(frozen)) == 0);
+    adc_cal_loop_tone_fit_t fit;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_fit_tone(g_loop.output_b, g_loop.output.n_samples,
+                      g_loop.output.tone_hz/1.3e9, 0, &fit), 0);
+    SIM_ASSERT_NEAR(ctx, fit.amplitude, pow(10.0, -12.0/20.0)*LT_ADC_FULL_SCALE, 1.0);
+    SIM_ASSERT_TRUE(ctx, adc_cal_loop_make_output(&g_loop, raw, 1) < 0);
+    SIM_ASSERT_EQ_INT(ctx, g_loop.output.n_samples, 0);
+
+    /* Actual reference-free calibration of tone+dither, then a fresh frozen
+     * frame. The learned output must not alter the converged controller. */
+    cfg.amp_dbfs = -30.0;
+    lt_bench_init(&bench, &cfg, 829U);
+    bench.noise = 0.4;
+    adc_cal_loop_actuator_t act;
+    adc_cal_loop_default_actuator(&act);
+    act.ctx = &bench; act.command_skew_ps = lt_command_skew;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, &act), 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_run(&g_loop, 100, lt_capture, &bench,
+                      NULL, NULL, raw, sizeof(raw)), 100);
+    const adc_cal_loop_state_t calibrated = g_loop.state;
+    const long final_bytes = lt_capture(&bench, raw, sizeof(raw));
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_make_output(&g_loop, raw, (size_t)final_bytes), 0);
+    SIM_ASSERT_EQ_INT(ctx, g_loop.output.status, ADC_CAL_LOOP_OUTPUT_CANCELLED);
+    SIM_ASSERT_TRUE(ctx, memcmp(&calibrated, &g_loop.state, sizeof(calibrated)) == 0);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_fit_tone(g_loop.output_a, g_loop.output.n_samples,
+                      g_loop.output.tone_hz/1.3e9, 0, &fit), 0);
+    const double amplitude_a = fit.amplitude;
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_fit_tone(g_loop.output_b, g_loop.output.n_samples,
+                      g_loop.output.tone_hz/1.3e9, 0, &fit), 0);
+    SIM_ASSERT_NEAR(ctx, fit.amplitude/amplitude_a, 1.0, 0.002);
+    fprintf(summary, "calibration then output: accepted=%u status=%s tone_ratio=%g\n",
+            g_loop.qualified, adc_cal_loop_output_status_name(g_loop.output.status),
+            fit.amplitude/amplitude_a);
+
+    /* Dither with no carrier must not invent a main tone. */
+    for (int i = 0; i < 2048; ++i)
+        a[i] = b[i] = 600*adc_cal_loop_pulse(i%65 - 17.37, 2, 2);
+    SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_cancel_dither(&g_loop, a, b, 2048), 0);
+    SIM_ASSERT_TRUE(ctx, g_loop.output.status != ADC_CAL_LOOP_OUTPUT_CANCELLED);
+    SIM_ASSERT_TRUE(ctx, memcmp(a, g_loop.output_a, sizeof(a)) == 0);
+}
+
 void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
 {
     fprintf(summary, "\n== calibration_loop_c native tests ==\n");
@@ -764,6 +897,7 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_dither_only(ctx, summary);
     test_reference_free(ctx);
     test_blind_closed_loop(ctx, summary);
+    test_learned_dither_output(ctx, summary);
     sim_board_axis_tests_run(ctx, summary);
 }
 

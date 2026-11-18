@@ -1,5 +1,48 @@
 # Offset / gain / skew 单项校准极限测试
 
+本次 main tone 与 dither 经 RF combiner 合路、手动注入 mismatch 的完整步骤：
+[RF_COMBINER_MANUAL_TEST.md](../docs/bench/RF_COMBINER_MANUAL_TEST.md)。
+
+## 2026-11-18 当前手动测试入口：PRE → TRAIN → HOLD + 最终波形
+
+保持之前的手动 mismatch 流程，不运行自动 sweep。重新构建/下载 ELF 后，
+RAM 基准会清空，先完成 `adc -cal skew step 0` 和
+`adc -cal loop test baseline 600 100`，确认 `test status` 的基准 valid=1。
+不提供 reference、wave 配置、脉宽、极性表或 main tone 频率。
+
+以下以 B 通道软件 offset +32 原生 ADC codes 为例，串口逐条执行：
+
+```text
+adc -cal loop test restore
+adc -cal loop test offset B 32
+```
+
+关闭串口终端，在仓库根目录运行与之前相同的三阶段命令：
+
+```powershell
+python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/manual_offset32.log
+```
+
+PRE 的 40 次尝试全部冻结；TRAIN 的 300 次只更新 offset；HOLD 的 100 次
+全部冻结、独立评分。Gain/skew 测试分别将 run 的 axis 改成 gain/skew，
+仍由用户事先手动注入：gain 使用 B 银行 IFC（选择不同于实际基准的码，
+基准为 0x0C 时才用 `test ifc B 0x0D`）；skew 使用 `test park` 到相对
+实际基准偏移的控制码，不假设基准一定是 24。每次换点先手动 restore。
+
+HOLD 完成后额外采集一帧，使用完全相同的冻结系数与当前手动注入来学习/
+抵消 dither。该帧不计入 HOLD 次数或统计，不更新系数或执行器，不参与
+HOLD 评分；抵消失败也不会重新训练、重跑 HOLD 或放宽阈值。
+
+PC 自动只读下载已报告可用的输出快照，保存同一运行目录下的
+`<stem>_signal.csv/json`，并与 PRE/TRAIN/HOLD 曲线一起嵌入 `<stem>.html`。
+只需原来这一条 PC 测试指令；`--no-signal` 可跳过波形下载。
+旧固件没有 LOOP-OUTPUT 时保持原来的记录流程，但不会生成新波形。
+
+HOLD 是否通过与 dither 是否 cancelled 分别报告。要看保留的 main tone，
+ADC 输入必须同时包含 main tone 与共享宽带 dither；纯 dither 输入可能
+报告 no-tone，不能把它标成抵消成功。输出采集失败会报告 unavailable，
+已经完成的三阶段记录和评分仍保留。本次接入已离线验证，尚未上板。
+
 后续 AI/维护者先读 [交接记录](CALIBRATION_LIMIT_HANDOFF.md)，了解当前
 实现、验证和未上板状态；下文是详细原理和操作步骤。
 

@@ -1,5 +1,26 @@
 # tools/
 
+Manual mismatch tests keep the existing `loop test run AXIS PRE TRAIN HOLD`
+workflow. `board_loop_log.py` now reads an advertised final waveform snapshot
+after those phases, saves `<stem>_signal.csv/json`, and embeds it with the phase
+curves in the same HTML. `--no-signal` skips this read-only download. HOLD
+assessment and cancellation status remain separate. See the current procedure
+at the top of `calibration_loop/CALIBRATION_LIMIT_TEST.md`.
+
+After a completed closed calibration run, download the final frozen signal
+snapshot with `board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv`
+(run with Python from the repo root, using the `tools/` prefix).
+This reads learned-dither-cancelled A/B samples
+using `adc -cal loop output`, not raw UDP. CSV/JSON retain non-cancelled status
+when the waveform could not be separated reliably; the tool then exits 1.
+It also creates/opens a self-contained `.html` in the existing loop viewer
+(`--no-viewer` skips this). The waveform page shows A/B time traces with a
+movable sample window, A-B and a Hann-windowed output spectrum. Cancellation
+status comes from the matching JSON; a CSV alone is explicitly unconfirmed.
+To view an existing snapshot: `python tools/board_loop/loop_viewer_export.py
+calibration_out/signal.csv --open`. The file/folder picker also accepts the
+signal CSV and its same-stem JSON alongside normal calibration results.
+
 Bench and host scripts. Run them from the repo root, for example
 `python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/run.log`.
 Scripts that do not set up their own `REPO` path need `PYTHONPATH=.` to import

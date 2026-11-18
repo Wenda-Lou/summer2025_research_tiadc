@@ -1,5 +1,25 @@
 # AGENTS.md
 
+Latest output requirement (2026-11-17): after calibration, cancel the injected
+dither from the corrected signal while preserving the main tone. This stage
+must also be reference-free: learn pulse spacing, shape and signs from ADC
+samples. `adc_calibration_loop_output.h` is OUTPUT ONLY; its automatic robust
+tone fit must never enter calibration feedback. The board takes a new frozen-
+coefficient frame after a completed closed run, stores output_a/b, and reports
+LOOP-OUTPUT. Manual single-axis `loop test run AXIS PRE TRAIN HOLD` also takes
+this separate snapshot AFTER independent HOLD, with the same frozen state and
+manual injection. It never changes HOLD scores/budgets or tunes on HOLD data.
+`adc -cal loop output` reads that snapshot without capture/writes;
+`tools/board_loop/board_signal_output.py` saves CSV/JSON and opens a self-contained
+HTML waveform page in the existing loop viewer (`--no-viewer` skips the page).
+`board_loop_log.py` also downloads advertised snapshots read-only, adding
+`<stem>_signal.csv/json` to the calibration viewer; `--no-signal` skips it.
+The viewer plots A/B time traces, A-B and spectra, and only labels cancellation
+successful when the same-stem JSON explicitly confirms it. Require identifiable
+single-tone + sparse periodic impulses and independent-event validation, or
+pass corrected data through with an explicit non-cancelled status. Ordinary
+UDP still sends raw DMA bytes. This output stage has offline validation only.
+
 Guidance for AI coding agents working in this repository. Read this before
 touching anything.
 

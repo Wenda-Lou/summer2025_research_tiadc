@@ -2,6 +2,7 @@
 
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -585,6 +586,8 @@ static void align_to_loop(adc_cal_loop_t *loop, const double *residual, int n_re
 int adc_cal_loop_prepare_capture(adc_cal_loop_t *loop, const uint8_t *raw, size_t n_bytes,
                                  adc_cal_loop_prep_t *prep)
 {
+    /* A new capture cannot expose the previous frame as a cleaned output. */
+    memset(&loop->output, 0, sizeof(loop->output));
     int n_words = 0;
     double abs_corr[8];
     int n_split[8];
@@ -1452,6 +1455,8 @@ static void state_apply(const adc_cal_loop_state_t *state, const double *a, cons
         cal_b[i] = (b[i] - state->offset_b) * state->gain_corr_b;
     }
 }
+
+#include "adc_calibration_loop_output.h"
 
 /* ------------------------------------------------------------------------ */
 /* Skew batch decision                                                        */

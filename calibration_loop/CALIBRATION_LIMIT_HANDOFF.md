@@ -1,5 +1,39 @@
 # AI 交接记录：单项 offset / gain / skew 校准极限
 
+## 2026-11-18 手动 mismatch 的三阶段测试
+
+用户要沿用手动增加 mismatch，然后 PRE/TRAIN/HOLD 的流程；不是自动扫描。
+`loop test run offset|gain|skew PRE TRAIN HOLD` 现在在 HOLD 完整结束后
+另采一帧做最终输出抵消，使用相同冻结状态和手动注入，不影响原 HOLD
+统计/预算/阈值，也不写执行器。输出不可用不触发重新训练或自动恢复。
+`board_loop_log.py` 根据 LOOP-OUTPUT 自动只读下载 `<stem>_signal.csv/json`，
+与三阶段曲线嵌入同一个 HTML；--no-signal 关闭额外下载。
+抵消失败与 HOLD 判定保持独立，波形传输失败保留校准记录并返回非零。
+具体操作见 CALIBRATION_LIMIT_TEST.md 顶部。需新 ELF；尚未上板。
+离线检查：C 全套 6772 项、18 场景、14 流水线场景通过；PC 导出与单轴
+协议通过，原生 C 包回放通过；真实浏览器验证三阶段标签与最终波形共存。
+
+## 2026-11-17 最新输出要求：校正后学习并抵消 dither
+
+用户确认全程无 reference，从 ADC 采样学习 dither，输出保留 main tone。
+新增 `calibration_loop_c/adc_calibration_loop_output.h`，独立于反馈估计器：
+只在成功完成板端闭环后用最终冻结系数处理全新采集帧，自动识别主 tone，
+从残差识别脉冲间距/形状/符号；交叉使用其他事件学习的脉冲形状做相减。
+不提供模板、周期、tone 频率或极性表，也不把拟合正弦当作输出。
+当前支持主导单音 + 形状/幅度稳定、整数采样间距的稀疏周期脉冲。
+至少六个完整事件，两通道独立事件验证和脉冲外检查均通过才报告 cancelled。
+无法可靠分离时保留原校正采样并明确 no-tone/no-dither/ambiguous；坏帧 unavailable。
+噪声与不可辨识的共同 DC 不会被当成 dither 一起删除。
+
+串口 `LOOP-OUTPUT` 报告状态；`adc -cal loop output` 只读最后输出快照。
+PC：`python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv`。
+CSV/JSON 明确记录是否 cancelled，失败时不声称已经只剩主 tone。
+波形下载现在还会生成并打开同名 HTML，沿用现有 loop_viewer：A/B 时域、
+采样窗口、A-B 和输出频谱；--no-viewer 可关闭。已有 CSV 可经
+loop_viewer_export.py 打开，或连同同名 JSON 拖入查看器。缺少/矛盾的
+JSON 不会显示抵消成功。浏览器交互、单位与主峰幅值归一化已离线验证。
+原 `udp` 仍发送原始 DMA，DPG 不会被自动停止。此更改尚未上板验证。
+
 记录日期：2026-10-27。入口已写入仓库根目录 `AGENTS.md`。
 详细原理与全部命令：[`CALIBRATION_LIMIT_TEST.md`](CALIBRATION_LIMIT_TEST.md)。
 

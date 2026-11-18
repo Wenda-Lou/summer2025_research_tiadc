@@ -19,7 +19,7 @@
 
 #define BOARD_LOOP_MAX_SAMPLES 2000U
 
-static adc_cal_loop_t g_board_loop;                  /* ~570 KB: .bss, never the stack */
+static adc_cal_loop_t g_board_loop;                  /* large work buffers: .bss, never the stack */
 static uint8_t g_board_loop_frame[DMA_CMD_BUF_SIZE + 1U];
 static bool g_board_loop_valid;                     /* g_board_loop holds a finished run */
 static bool g_board_loop_closed;                    /* that run was allowed to move skew */
@@ -184,6 +184,8 @@ static void board_loop_on_row(void *ctx, const adc_cal_loop_row_t *row)
  * Commands.
  * ------------------------------------------------------------------------ */
 
+#include "butils_loop_output.c"
+
 static void adc_loop_print_command_help(void)
 {
     xil_printf("  adc -cal loop N           On-board impulse-dither loop: N qualified samples,\r\n");
@@ -192,6 +194,7 @@ static void adc_loop_print_command_help(void)
     xil_printf("  adc -cal loop open N      Same, skew measured only (no actuator writes).\r\n");
     xil_printf("  adc -cal loop status      State of the last loop run.\r\n");
     xil_printf("  adc -cal loop export      Export saved results/rows to the PC; no new calibration.\r\n");
+    xil_printf("  adc -cal loop output      Read final frozen-coefficient signal snapshot (learned dither cancellation).\r\n");
     xil_printf("  adc -cal loop wave [K]    Legacy no-op; no waveform reference is used.\r\n");
     xil_printf("  adc -cal loop test help   Isolated offset/gain/skew experiments and holdout.\r\n");
     xil_printf("      Reference-free dither: shared A/B excitation, no waveform setup.\r\n");
@@ -277,6 +280,14 @@ static void board_loop_run(unsigned n_qualified, bool closed, bool streaming)
     got = adc_cal_loop_run(&g_board_loop, n_qualified, board_loop_capture, NULL,
                            board_loop_on_row, NULL,
                            g_board_loop_frame, sizeof(g_board_loop_frame));
+    /* A NEW frame uses all final gain/offset coefficients, after the final
+     * ACK-checked skew move. Cancellation never enters the feedback path. */
+    if (closed && got == n_qualified && !g_board_loop.skew_abort) {
+        const long bytes = board_loop_capture(NULL, g_board_loop_frame, sizeof(g_board_loop_frame));
+        if (bytes > 0)
+            (void)adc_cal_loop_make_output(&g_board_loop, g_board_loop_frame, (size_t)bytes);
+    }
+    board_loop_output_status();
     XTime_GetTime(&t_end);
     g_quiet_calibration_capture = quiet_before;
     g_board_loop_valid = true;
@@ -320,6 +331,14 @@ static void handle_adc_loop_cmd(void)
             return;
         }
         board_loop_results_export();
+        return;
+    }
+    if (strcmp(token, "output") == 0) {
+        if (strtok(NULL, " ") != NULL) {
+            ERR("Use adc -cal loop output.");
+            return;
+        }
+        board_loop_output_export();
         return;
     }
     if (strcmp(token, "test") == 0) {

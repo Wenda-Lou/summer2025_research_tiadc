@@ -1,5 +1,33 @@
 # thesis_v3_loop_appl
 
+2026-11-17 output stage: a completed closed `adc -cal loop N` now acquires one
+fresh frame, applies the final frozen gain/offset coefficients, and learns and
+subtracts the dither directly from that frame. No reference, waveform geometry,
+frequency, or polarity sequence is provided. The output stage supports a
+dominant main tone plus stable sparse periodic impulses; its robust tone fit
+does not enter calibration feedback. `LOOP-OUTPUT status=cancelled` means both
+channels passed validation on other pulse events. Ambiguous/unsupported inputs
+retain their corrected samples and report a non-cancelled status.
+
+`adc -cal loop output` reads that stored final A/B snapshot over UART. On the PC:
+
+```powershell
+python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv
+```
+
+The CSV/JSON include cancellation status; the downloader also generates/opens
+an HTML waveform page in the existing loop viewer (`--no-viewer` skips it).
+Existing CSVs can be opened with `tools/board_loop/loop_viewer_export.py`; keep
+the same-stem JSON beside the CSV so the viewer can confirm cancellation.
+This is one saved frame, not a new continuous PL output path. Ordinary UDP
+still reads raw DMA. A new calibration capture invalidates the snapshot.
+`loop test run AXIS PRE TRAIN HOLD` creates a snapshot on a separate fresh
+frame AFTER HOLD, preserving its frozen state,
+manual injection and all original scoring/budgets. `board_loop_log.py` reads an
+advertised snapshot automatically and embeds the waveform with the three-stage
+curves (`--no-signal` skips the download). Rebuild/download is required. This
+stage is offline-tested only.
+
 2026-10-28 current mode: **reference-free dither-only relative calibration**.
 Run `adc -cal loop 300` or `adc -cal loop test baseline 600 100`; no `wave`
 selection, reference upload, pulse template, or waveform parameters are needed.
