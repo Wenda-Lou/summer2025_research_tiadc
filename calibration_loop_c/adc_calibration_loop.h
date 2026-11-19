@@ -36,6 +36,7 @@
 #define ADC_CAL_LOOP_MAX_WINDOW          160
 #define ADC_CAL_LOOP_MAX_BATCH           256
 #define ADC_CAL_LOOP_DAC_FULL_SCALE      32767.0
+#define ADC_CAL_LOOP_OUTPUT_REVISION     2
 
 /* ------------------------------------------------------------------------ */
 /* Waveform description (DitherConfig).  Must describe the vector on the DPG. */
@@ -350,10 +351,13 @@ typedef enum {
 
 typedef struct {
     adc_cal_loop_output_status_t status;
+    const char *reason;         /* output-only admission/validation stage */
     size_t n_samples;
     double tone_hz;
     unsigned period_samples;
     unsigned events;
+    unsigned pulse_core_samples;
+    unsigned pulse_support_samples;
     double validation_db_a;
     double validation_db_b;
 } adc_cal_loop_output_t;
@@ -370,6 +374,7 @@ typedef struct {
     int skew_frame_count;
     int skew_have_prev;
     double skew_prev_error;
+    double skew_prev_se_ps;     /* uncertainty of the batch before the last move */
     double skew_expected_shift;
     int skew_abort;             /* latched */
 

@@ -17,6 +17,19 @@ def snapshot(status='cancelled'):
 
 
 class SignalTests(unittest.TestCase):
+    def test_output_revision_and_rejection_diagnostics_are_preserved(self):
+        lines = snapshot('ambiguous')
+        lines[0] += ' output_revision=2 reason=ringing-support core_samples=4 support_samples=50'
+        decoder = SignalDecoder()
+        for line in lines:
+            decoder.feed(line)
+        with tempfile.TemporaryDirectory() as folder:
+            meta = decoder.save(Path(folder)/'signal.csv')
+        self.assertFalse(meta['dither_cancelled'])
+        self.assertEqual(meta['output_revision'], '2')
+        self.assertEqual(meta['reason'], 'ringing-support')
+        self.assertEqual(meta['support_samples'], '50')
+
     def test_samples_units_status_and_no_overwrite(self):
         for status in ('cancelled', 'ambiguous', 'no-tone', 'no-dither'):
             decoder = SignalDecoder()

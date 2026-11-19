@@ -41,6 +41,8 @@ target_compile_definitions(adc_cal_sim PRIVATE
     ADC_CAL_TEST_WAVEFORM_PATH="${PROD_DIR}/waveform_generation/generated_samples/sine_100MHz_2p6GSPS_impulse_dither.txt"
     ADC_CAL_TEST_CAPTURE_PATH="${PROD_DIR}/adc_data/adc_capture_20260801_180451.csv"
     ADC_CAL_TEST_RATE_MISMATCH_CAPTURE_PATH="${PROD_DIR}/adc_data/adc_capture_20260805_100121.csv"
+    ADC_CAL_TEST_OUTPUT_SNAPSHOT_PATH="${CMAKE_CURRENT_LIST_DIR}/fixtures/output_wide_impulse.csv"
+    ADC_CAL_TEST_RINGING_SNAPSHOT_PATH="${CMAKE_CURRENT_LIST_DIR}/fixtures/output_ringing_boundary.csv"
 )
 
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -64,3 +66,12 @@ if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 target_link_libraries(adc_cal_sim PRIVATE m)
+
+# Reprocess a saved, corrected A/B snapshot with the exact board output stage.
+# This is offline only and does not run or update calibration feedback.
+add_executable(adc_signal_replay sim_signal_replay.c "${LOOP_C_DIR}/adc_calibration_loop.c")
+target_include_directories(adc_signal_replay PRIVATE "${LOOP_C_DIR}")
+target_link_libraries(adc_signal_replay PRIVATE m)
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(adc_signal_replay PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+endif()

@@ -1,0 +1,13 @@
+{
+  "version": "1",
+  "samples": 1020,
+  "status": "no-tone",
+  "sample_rate_hz": "1300000000",
+  "coefficients": "frozen",
+  "output_revision": "2",
+  "reason": "tone-dominance",
+  "core_samples": "0",
+  "support_samples": "0",
+  "dither_cancelled": false,
+  "source": "frozen_board_signal_snapshot"
+}

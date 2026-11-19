@@ -1,0 +1,132 @@
+# cmd: adc -cal loop 600 stream
+# port: COM5
+# start: 2026-11-19 12:48:20
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+0 result=OK code_after=24 stage=-
+LOOP-START mode=closed samples=600 waveform=reference_free_dither code=24 gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 reject_clipping=1 export=1 stream=1 run_id=1
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=24 code_after=23 stage=-
+LOOP-PROGRESS accepted=20/600 window=20 code=23 gain_ppm=-368 offset_mc=-446 skew_cps=7885
+LOOP-EVENT it=19 act=move:OK steps=-1 code=23
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP-PROGRESS accepted=40/600 window=20 code=22 gain_ppm=748 offset_mc=-156 skew_cps=7292
+LOOP-EVENT it=39 act=move:OK steps=-1 code=22
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=22 code_after=21 stage=-
+LOOP-PROGRESS accepted=60/600 window=20 code=21 gain_ppm=-104 offset_mc=-86 skew_cps=6093
+LOOP-EVENT it=59 act=move:OK steps=-1 code=21
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=21 code_after=20 stage=-
+LOOP-PROGRESS accepted=80/600 window=20 code=20 gain_ppm=-818 offset_mc=205 skew_cps=5524
+LOOP-EVENT it=79 act=move:OK steps=-1 code=20
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=20 code_after=19 stage=-
+LOOP-PROGRESS accepted=100/600 window=20 code=19 gain_ppm=357 offset_mc=-171 skew_cps=4796
+LOOP-EVENT it=99 act=move:OK steps=-1 code=19
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=19 code_after=18 stage=-
+LOOP-PROGRESS accepted=120/600 window=20 code=18 gain_ppm=802 offset_mc=-79 skew_cps=4298
+LOOP-EVENT it=119 act=move:OK steps=-1 code=18
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=18 code_after=17 stage=-
+LOOP-PROGRESS accepted=140/600 window=20 code=17 gain_ppm=279 offset_mc=57 skew_cps=3296
+LOOP-EVENT it=139 act=move:OK steps=-1 code=17
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=17 code_after=16 stage=-
+LOOP-PROGRESS accepted=160/600 window=20 code=16 gain_ppm=594 offset_mc=-81 skew_cps=2789
+LOOP-EVENT it=159 act=move:OK steps=-1 code=16
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=16 code_after=15 stage=-
+LOOP-PROGRESS accepted=180/600 window=20 code=15 gain_ppm=-540 offset_mc=22 skew_cps=2335
+LOOP-EVENT it=179 act=move:OK steps=-1 code=15
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=15 code_after=14 stage=-
+LOOP-PROGRESS accepted=200/600 window=20 code=14 gain_ppm=365 offset_mc=16 skew_cps=1787
+LOOP-EVENT it=199 act=move:OK steps=-1 code=14
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=14 code_after=13 stage=-
+LOOP-PROGRESS accepted=220/600 window=20 code=13 gain_ppm=-31 offset_mc=1 skew_cps=1085
+LOOP-EVENT it=219 act=move:OK steps=-1 code=13
+LOOP-PROGRESS accepted=240/600 window=20 code=13 gain_ppm=207 offset_mc=9 skew_cps=699
+LOOP-PROGRESS accepted=260/600 window=20 code=13 gain_ppm=-254 offset_mc=-10 skew_cps=657
+LOOP-PROGRESS accepted=280/600 window=20 code=13 gain_ppm=672 offset_mc=-30 skew_cps=875
+LOOP-PROGRESS accepted=300/600 window=20 code=13 gain_ppm=135 offset_mc=36 skew_cps=730
+LOOP-PROGRESS accepted=320/600 window=20 code=13 gain_ppm=-406 offset_mc=-33 skew_cps=656
+LOOP-PROGRESS accepted=340/600 window=20 code=13 gain_ppm=190 offset_mc=36 skew_cps=764
+LOOP-PROGRESS accepted=360/600 window=20 code=13 gain_ppm=-16 offset_mc=-92 skew_cps=690
+LOOP-PROGRESS accepted=380/600 window=20 code=13 gain_ppm=-210 offset_mc=21 skew_cps=744
+LOOP-PROGRESS accepted=400/600 window=20 code=13 gain_ppm=-254 offset_mc=-26 skew_cps=668
+LOOP-PROGRESS accepted=420/600 window=20 code=13 gain_ppm=404 offset_mc=60 skew_cps=593
+LOOP-PROGRESS accepted=440/600 window=20 code=13 gain_ppm=51 offset_mc=-39 skew_cps=600
+LOOP-PROGRESS accepted=460/600 window=20 code=13 gain_ppm=297 offset_mc=-8 skew_cps=721
+LOOP-PROGRESS accepted=480/600 window=20 code=13 gain_ppm=-160 offset_mc=66 skew_cps=502
+LOOP-PROGRESS accepted=500/600 window=20 code=13 gain_ppm=-95 offset_mc=-175 skew_cps=841
+LOOP-PROGRESS accepted=520/600 window=20 code=13 gain_ppm=142 offset_mc=51 skew_cps=778
+LOOP-PROGRESS accepted=540/600 window=20 code=13 gain_ppm=42 offset_mc=125 skew_cps=818
+LOOP-PROGRESS accepted=560/600 window=20 code=13 gain_ppm=-725 offset_mc=-67 skew_cps=723
+LOOP-PROGRESS accepted=580/600 window=20 code=13 gain_ppm=305 offset_mc=79 skew_cps=668
+LOOP-PROGRESS accepted=600/600 window=20 code=13 gain_ppm=-132 offset_mc=-16 skew_cps=742
+LOOP-OUTPUT status=no-tone samples=1020 reference_free=1 coefficients=frozen method=learned_pulses tone_hz=0 period_samples=0 events=0 output_revision=2 reason=tone-dominance core_samples=0 support_samples=0 validation_a_mdb=0 validation_b_mdb=0
+LOOP-RESULT window=20 feedback=active gain_ppm=-132 gain_sd_ppm=4326 offset_mc=-16 offset_sd_mc=990 skew_cps=742 skew_sd_cps=387
+LOOP-END qualified=600/600 captures=600 rejected=0 code=13 skew_abort=0 elapsed_ms=63138 compute_ms_avg=2
+LOOP-STATUS mode=closed waveform=reference_free_dither qualified=600 captures=600 rejected=0 polarity=1 code=13 skew_abort=0 iteration=600 corr_a_ppm=4999 corr_b_ppm=-3268 offa_mc=2560 offb_mc=-2556
+# signal: calibration_out\dither_cancel_verify_v2\dither_cancel_verify_v2_signal.csv cancellation=no-tone

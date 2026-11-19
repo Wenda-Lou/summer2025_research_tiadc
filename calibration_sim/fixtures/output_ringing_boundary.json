@@ -1,0 +1,9 @@
+{
+  "source": "calibration_out/dither_cancel_verify/dither_cancel_verify_signal.csv",
+  "kind": "separate frozen board output snapshot after a completed closed run",
+  "sample_rate_hz": 1300000000,
+  "samples": 1020,
+  "original_status": "ambiguous",
+  "original_rejection": "learned ringing support 33 exceeds the integer half-period cap 32",
+  "scope": "output-only replay; all waveform features are learned from samples"
+}

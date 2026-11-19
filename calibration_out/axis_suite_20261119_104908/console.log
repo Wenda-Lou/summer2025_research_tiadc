@@ -1,0 +1,76 @@
+# arguments: {"acquire_phase_mrad": 750, "axes": "skew", "baseline_hold": 100, "baseline_train": 600, "batch": 20, "channel": "B", "deadband_ps": 10.0, "execute": true, "gain_gate_ppm": 600000, "gain_points": null, "hold": 100, "min_yield": 0.8, "mode": "suite", "no_signal": false, "no_viewer": false, "offset_points": null, "out": "calibration_out/axis_suite_20261119_104908", "pre": 40, "repeats": 1, "reuse_baseline": false, "skew_gate_milli": 500, "skew_mode": "absolute", "skew_points": "16,20,24,28,32", "step_ps": 19.1, "timeout": 1800.0, "tolerance": null, "train": 600, "uart": "COM5", "wave": null, "window": 20}
+# command: adc -cal loop test status
+
+LOOP-TEST-BASELINE valid=0 snapshot=0 wave=-1 code=-1 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=24
+LOOP-TEST-CONFIG gain_ppm=200000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-QUALITY acquisition_phase_mrad=150 hold_phase_mrad=150
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1
+LOOP-TEST-END result=OK
+# command: adc -cal loop test config 600000 500 1000 1910 20
+
+LOOP-TEST-BASELINE valid=0 snapshot=0 wave=-1 code=-1 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=24
+LOOP-TEST-CONFIG gain_ppm=600000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-QUALITY acquisition_phase_mrad=150 hold_phase_mrad=150
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1
+LOOP-TEST-END result=OK
+# command: adc -cal loop test offset A 0
+
+LOOP-TEST-INJECT kind=software-offset channel=0 codes=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test offset B 0
+
+LOOP-TEST-INJECT kind=software-offset channel=1 codes=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test baseline 600 100 full
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=24 code_after=24 stage=-
+LOOP-TEST-PHASE phase=baseline_train axes=7 budget=600 code=24 phase_limit_mrad=150
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=24 code_after=23 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=19 st=ok act=move:OK code=23 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=19 accepted=20 offset_mc=-820 gain_ppm=785 skew_cps=9542
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=39 st=ok act=move:OK code=22 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=39 accepted=20 offset_mc=90 gain_ppm=-26 skew_cps=9056
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=22 code_after=21 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=59 st=ok act=move:OK code=21 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=59 accepted=20 offset_mc=6 gain_ppm=200 skew_cps=7979
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=21 code_after=20 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=79 st=ok act=move:OK code=20 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=79 accepted=20 offset_mc=-91 gain_ppm=349 skew_cps=6711
+LOOP-TEST-FAULT phase=baseline_train attempt=99 st=ok act=abort:direction clips=0
+LOOP-TEST-EVENT phase=baseline_train attempt=99 st=ok act=abort:direction code=20 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=99 accepted=20 offset_mc=134 gain_ppm=232 skew_cps=6722
+LOOP-TEST-SUMMARY phase=baseline_train attempts=100 accepted=100 code=20 abort=1 offset_mc=-136 offset_sd_mc=1040 gain_ppm=308 gain_sd_ppm=5177 skew_cps=8002 skew_sd_cps=1639
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR
