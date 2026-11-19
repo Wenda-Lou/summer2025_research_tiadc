@@ -553,7 +553,7 @@ class ExportTests(unittest.TestCase):
 
     def test_busy_port_leaves_no_empty_run_folder(self):
         def busy(*args, **kwargs):
-            raise OSError("could not open port 'COM7': PermissionError(13)")
+            raise OSError("could not open port 'COM5': PermissionError(13)")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'run.log'
             with patch.dict(sys.modules, serial=types.SimpleNamespace(Serial=busy)), \

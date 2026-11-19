@@ -38,6 +38,21 @@ def metadata(status='cancelled'):
 
 
 class ViewerExportTests(unittest.TestCase):
+    def test_suite_summary_keeps_each_axis_and_its_frames_separate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'summary.csv').write_text(
+                'axis,point,hold_accepted\noffset,0,100\ngain,0,100\nskew,0,100\n')
+            (root/'frames.csv').write_text(
+                'experiment,point,phase\nbaseline,,baseline_hold\n'
+                'offset,0,hold\ngain,0,hold\nskew,0,hold\n')
+            datasets = _datasets(root)
+            self.assertEqual(len(datasets), 3)
+            for dataset in datasets:
+                axis = dataset['name'].split(' / ')[-1]
+                self.assertIn(f'{axis},0,100', dataset['files']['summary.csv'])
+                self.assertEqual(dataset['files']['frames.csv'].splitlines()[1:], [f'{axis},0,hold'])
+
     def test_signal_embeds_samples_and_status_without_live_file_access(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'signal.csv'

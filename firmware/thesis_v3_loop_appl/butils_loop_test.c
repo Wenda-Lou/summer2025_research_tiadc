@@ -35,10 +35,13 @@ static const uint16_t k_loop_test_registers[3] = {
 };
 static double g_loop_test_offset[2]; /* software, AFTER the ADC */
 static long g_loop_test_gain_ppm = 200000L;
-static long g_loop_test_skew_milli = 250L;
+/* Match the ordinary reference-free route's initial acquisition range.
+ * This is separate from frozen HOLD precision and the actuator deadband. */
+static long g_loop_test_skew_milli = 500L;
 static long g_loop_test_deadband_cps = 1000L;
 static long g_loop_test_step_cps = 1910L;
 static long g_loop_test_batch = 20L;
+static long g_loop_test_acquire_phase_mrad = 150L;
 
 static int loop_test_number(const char *s, long lo, long hi, long *out)
 {
@@ -156,6 +159,20 @@ static void loop_test_configure(adc_cal_loop_options_t *opt,
     act->request_steps = board_loop_request_steps;
 }
 
+static void loop_test_print_spectrum(const char *phase, unsigned attempt,
+                                     const adc_cal_loop_block_estimate_t *est)
+{
+    const adc_cal_loop_spectrum_diagnostics_t *s = &est->spectrum;
+    xil_printf("LOOP-TEST-SPECTRUM phase=%s attempt=%u reason=%s nfft=%d peak_bin=%d bins=%d excluded_bins=%d",
+               phase, attempt, s->status != NULL ? s->status : "unavailable",
+               s->nfft, s->peak_bin, s->bins, s->excluded_bins);
+    board_loop_put("neff_milli", s->effective_bins, 1e3);
+    board_loop_put("phase_mrad", s->phase_rms, 1e3);
+    board_loop_put("power_a", s->power_a, 1.0);
+    board_loop_put("power_b", s->power_b, 1.0);
+    xil_printf("\r\n");
+}
+
 static int loop_test_init(const adc_cal_loop_state_t *state)
 {
     adc_cal_loop_config_t cfg;
@@ -178,18 +195,26 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
 {
     unsigned failures = 0U;
     loop_test_phase_t window = {0};
-    loop_test_stat_t freeze_a = {0}, freeze_b = {0};
+    loop_test_stat_t freeze_a = {0}, freeze_b = {0}, freeze_log_gain = {0};
     const bool refine_offset = strcmp(name, "baseline_train") == 0 ||
         (strcmp(name, "train") == 0 && axes == ADC_CAL_LOOP_AXIS_OFFSET);
+    const bool refine_gain = strcmp(name, "baseline_train") == 0 ||
+        (strcmp(name, "train") == 0 && axes == ADC_CAL_LOOP_AXIS_GAIN);
     const unsigned freeze_frames = frames / 2U < 100U ? frames / 2U : 100U;
     const bool quiet = g_quiet_calibration_capture;
     memset(out, 0, sizeof(*out));
     g_board_loop.opt.update_axes = axes;
+    /* Only manual PRE/TRAIN may use a relaxed acquisition gate. Baseline,
+     * independent HOLD, step probes and the final output retain .15 rad. */
+    g_board_loop.opt.max_spectral_phase_rms =
+        (strcmp(name, "pre") == 0 || strcmp(name, "train") == 0) ?
+        (double)g_loop_test_acquire_phase_mrad / 1000.0 : 0.15;
     g_board_loop.opt.close_skew_loop = (axes & ADC_CAL_LOOP_AXIS_SKEW) != 0U;
     g_board_loop.skew_frame_count = 0;
     g_quiet_calibration_capture = true;
-    xil_printf("LOOP-TEST-PHASE phase=%s axes=%u budget=%u code=%d\r\n",
-               name, axes, frames, g_board_loop.act.code);
+    xil_printf("LOOP-TEST-PHASE phase=%s axes=%u budget=%u code=%d phase_limit_mrad=%ld\r\n",
+               name, axes, frames, g_board_loop.act.code,
+               (long)lround(g_board_loop.opt.max_spectral_phase_rms * 1000.0));
     for (unsigned i = 0U; i < frames; ++i) {
         adc_cal_loop_row_t row;
         const adc_cal_loop_state_t before = g_board_loop.state;
@@ -203,20 +228,33 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
             continue;
         }
         rc = adc_cal_loop_step(&g_board_loop, g_board_loop_frame, (size_t)got, &row);
-        /* Estimate the input-domain DC from the PRE-update state. Average only
+        /* Estimate input-domain DC and gain from the PRE-update state. Average only
          * the training tail at one actuator code; HOLD remains independent.
          * Averaging residuals alone would be wrong because feedback is active. */
-        if (refine_offset && i >= frames - freeze_frames) {
+        if ((refine_offset || refine_gain) && i >= frames - freeze_frames) {
             if (code_before != g_board_loop.act.code) {
                 memset(&freeze_a, 0, sizeof(freeze_a));
                 memset(&freeze_b, 0, sizeof(freeze_b));
+                memset(&freeze_log_gain, 0, sizeof(freeze_log_gain));
             } else if (rc == 0 && row.rejected == ADC_CAL_LOOP_REJECT_NONE &&
                        before.gain_corr_a > 0.0 && before.gain_corr_b > 0.0) {
-                const double a = before.offset_a + row.est.ch_a.offset_codes / before.gain_corr_a;
-                const double b = before.offset_b + row.est.ch_b.offset_codes / before.gain_corr_b;
-                if (board_loop_isfinite(a) && board_loop_isfinite(b)) {
-                    loop_test_add(&freeze_a, a);
-                    loop_test_add(&freeze_b, b);
+                if (refine_offset) {
+                    const double a = before.offset_a + row.est.ch_a.offset_codes / before.gain_corr_a;
+                    const double b = before.offset_b + row.est.ch_b.offset_codes / before.gain_corr_b;
+                    if (board_loop_isfinite(a) && board_loop_isfinite(b)) {
+                        loop_test_add(&freeze_a, a);
+                        loop_test_add(&freeze_b, b);
+                    }
+                }
+                if (refine_gain && row.est.gain_mag_ratio > 0.0 &&
+                    board_loop_isfinite(row.est.gain_mag_ratio)) {
+                    /* Undo this frame's PRE-update digital gain. Averaging
+                     * the controlled residual would average it towards one,
+                     * rather than estimate the physical input-domain ratio. */
+                    const double native_log = log(row.est.gain_mag_ratio) +
+                        log(before.gain_corr_a) - log(before.gain_corr_b);
+                    if (board_loop_isfinite(native_log))
+                        loop_test_add(&freeze_log_gain, native_log);
                 }
             }
         }
@@ -235,6 +273,28 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
             board_loop_put("offb_mc", freeze_b.mean, 1e3);
             xil_printf("\r\n");
         }
+        if (refine_gain && i + 1U == frames && rc == 0 &&
+            row.rejected == ADC_CAL_LOOP_REJECT_NONE &&
+            !g_loop_test_fault && !g_board_loop.skew_abort &&
+            freeze_log_gain.n >= 20U && g_board_loop.state.gain_corr_a > 0.0 &&
+            g_board_loop.state.gain_corr_b > 0.0) {
+            /* Match the averaged relative gain, preserving the unobservable
+             * common gain. Commit before exporting the final TRAIN row, so
+             * HOLD starts at exactly that frozen state. */
+            const double common = 0.5 * (log(g_board_loop.state.gain_corr_a) +
+                                         log(g_board_loop.state.gain_corr_b));
+            const double a = exp(common + 0.5 * freeze_log_gain.mean);
+            const double b = exp(common - 0.5 * freeze_log_gain.mean);
+            if (a > 0.0 && b > 0.0 && board_loop_isfinite(a) && board_loop_isfinite(b)) {
+                g_board_loop.state.gain_corr_a = row.gain_corr_a = a;
+                g_board_loop.state.gain_corr_b = row.gain_corr_b = b;
+                xil_printf("LOOP-TEST-FREEZE source=dither_gain_training_mean samples=%u code=%d phase=%s",
+                           freeze_log_gain.n, g_board_loop.act.code, name);
+                board_loop_put("corr_a_ppm", a - 1.0, 1e6);
+                board_loop_put("corr_b_ppm", b - 1.0, 1e6);
+                xil_printf("\r\n");
+            }
+        }
         if (g_loop_test_full_rows) {
             xil_printf("LOOP-TEST-ROW phase=%s attempt=%u code=%d", name, i, g_board_loop.act.code);
             board_loop_put("dcmean_mc", row.est.ch_b.offset_record_codes -
@@ -251,6 +311,9 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
                        row.skew_action == ADC_CAL_LOOP_SKEW_ACTION_NONE ? "none" :
                            adc_cal_loop_skew_action_name(row.skew_action),
                        g_board_loop.act.code, row.clipped_samples);
+            if (g_board_loop.opt.reference_free && row.est.spectrum.status != NULL &&
+                row.rejected != ADC_CAL_LOOP_REJECT_NONE)
+                loop_test_print_spectrum(name, i, &row.est);
         }
         if (rc != 0) {
             if (++failures >= 3U) break;
@@ -316,7 +379,9 @@ static void loop_test_status(void)
     board_loop_put("software_offset_a_mc", g_loop_test_offset[0], 1e3);
     board_loop_put("software_offset_b_mc", g_loop_test_offset[1], 1e3);
     xil_printf("\r\n");
-    xil_printf("LOOP-TEST-ROUTES gain=%s skew=%s tone_free=%u reference_free=1\r\n",
+    xil_printf("LOOP-TEST-QUALITY acquisition_phase_mrad=%ld hold_phase_mrad=150\r\n",
+               g_loop_test_acquire_phase_mrad);
+    xil_printf("LOOP-TEST-ROUTES gain=%s skew=%s tone_free=%u reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1\r\n",
                "dither_spectrum",
                "dither_cross_spectrum",
                1U);
@@ -466,6 +531,7 @@ static void loop_test_help(void)
     xil_printf("  adc -cal loop test park CODE           ACK-checked single moves, 0..48.\r\n");
     xil_printf("  adc -cal loop test step CODE FRAMES    N,N+1,N,N+1,N; returns to N.\r\n");
     xil_printf("  adc -cal loop test config GAIN_PPM SKEW_MILLI DEADBAND_CPS STEP_CPS BATCH\r\n");
+    xil_printf("  adc -cal loop test quality PHASE_MRAD   PRE/TRAIN only, 150..750; HOLD stays 150.\r\n");
     xil_printf("  adc -cal loop test restore             Restore baseline IFC/filter/code; clear injection.\r\n");
     xil_printf("  adc -cal loop test status              Show baseline and experiment settings.\r\n");
     xil_printf("  Budgets count attempted frames. HOLD freezes all feedback. Failed writes latch a fault.\r\n");
@@ -498,6 +564,11 @@ static void board_loop_test_command(void)
     } else if (g_loop_test_fault) {
         xil_printf("LOOP-TEST-ERROR recovery-required; restart firmware and repeat bring-up.\r\n");
 
+    } else if (n == 2U && strcmp(args[0], "quality") == 0 &&
+               loop_test_number(args[1], 150L, 750L, &a) == 0) {
+        g_loop_test_acquire_phase_mrad = a;
+        loop_test_status();
+        rc = 0;
     } else if (n == 3U && strcmp(args[0], "baseline") == 0 &&
                loop_test_number(args[1], 1L, BOARD_LOOP_MAX_SAMPLES, &a) == 0 &&
                loop_test_number(args[2], 2L, BOARD_LOOP_MAX_SAMPLES, &b) == 0) {

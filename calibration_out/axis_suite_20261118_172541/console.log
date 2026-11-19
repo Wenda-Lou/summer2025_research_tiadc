@@ -1,0 +1,1821 @@
+# arguments: {"axes": "gain,skew", "baseline_hold": 100, "baseline_train": 600, "batch": 20, "channel": "B", "deadband_ps": 10.0, "execute": true, "gain_gate_ppm": 600000, "gain_points": "0", "hold": 100, "min_yield": 0.8, "mode": "suite", "no_signal": false, "no_viewer": false, "offset_points": null, "out": "calibration_out/axis_suite_20261118_172541", "pre": 40, "repeats": 1, "reuse_baseline": false, "skew_gate_milli": 500, "skew_mode": "absolute", "skew_points": "0,8,16,24,32", "step_ps": 19.1, "timeout": 1800.0, "tolerance": null, "train": 300, "uart": "COM5", "wave": null, "window": 20}
+# command: adc -cal loop test status
+
+LOOP-TEST-BASELINE valid=0 snapshot=0 wave=-1 code=-1 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=-1
+LOOP-TEST-CONFIG gain_ppm=200000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean
+LOOP-TEST-END result=OK
+# command: adc -cal loop test config 600000 500 1000 1910 20
+
+LOOP-TEST-BASELINE valid=0 snapshot=0 wave=-1 code=-1 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=-1
+LOOP-TEST-CONFIG gain_ppm=600000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean
+LOOP-TEST-END result=OK
+# command: adc -cal loop test offset A 0
+
+LOOP-TEST-INJECT kind=software-offset channel=0 codes=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test offset B 0
+
+LOOP-TEST-INJECT kind=software-offset channel=1 codes=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test baseline 600 100 full
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=24 code_after=24 stage=-
+LOOP-TEST-PHASE phase=baseline_train axes=7 budget=600 code=24
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=24 code_after=23 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=19 st=ok act=move:OK code=23 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=19 accepted=20 offset_mc=-695 gain_ppm=4636 skew_cps=19077
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=39 st=ok act=move:OK code=22 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=39 accepted=20 offset_mc=-44 gain_ppm=-430 skew_cps=17761
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=22 code_after=21 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=59 st=ok act=move:OK code=21 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=59 accepted=20 offset_mc=-101 gain_ppm=-161 skew_cps=15943
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=21 code_after=20 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=79 st=ok act=move:OK code=20 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=79 accepted=20 offset_mc=-27 gain_ppm=-1100 skew_cps=15185
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=20 code_after=19 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=99 st=ok act=move:OK code=19 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=99 accepted=20 offset_mc=28 gain_ppm=732 skew_cps=13470
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=19 code_after=18 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=119 st=ok act=move:OK code=18 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=119 accepted=20 offset_mc=-125 gain_ppm=-832 skew_cps=11603
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=18 code_after=17 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=139 st=ok act=move:OK code=17 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=139 accepted=20 offset_mc=43 gain_ppm=769 skew_cps=9890
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=17 code_after=16 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=159 st=ok act=move:OK code=16 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=159 accepted=20 offset_mc=41 gain_ppm=-398 skew_cps=8536
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=16 code_after=15 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=179 st=ok act=move:OK code=15 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=179 accepted=20 offset_mc=68 gain_ppm=-1139 skew_cps=6717
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=15 code_after=14 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=199 st=ok act=move:OK code=14 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=199 accepted=20 offset_mc=-28 gain_ppm=308 skew_cps=5174
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=14 code_after=13 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=219 st=ok act=move:OK code=13 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=219 accepted=20 offset_mc=-100 gain_ppm=-488 skew_cps=3221
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=13 code_after=12 stage=-
+LOOP-TEST-EVENT phase=baseline_train attempt=239 st=ok act=move:OK code=12 clips=0
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=239 accepted=20 offset_mc=94 gain_ppm=-298 skew_cps=1246
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=259 accepted=20 offset_mc=165 gain_ppm=371 skew_cps=-87
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=279 accepted=20 offset_mc=-96 gain_ppm=468 skew_cps=-2
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=299 accepted=20 offset_mc=-108 gain_ppm=-1064 skew_cps=-11
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=319 accepted=20 offset_mc=110 gain_ppm=232 skew_cps=-199
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=339 accepted=20 offset_mc=-68 gain_ppm=-232 skew_cps=-162
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=359 accepted=20 offset_mc=-82 gain_ppm=-15 skew_cps=-267
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=379 accepted=20 offset_mc=43 gain_ppm=578 skew_cps=-187
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=399 accepted=20 offset_mc=-17 gain_ppm=-815 skew_cps=-110
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=419 accepted=20 offset_mc=-6 gain_ppm=535 skew_cps=-79
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=439 accepted=20 offset_mc=125 gain_ppm=-105 skew_cps=-64
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=459 accepted=20 offset_mc=28 gain_ppm=385 skew_cps=-329
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=479 accepted=20 offset_mc=-100 gain_ppm=-302 skew_cps=-121
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=499 accepted=20 offset_mc=-37 gain_ppm=163 skew_cps=-225
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=519 accepted=20 offset_mc=-35 gain_ppm=109 skew_cps=-247
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=539 accepted=20 offset_mc=54 gain_ppm=122 skew_cps=-261
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=559 accepted=20 offset_mc=21 gain_ppm=-920 skew_cps=-108
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=579 accepted=20 offset_mc=-111 gain_ppm=529 skew_cps=-233
+LOOP-TEST-FREEZE source=dither_training_mean samples=100 code=12 phase=baseline_train offa_mc=3136 offb_mc=-3220
+LOOP-TEST-FREEZE source=dither_gain_training_mean samples=100 code=12 phase=baseline_train corr_a_ppm=5940 corr_b_ppm=-3181
+LOOP-TEST-WINDOW phase=baseline_train through_attempt=599 accepted=20 offset_mc=33 gain_ppm=433 skew_cps=-167
+LOOP-TEST-SUMMARY phase=baseline_train attempts=600 accepted=600 code=12 abort=0 offset_mc=-31 offset_sd_mc=863 gain_ppm=69 gain_sd_ppm=5631 skew_cps=4165 skew_sd_cps=6408
+LOOP-TEST-PHASE phase=baseline_hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=19 accepted=20 offset_mc=328 gain_ppm=-1384 skew_cps=-218
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=39 accepted=20 offset_mc=629 gain_ppm=763 skew_cps=-241
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=59 accepted=20 offset_mc=163 gain_ppm=1160 skew_cps=-291
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=79 accepted=20 offset_mc=285 gain_ppm=892 skew_cps=-277
+LOOP-TEST-WINDOW phase=baseline_hold through_attempt=99 accepted=20 offset_mc=-194 gain_ppm=-678 skew_cps=-63
+LOOP-TEST-SUMMARY phase=baseline_hold attempts=100 accepted=100 code=12 abort=0 offset_mc=242 offset_sd_mc=865 gain_ppm=151 gain_sd_ppm=5568 skew_cps=-218 skew_sd_cps=568
+LOOP-TEST-BASELINE-CHECK kind=yield accepted=100 budget=100 required_percent=80 pass=1
+LOOP-TEST-BASELINE-CHECK kind=finite-statistics pass=1
+LOOP-TEST-BASELINE-CHECK axis=offset pass=1 mean_mc=242 limit_mc=500
+LOOP-TEST-BASELINE-CHECK axis=gain pass=1 mean_ppm=151 limit_ppm=2000
+LOOP-TEST-BASELINE-CHECK axis=skew pass=1 mean_cps=-218 limit_cps=1170
+LOOP-TEST-BASELINE valid=1 snapshot=1 wave=3 code=12 fault=0
+LOOP-TEST-CURRENT wave=3 waveform=reference_free_dither code=12
+LOOP-TEST-CONFIG gain_ppm=600000 skew_milli=500 deadband_cps=1000 step_cps=1910 batch=20 software_offset_a_mc=0 software_offset_b_mc=0
+LOOP-TEST-ROUTES gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean
+LOOP-TEST-SNAPSHOT channel=0 ifc=12 dc1=2 dc2=191
+LOOP-TEST-SNAPSHOT channel=1 ifc=12 dc1=2 dc2=191
+LOOP-TEST-END result=OK
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test ifc B 0
+
+LOOP-TEST-INJECT kind=ifc channel=1 code=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run gain 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=12
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=-3883 gain_ppm=-222753 skew_cps=-397
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=-3894 gain_ppm=-220759 skew_cps=-197
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=12 abort=0 offset_mc=-3888 offset_sd_mc=669 gain_ppm=-221756 gain_sd_ppm=3798 skew_cps=-297 skew_sd_cps=534
+LOOP-TEST-PHASE phase=train axes=2 budget=300 code=12
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=-4085 gain_ppm=-33234 skew_cps=-329
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=-4252 gain_ppm=156 skew_cps=-172
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=-3890 gain_ppm=447 skew_cps=-373
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=-4145 gain_ppm=-407 skew_cps=41
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=-4276 gain_ppm=83 skew_cps=-234
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=-4443 gain_ppm=-469 skew_cps=97
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=-4709 gain_ppm=-235 skew_cps=77
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=-4477 gain_ppm=926 skew_cps=-295
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=-4749 gain_ppm=-719 skew_cps=45
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=-4084 gain_ppm=139 skew_cps=-404
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=-3915 gain_ppm=-432 skew_cps=-1
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=-3698 gain_ppm=834 skew_cps=-280
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=-3574 gain_ppm=-319 skew_cps=-169
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=-3635 gain_ppm=-514 skew_cps=-217
+LOOP-TEST-FREEZE source=dither_gain_training_mean samples=100 code=12 phase=train corr_a_ppm=-105434 corr_b_ppm=139586
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-3307 gain_ppm=1127 skew_cps=-392
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=12 abort=0 offset_mc=-4083 offset_sd_mc=780 gain_ppm=-2174 gain_sd_ppm=17791 skew_cps=-174 skew_sd_cps=651
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-2997 gain_ppm=1890 skew_cps=-245
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-3520 gain_ppm=1288 skew_cps=-22
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-3885 gain_ppm=1617 skew_cps=-169
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=-3341 gain_ppm=1436 skew_cps=-46
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-3730 gain_ppm=527 skew_cps=-161
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=-3495 offset_sd_mc=662 gain_ppm=1351 gain_sd_ppm=4264 skew_cps=-129 skew_sd_cps=683
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-OUTPUT status=ambiguous samples=1020 reference_free=1 coefficients=frozen method=learned_pulses tone_hz=199373537 period_samples=0 events=0 validation_a_mdb=0 validation_b_mdb=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop output
+
+LOOP-SIGNAL-BEGIN version=1 samples=1020 status=ambiguous sample_rate_hz=1300000000 coefficients=frozen
+LOOP-SIGNAL-END result=OK samples=1020 status=ambiguous
+# result: {"axis": "gain", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.0013513099999999999, "gain_n": 100, "gain_sd": 0.004263594778855377, "gain_se": 0.0004263594778855377, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "is_control": false, "last_code": "12", "last_train_action": "measure-only", "measurement_rejected": false, "nominal_ifc_vpp": 2.04, "offset_mean": -3.49486, "offset_n": 100, "offset_sd": 0.6621464487528115, "offset_se": 0.06621464487528114, "pass": false, "point": 0, "pre_mean": -0.22175589999999998, "pre_observed_mean": -0.22175589999999998, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "signal_csv": "gain_point0_repeat1_signal.csv", "signal_downloaded": true, "signal_skipped": false, "signal_status": "ambiguous", "skew_mean": -1.2849000000000002, "skew_n": 100, "skew_route": "dither_cross_spectrum", "skew_sd": 6.827929200102778, "skew_se": 0.6827929200102778, "tolerance": 0.001}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test park 0
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=12 code_after=11 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=11 code_after=10 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=10 code_after=9 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=9 code_after=8 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=8 code_after=7 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=7 code_after=6 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=6 code_after=5 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=5 code_after=4 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=4 code_after=3 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=3 code_after=2 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=2 code_after=1 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=1 code_after=0 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run skew 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=0
+LOOP-TEST-EVENT phase=pre attempt=0 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=0 reason=phase-spread nfft=512 peak_bin=79 bins=181 excluded_bins=13 neff_milli=81557 phase_mrad=1880 power_a=29988 power_b=734
+LOOP-TEST-EVENT phase=pre attempt=1 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=1 reason=phase-spread nfft=512 peak_bin=79 bins=186 excluded_bins=13 neff_milli=105268 phase_mrad=1770 power_a=39486 power_b=735
+LOOP-TEST-EVENT phase=pre attempt=2 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=2 reason=phase-spread nfft=512 peak_bin=78 bins=183 excluded_bins=13 neff_milli=102427 phase_mrad=1844 power_a=36929 power_b=736
+LOOP-TEST-EVENT phase=pre attempt=3 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=3 reason=phase-spread nfft=512 peak_bin=78 bins=180 excluded_bins=13 neff_milli=87345 phase_mrad=1759 power_a=34616 power_b=723
+LOOP-TEST-EVENT phase=pre attempt=4 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=4 reason=phase-spread nfft=512 peak_bin=79 bins=179 excluded_bins=13 neff_milli=87119 phase_mrad=1820 power_a=28861 power_b=734
+LOOP-TEST-EVENT phase=pre attempt=5 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=5 reason=phase-spread nfft=512 peak_bin=79 bins=176 excluded_bins=13 neff_milli=82056 phase_mrad=1881 power_a=34872 power_b=717
+LOOP-TEST-EVENT phase=pre attempt=6 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=6 reason=phase-spread nfft=512 peak_bin=79 bins=177 excluded_bins=13 neff_milli=85552 phase_mrad=1970 power_a=36790 power_b=719
+LOOP-TEST-EVENT phase=pre attempt=7 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=7 reason=phase-spread nfft=512 peak_bin=78 bins=186 excluded_bins=13 neff_milli=105653 phase_mrad=1962 power_a=35397 power_b=741
+LOOP-TEST-EVENT phase=pre attempt=8 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=8 reason=phase-spread nfft=512 peak_bin=79 bins=183 excluded_bins=13 neff_milli=78446 phase_mrad=1804 power_a=34605 power_b=721
+LOOP-TEST-EVENT phase=pre attempt=9 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=9 reason=phase-spread nfft=512 peak_bin=79 bins=177 excluded_bins=13 neff_milli=83293 phase_mrad=1640 power_a=34880 power_b=723
+LOOP-TEST-EVENT phase=pre attempt=10 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=10 reason=phase-spread nfft=512 peak_bin=78 bins=183 excluded_bins=13 neff_milli=90575 phase_mrad=2048 power_a=36157 power_b=728
+LOOP-TEST-EVENT phase=pre attempt=11 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=11 reason=phase-spread nfft=512 peak_bin=78 bins=146 excluded_bins=13 neff_milli=52411 phase_mrad=1753 power_a=27996 power_b=727
+LOOP-TEST-EVENT phase=pre attempt=12 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=12 reason=phase-spread nfft=512 peak_bin=78 bins=184 excluded_bins=13 neff_milli=93930 phase_mrad=1828 power_a=36112 power_b=723
+LOOP-TEST-EVENT phase=pre attempt=13 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=13 reason=phase-spread nfft=512 peak_bin=79 bins=142 excluded_bins=13 neff_milli=50083 phase_mrad=1880 power_a=31443 power_b=732
+LOOP-TEST-EVENT phase=pre attempt=14 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=14 reason=phase-spread nfft=512 peak_bin=79 bins=181 excluded_bins=13 neff_milli=82806 phase_mrad=1670 power_a=36961 power_b=733
+LOOP-TEST-EVENT phase=pre attempt=15 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=15 reason=phase-spread nfft=512 peak_bin=79 bins=182 excluded_bins=13 neff_milli=84607 phase_mrad=1845 power_a=39990 power_b=733
+LOOP-TEST-EVENT phase=pre attempt=16 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=16 reason=phase-spread nfft=512 peak_bin=79 bins=181 excluded_bins=13 neff_milli=81891 phase_mrad=1548 power_a=34971 power_b=739
+LOOP-TEST-EVENT phase=pre attempt=17 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=17 reason=phase-spread nfft=512 peak_bin=79 bins=174 excluded_bins=13 neff_milli=70402 phase_mrad=1671 power_a=37817 power_b=732
+LOOP-TEST-EVENT phase=pre attempt=18 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=18 reason=phase-spread nfft=512 peak_bin=79 bins=165 excluded_bins=13 neff_milli=55128 phase_mrad=1975 power_a=30300 power_b=750
+LOOP-TEST-EVENT phase=pre attempt=19 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=19 reason=phase-spread nfft=512 peak_bin=79 bins=161 excluded_bins=13 neff_milli=56373 phase_mrad=1952 power_a=33281 power_b=729
+LOOP-TEST-EVENT phase=pre attempt=20 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=20 reason=phase-spread nfft=512 peak_bin=79 bins=178 excluded_bins=13 neff_milli=80937 phase_mrad=1953 power_a=37641 power_b=744
+LOOP-TEST-EVENT phase=pre attempt=21 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=21 reason=phase-spread nfft=512 peak_bin=79 bins=179 excluded_bins=13 neff_milli=83902 phase_mrad=1931 power_a=41189 power_b=726
+LOOP-TEST-EVENT phase=pre attempt=22 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=22 reason=phase-spread nfft=512 peak_bin=79 bins=186 excluded_bins=13 neff_milli=102344 phase_mrad=1991 power_a=44413 power_b=732
+LOOP-TEST-EVENT phase=pre attempt=23 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=23 reason=phase-spread nfft=512 peak_bin=78 bins=183 excluded_bins=13 neff_milli=86138 phase_mrad=1820 power_a=36735 power_b=733
+LOOP-TEST-EVENT phase=pre attempt=24 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=24 reason=phase-spread nfft=512 peak_bin=78 bins=178 excluded_bins=13 neff_milli=92512 phase_mrad=1771 power_a=43533 power_b=730
+LOOP-TEST-EVENT phase=pre attempt=25 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=25 reason=phase-spread nfft=512 peak_bin=79 bins=182 excluded_bins=13 neff_milli=93180 phase_mrad=1858 power_a=41757 power_b=725
+LOOP-TEST-EVENT phase=pre attempt=26 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=26 reason=phase-spread nfft=512 peak_bin=78 bins=179 excluded_bins=13 neff_milli=90584 phase_mrad=2010 power_a=39283 power_b=728
+LOOP-TEST-EVENT phase=pre attempt=27 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=27 reason=phase-spread nfft=512 peak_bin=79 bins=184 excluded_bins=13 neff_milli=98113 phase_mrad=1884 power_a=49083 power_b=722
+LOOP-TEST-EVENT phase=pre attempt=28 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=28 reason=phase-spread nfft=512 peak_bin=79 bins=182 excluded_bins=13 neff_milli=71026 phase_mrad=1761 power_a=40669 power_b=726
+LOOP-TEST-EVENT phase=pre attempt=29 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=29 reason=phase-spread nfft=512 peak_bin=78 bins=181 excluded_bins=13 neff_milli=80867 phase_mrad=1812 power_a=32456 power_b=725
+LOOP-TEST-EVENT phase=pre attempt=30 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=30 reason=phase-spread nfft=512 peak_bin=79 bins=142 excluded_bins=13 neff_milli=48772 phase_mrad=1931 power_a=34704 power_b=716
+LOOP-TEST-EVENT phase=pre attempt=31 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=31 reason=phase-spread nfft=512 peak_bin=79 bins=185 excluded_bins=13 neff_milli=80067 phase_mrad=1835 power_a=46004 power_b=732
+LOOP-TEST-EVENT phase=pre attempt=32 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=32 reason=phase-spread nfft=512 peak_bin=79 bins=185 excluded_bins=13 neff_milli=109077 phase_mrad=1761 power_a=45723 power_b=721
+LOOP-TEST-EVENT phase=pre attempt=33 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=33 reason=phase-spread nfft=512 peak_bin=79 bins=170 excluded_bins=13 neff_milli=57447 phase_mrad=1926 power_a=49004 power_b=737
+LOOP-TEST-EVENT phase=pre attempt=34 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=34 reason=phase-spread nfft=512 peak_bin=78 bins=183 excluded_bins=13 neff_milli=94045 phase_mrad=2000 power_a=47327 power_b=733
+LOOP-TEST-EVENT phase=pre attempt=35 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=35 reason=phase-spread nfft=512 peak_bin=78 bins=183 excluded_bins=13 neff_milli=89392 phase_mrad=1773 power_a=44959 power_b=726
+LOOP-TEST-EVENT phase=pre attempt=36 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=36 reason=phase-spread nfft=512 peak_bin=79 bins=132 excluded_bins=13 neff_milli=43998 phase_mrad=1842 power_a=39724 power_b=753
+LOOP-TEST-EVENT phase=pre attempt=37 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=37 reason=phase-spread nfft=512 peak_bin=79 bins=184 excluded_bins=13 neff_milli=96843 phase_mrad=1973 power_a=56115 power_b=718
+LOOP-TEST-EVENT phase=pre attempt=38 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=38 reason=phase-spread nfft=512 peak_bin=78 bins=182 excluded_bins=13 neff_milli=88872 phase_mrad=1771 power_a=47048 power_b=719
+LOOP-TEST-EVENT phase=pre attempt=39 st=margin act=none code=0 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=39 reason=phase-spread nfft=512 peak_bin=79 bins=181 excluded_bins=13 neff_milli=92915 phase_mrad=1965 power_a=41776 power_b=734
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=0 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR
+# result: {"axis": "skew", "baseline_code": 12, "convergence_attempt": null, "failure_reason": "acquisition range/quality gate rejected the point", "gain_mean": NaN, "gain_n": 0, "gain_sd": NaN, "gain_se": NaN, "gain_source": "", "hold_accepted": 0, "hold_budget": 100, "hold_clock_frozen": false, "hold_continues_train": false, "hold_frozen": false, "hold_yield": 0.0, "inactive_frozen": true, "inactive_skew_frozen": true, "is_control": false, "last_code": "0", "last_train_action": null, "measurement_rejected": true, "offset_mean": NaN, "offset_n": 0, "offset_sd": NaN, "offset_se": NaN, "pass": false, "point": 0, "pre_mean": NaN, "pre_observed_mean": NaN, "quantization_limited": false, "range_limit": false, "reject_reasons": "{\"margin\": 40}", "relative_code_offset": -12, "repeat": 0, "requested_routes_match": false, "routes_consistent": true, "signal_downloaded": false, "signal_skipped": false, "signal_status": "not-advertised", "skew_mean": NaN, "skew_n": 0, "skew_point_mode": "absolute", "skew_route": "", "skew_sd": NaN, "skew_se": NaN, "target_code": 0, "tolerance": 10.0}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=0 code_after=0 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=0 code_after=1 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=1 code_after=2 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=2 code_after=3 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=3 code_after=4 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=4 code_after=5 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=5 code_after=6 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=6 code_after=7 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=7 code_after=8 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=8 code_after=9 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=9 code_after=10 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=10 code_after=11 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=11 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test park 8
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=12 code_after=11 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=11 code_after=10 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=10 code_after=9 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=9 code_after=8 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run skew 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=8
+LOOP-TEST-EVENT phase=pre attempt=0 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=0 reason=phase-spread nfft=512 peak_bin=79 bins=171 excluded_bins=13 neff_milli=72653 phase_mrad=1116 power_a=732 power_b=9040
+LOOP-TEST-EVENT phase=pre attempt=1 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=1 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=42027 phase_mrad=1119 power_a=728 power_b=7073
+LOOP-TEST-EVENT phase=pre attempt=2 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=2 reason=phase-spread nfft=512 peak_bin=79 bins=180 excluded_bins=13 neff_milli=79174 phase_mrad=1384 power_a=741 power_b=6404
+LOOP-TEST-EVENT phase=pre attempt=3 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=3 reason=phase-spread nfft=512 peak_bin=79 bins=164 excluded_bins=13 neff_milli=58604 phase_mrad=1194 power_a=748 power_b=6831
+LOOP-TEST-EVENT phase=pre attempt=4 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=4 reason=phase-spread nfft=512 peak_bin=79 bins=158 excluded_bins=13 neff_milli=60330 phase_mrad=1133 power_a=739 power_b=7172
+LOOP-TEST-EVENT phase=pre attempt=5 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=5 reason=phase-spread nfft=512 peak_bin=79 bins=165 excluded_bins=13 neff_milli=66862 phase_mrad=1134 power_a=726 power_b=5766
+LOOP-TEST-EVENT phase=pre attempt=6 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=6 reason=phase-spread nfft=512 peak_bin=79 bins=173 excluded_bins=13 neff_milli=69328 phase_mrad=936 power_a=728 power_b=6797
+LOOP-TEST-EVENT phase=pre attempt=7 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=7 reason=phase-spread nfft=512 peak_bin=79 bins=172 excluded_bins=13 neff_milli=75418 phase_mrad=1173 power_a=734 power_b=5830
+LOOP-TEST-EVENT phase=pre attempt=8 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=8 reason=phase-spread nfft=512 peak_bin=79 bins=173 excluded_bins=13 neff_milli=73655 phase_mrad=1361 power_a=729 power_b=5006
+LOOP-TEST-EVENT phase=pre attempt=9 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=9 reason=phase-spread nfft=512 peak_bin=79 bins=134 excluded_bins=13 neff_milli=40948 phase_mrad=941 power_a=742 power_b=3545
+LOOP-TEST-EVENT phase=pre attempt=10 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=10 reason=phase-spread nfft=512 peak_bin=79 bins=165 excluded_bins=13 neff_milli=63280 phase_mrad=1067 power_a=735 power_b=4504
+LOOP-TEST-EVENT phase=pre attempt=11 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=11 reason=phase-spread nfft=512 peak_bin=78 bins=168 excluded_bins=13 neff_milli=69419 phase_mrad=1330 power_a=733 power_b=4809
+LOOP-TEST-EVENT phase=pre attempt=12 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=12 reason=phase-spread nfft=512 peak_bin=79 bins=113 excluded_bins=13 neff_milli=33301 phase_mrad=995 power_a=735 power_b=3175
+LOOP-TEST-EVENT phase=pre attempt=13 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=13 reason=phase-spread nfft=512 peak_bin=79 bins=170 excluded_bins=13 neff_milli=64418 phase_mrad=1061 power_a=744 power_b=4156
+LOOP-TEST-EVENT phase=pre attempt=14 st=margin act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=14 reason=phase-spread nfft=512 peak_bin=78 bins=173 excluded_bins=13 neff_milli=74710 phase_mrad=1194 power_a=741 power_b=4039
+LOOP-TEST-EVENT phase=pre attempt=15 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=15 reason=phase-spread nfft=512 peak_bin=79 bins=169 excluded_bins=13 neff_milli=67323 phase_mrad=996 power_a=731 power_b=4573
+LOOP-TEST-EVENT phase=pre attempt=16 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=16 reason=phase-spread nfft=512 peak_bin=79 bins=176 excluded_bins=13 neff_milli=69508 phase_mrad=1186 power_a=739 power_b=3444
+LOOP-TEST-EVENT phase=pre attempt=17 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=17 reason=phase-spread nfft=512 peak_bin=79 bins=173 excluded_bins=13 neff_milli=73024 phase_mrad=986 power_a=731 power_b=3851
+LOOP-TEST-EVENT phase=pre attempt=18 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=18 reason=phase-spread nfft=512 peak_bin=79 bins=156 excluded_bins=13 neff_milli=54431 phase_mrad=991 power_a=728 power_b=3389
+LOOP-TEST-EVENT phase=pre attempt=19 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=19 reason=phase-spread nfft=512 peak_bin=79 bins=156 excluded_bins=13 neff_milli=57617 phase_mrad=860 power_a=727 power_b=3425
+LOOP-TEST-EVENT phase=pre attempt=20 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=20 reason=phase-spread nfft=512 peak_bin=79 bins=123 excluded_bins=13 neff_milli=38605 phase_mrad=962 power_a=739 power_b=2511
+LOOP-TEST-EVENT phase=pre attempt=21 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=21 reason=phase-spread nfft=512 peak_bin=79 bins=118 excluded_bins=13 neff_milli=33727 phase_mrad=780 power_a=728 power_b=2497
+LOOP-TEST-EVENT phase=pre attempt=22 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=22 reason=phase-spread nfft=512 peak_bin=79 bins=166 excluded_bins=13 neff_milli=64097 phase_mrad=957 power_a=738 power_b=3296
+LOOP-TEST-EVENT phase=pre attempt=23 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=23 reason=phase-spread nfft=512 peak_bin=79 bins=161 excluded_bins=13 neff_milli=56967 phase_mrad=1026 power_a=746 power_b=2924
+LOOP-TEST-EVENT phase=pre attempt=24 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=24 reason=phase-spread nfft=512 peak_bin=79 bins=92 excluded_bins=13 neff_milli=31954 phase_mrad=597 power_a=752 power_b=2465
+LOOP-TEST-EVENT phase=pre attempt=25 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=25 reason=phase-spread nfft=512 peak_bin=79 bins=167 excluded_bins=13 neff_milli=71274 phase_mrad=910 power_a=725 power_b=3232
+LOOP-TEST-EVENT phase=pre attempt=26 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=26 reason=phase-spread nfft=512 peak_bin=79 bins=172 excluded_bins=13 neff_milli=74169 phase_mrad=896 power_a=736 power_b=3207
+LOOP-TEST-EVENT phase=pre attempt=27 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=27 reason=phase-spread nfft=512 peak_bin=79 bins=162 excluded_bins=13 neff_milli=63498 phase_mrad=797 power_a=752 power_b=2783
+LOOP-TEST-EVENT phase=pre attempt=28 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=28 reason=phase-spread nfft=512 peak_bin=79 bins=172 excluded_bins=13 neff_milli=72219 phase_mrad=816 power_a=760 power_b=2925
+LOOP-TEST-EVENT phase=pre attempt=29 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=29 reason=phase-spread nfft=512 peak_bin=78 bins=170 excluded_bins=13 neff_milli=66896 phase_mrad=918 power_a=742 power_b=2232
+LOOP-TEST-EVENT phase=pre attempt=30 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=30 reason=phase-spread nfft=512 peak_bin=79 bins=167 excluded_bins=13 neff_milli=60546 phase_mrad=879 power_a=758 power_b=2379
+LOOP-TEST-EVENT phase=pre attempt=31 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=31 reason=phase-spread nfft=512 peak_bin=78 bins=171 excluded_bins=13 neff_milli=69475 phase_mrad=802 power_a=743 power_b=2396
+LOOP-TEST-EVENT phase=pre attempt=32 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=32 reason=phase-spread nfft=512 peak_bin=78 bins=160 excluded_bins=13 neff_milli=61546 phase_mrad=861 power_a=725 power_b=2326
+LOOP-TEST-EVENT phase=pre attempt=33 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=33 reason=phase-spread nfft=512 peak_bin=79 bins=167 excluded_bins=13 neff_milli=67054 phase_mrad=780 power_a=737 power_b=2493
+LOOP-TEST-EVENT phase=pre attempt=34 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=34 reason=phase-spread nfft=512 peak_bin=79 bins=167 excluded_bins=13 neff_milli=63328 phase_mrad=832 power_a=731 power_b=2562
+LOOP-TEST-EVENT phase=pre attempt=35 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=35 reason=phase-spread nfft=512 peak_bin=79 bins=165 excluded_bins=13 neff_milli=75544 phase_mrad=911 power_a=730 power_b=2171
+LOOP-TEST-EVENT phase=pre attempt=36 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=36 reason=phase-spread nfft=512 peak_bin=79 bins=168 excluded_bins=13 neff_milli=67329 phase_mrad=778 power_a=745 power_b=2233
+LOOP-TEST-EVENT phase=pre attempt=37 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=37 reason=phase-spread nfft=512 peak_bin=78 bins=164 excluded_bins=13 neff_milli=57762 phase_mrad=748 power_a=733 power_b=2438
+LOOP-TEST-EVENT phase=pre attempt=38 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=38 reason=phase-spread nfft=512 peak_bin=79 bins=168 excluded_bins=13 neff_milli=70082 phase_mrad=800 power_a=728 power_b=1714
+LOOP-TEST-EVENT phase=pre attempt=39 st=events act=none code=8 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=39 reason=phase-spread nfft=512 peak_bin=79 bins=150 excluded_bins=13 neff_milli=46045 phase_mrad=728 power_a=722 power_b=1804
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=8 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR
+# result: {"axis": "skew", "baseline_code": 12, "convergence_attempt": null, "failure_reason": "acquisition range/quality gate rejected the point", "gain_mean": NaN, "gain_n": 0, "gain_sd": NaN, "gain_se": NaN, "gain_source": "", "hold_accepted": 0, "hold_budget": 100, "hold_clock_frozen": false, "hold_continues_train": false, "hold_frozen": false, "hold_yield": 0.0, "inactive_frozen": true, "inactive_skew_frozen": true, "is_control": false, "last_code": "8", "last_train_action": null, "measurement_rejected": true, "offset_mean": NaN, "offset_n": 0, "offset_sd": NaN, "offset_se": NaN, "pass": false, "point": 8, "pre_mean": NaN, "pre_observed_mean": NaN, "quantization_limited": false, "range_limit": false, "reject_reasons": "{\"events\": 25, \"margin\": 15}", "relative_code_offset": -4, "repeat": 0, "requested_routes_match": false, "routes_consistent": true, "signal_downloaded": false, "signal_skipped": false, "signal_status": "not-advertised", "skew_mean": NaN, "skew_n": 0, "skew_point_mode": "absolute", "skew_route": "", "skew_sd": NaN, "skew_se": NaN, "target_code": 8, "tolerance": 10.0}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=8 code_after=8 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=8 code_after=9 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=9 code_after=10 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=10 code_after=11 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=11 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test park 16
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=12 code_after=13 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=13 code_after=14 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=14 code_after=15 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=15 code_after=16 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run skew 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=16
+LOOP-TEST-EVENT phase=pre attempt=0 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=0 reason=phase-spread nfft=512 peak_bin=79 bins=143 excluded_bins=13 neff_milli=47605 phase_mrad=573 power_a=738 power_b=1664
+LOOP-TEST-EVENT phase=pre attempt=1 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=1 reason=phase-spread nfft=512 peak_bin=79 bins=164 excluded_bins=13 neff_milli=67198 phase_mrad=550 power_a=736 power_b=1680
+LOOP-TEST-EVENT phase=pre attempt=2 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=2 reason=phase-spread nfft=512 peak_bin=79 bins=144 excluded_bins=13 neff_milli=52765 phase_mrad=680 power_a=740 power_b=1132
+LOOP-TEST-EVENT phase=pre attempt=3 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=3 reason=phase-spread nfft=512 peak_bin=79 bins=150 excluded_bins=13 neff_milli=46745 phase_mrad=569 power_a=716 power_b=1236
+LOOP-TEST-EVENT phase=pre attempt=4 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=4 reason=phase-spread nfft=512 peak_bin=79 bins=168 excluded_bins=13 neff_milli=69741 phase_mrad=621 power_a=719 power_b=1478
+LOOP-TEST-EVENT phase=pre attempt=5 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=5 reason=phase-spread nfft=512 peak_bin=79 bins=144 excluded_bins=13 neff_milli=50186 phase_mrad=613 power_a=717 power_b=1564
+LOOP-TEST-EVENT phase=pre attempt=6 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=6 reason=phase-spread nfft=512 peak_bin=79 bins=132 excluded_bins=13 neff_milli=44085 phase_mrad=531 power_a=723 power_b=1238
+LOOP-TEST-EVENT phase=pre attempt=7 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=7 reason=phase-spread nfft=512 peak_bin=79 bins=168 excluded_bins=13 neff_milli=68916 phase_mrad=559 power_a=733 power_b=1619
+LOOP-TEST-EVENT phase=pre attempt=8 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=8 reason=phase-spread nfft=512 peak_bin=79 bins=169 excluded_bins=13 neff_milli=62490 phase_mrad=579 power_a=734 power_b=1267
+LOOP-TEST-EVENT phase=pre attempt=9 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=9 reason=phase-spread nfft=512 peak_bin=79 bins=123 excluded_bins=13 neff_milli=43609 phase_mrad=517 power_a=731 power_b=1261
+LOOP-TEST-EVENT phase=pre attempt=10 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=10 reason=phase-spread nfft=512 peak_bin=79 bins=153 excluded_bins=13 neff_milli=59927 phase_mrad=550 power_a=729 power_b=1079
+LOOP-TEST-EVENT phase=pre attempt=11 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=11 reason=phase-spread nfft=512 peak_bin=78 bins=169 excluded_bins=13 neff_milli=65149 phase_mrad=491 power_a=720 power_b=1314
+LOOP-TEST-EVENT phase=pre attempt=12 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=12 reason=phase-spread nfft=512 peak_bin=79 bins=171 excluded_bins=13 neff_milli=66501 phase_mrad=614 power_a=722 power_b=1013
+LOOP-TEST-EVENT phase=pre attempt=13 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=13 reason=phase-spread nfft=512 peak_bin=79 bins=151 excluded_bins=13 neff_milli=53863 phase_mrad=558 power_a=724 power_b=1107
+LOOP-TEST-EVENT phase=pre attempt=14 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=14 reason=phase-spread nfft=512 peak_bin=79 bins=161 excluded_bins=13 neff_milli=63574 phase_mrad=425 power_a=724 power_b=1480
+LOOP-TEST-EVENT phase=pre attempt=15 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=15 reason=phase-spread nfft=512 peak_bin=79 bins=162 excluded_bins=13 neff_milli=65429 phase_mrad=523 power_a=715 power_b=1063
+LOOP-TEST-EVENT phase=pre attempt=16 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=16 reason=phase-spread nfft=512 peak_bin=79 bins=143 excluded_bins=13 neff_milli=55642 phase_mrad=522 power_a=724 power_b=1111
+LOOP-TEST-EVENT phase=pre attempt=17 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=17 reason=phase-spread nfft=512 peak_bin=79 bins=153 excluded_bins=13 neff_milli=64239 phase_mrad=549 power_a=734 power_b=1249
+LOOP-TEST-EVENT phase=pre attempt=18 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=18 reason=phase-spread nfft=512 peak_bin=79 bins=148 excluded_bins=13 neff_milli=55018 phase_mrad=461 power_a=724 power_b=1213
+LOOP-TEST-EVENT phase=pre attempt=19 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=19 reason=phase-spread nfft=512 peak_bin=79 bins=141 excluded_bins=13 neff_milli=51261 phase_mrad=426 power_a=732 power_b=1322
+LOOP-TEST-EVENT phase=pre attempt=20 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=20 reason=phase-spread nfft=512 peak_bin=79 bins=145 excluded_bins=13 neff_milli=52054 phase_mrad=449 power_a=726 power_b=1128
+LOOP-TEST-EVENT phase=pre attempt=21 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=21 reason=phase-spread nfft=512 peak_bin=78 bins=152 excluded_bins=13 neff_milli=59161 phase_mrad=518 power_a=731 power_b=1179
+LOOP-TEST-EVENT phase=pre attempt=22 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=22 reason=phase-spread nfft=512 peak_bin=79 bins=150 excluded_bins=13 neff_milli=52307 phase_mrad=452 power_a=721 power_b=1133
+LOOP-TEST-EVENT phase=pre attempt=23 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=23 reason=phase-spread nfft=512 peak_bin=79 bins=142 excluded_bins=13 neff_milli=58316 phase_mrad=401 power_a=707 power_b=1085
+LOOP-TEST-EVENT phase=pre attempt=24 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=24 reason=phase-spread nfft=512 peak_bin=79 bins=162 excluded_bins=13 neff_milli=59475 phase_mrad=453 power_a=725 power_b=1003
+LOOP-TEST-EVENT phase=pre attempt=25 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=25 reason=phase-spread nfft=512 peak_bin=78 bins=152 excluded_bins=13 neff_milli=64147 phase_mrad=381 power_a=724 power_b=1120
+LOOP-TEST-EVENT phase=pre attempt=26 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=26 reason=phase-spread nfft=512 peak_bin=78 bins=144 excluded_bins=13 neff_milli=62517 phase_mrad=448 power_a=722 power_b=1061
+LOOP-TEST-EVENT phase=pre attempt=27 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=27 reason=phase-spread nfft=512 peak_bin=79 bins=154 excluded_bins=13 neff_milli=60235 phase_mrad=488 power_a=722 power_b=1000
+LOOP-TEST-EVENT phase=pre attempt=28 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=28 reason=phase-spread nfft=512 peak_bin=78 bins=146 excluded_bins=13 neff_milli=68529 phase_mrad=450 power_a=714 power_b=1053
+LOOP-TEST-EVENT phase=pre attempt=29 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=29 reason=phase-spread nfft=512 peak_bin=78 bins=125 excluded_bins=13 neff_milli=46974 phase_mrad=420 power_a=715 power_b=1049
+LOOP-TEST-EVENT phase=pre attempt=30 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=30 reason=phase-spread nfft=512 peak_bin=79 bins=112 excluded_bins=13 neff_milli=38989 phase_mrad=397 power_a=734 power_b=971
+LOOP-TEST-EVENT phase=pre attempt=31 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=31 reason=phase-spread nfft=512 peak_bin=79 bins=159 excluded_bins=13 neff_milli=62408 phase_mrad=385 power_a=733 power_b=1118
+LOOP-TEST-EVENT phase=pre attempt=32 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=32 reason=phase-spread nfft=512 peak_bin=79 bins=145 excluded_bins=13 neff_milli=55317 phase_mrad=436 power_a=728 power_b=969
+LOOP-TEST-EVENT phase=pre attempt=33 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=33 reason=phase-spread nfft=512 peak_bin=79 bins=124 excluded_bins=13 neff_milli=46645 phase_mrad=476 power_a=710 power_b=934
+LOOP-TEST-EVENT phase=pre attempt=34 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=34 reason=phase-spread nfft=512 peak_bin=79 bins=117 excluded_bins=13 neff_milli=38672 phase_mrad=327 power_a=733 power_b=857
+LOOP-TEST-EVENT phase=pre attempt=35 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=35 reason=phase-spread nfft=512 peak_bin=79 bins=152 excluded_bins=13 neff_milli=51496 phase_mrad=396 power_a=716 power_b=874
+LOOP-TEST-EVENT phase=pre attempt=36 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=36 reason=phase-spread nfft=512 peak_bin=79 bins=153 excluded_bins=13 neff_milli=57482 phase_mrad=383 power_a=721 power_b=884
+LOOP-TEST-EVENT phase=pre attempt=37 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=37 reason=phase-spread nfft=512 peak_bin=79 bins=165 excluded_bins=13 neff_milli=72882 phase_mrad=393 power_a=730 power_b=910
+LOOP-TEST-EVENT phase=pre attempt=38 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=38 reason=phase-spread nfft=512 peak_bin=78 bins=133 excluded_bins=13 neff_milli=50650 phase_mrad=320 power_a=717 power_b=1013
+LOOP-TEST-EVENT phase=pre attempt=39 st=events act=none code=16 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=39 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=47988 phase_mrad=367 power_a=719 power_b=893
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=0 code=16 abort=0 offset_mc=nan offset_sd_mc=nan gain_ppm=nan gain_sd_ppm=nan skew_cps=nan skew_sd_cps=nan
+LOOP-TEST-ERROR invalid arguments, unavailable baseline, isolation, capture, or write failure; see preceding rows.
+LOOP-TEST-END result=ERROR
+# result: {"axis": "skew", "baseline_code": 12, "convergence_attempt": null, "failure_reason": "acquisition range/quality gate rejected the point", "gain_mean": NaN, "gain_n": 0, "gain_sd": NaN, "gain_se": NaN, "gain_source": "", "hold_accepted": 0, "hold_budget": 100, "hold_clock_frozen": false, "hold_continues_train": false, "hold_frozen": false, "hold_yield": 0.0, "inactive_frozen": true, "inactive_skew_frozen": true, "is_control": false, "last_code": "16", "last_train_action": null, "measurement_rejected": true, "offset_mean": NaN, "offset_n": 0, "offset_sd": NaN, "offset_se": NaN, "pass": false, "point": 16, "pre_mean": NaN, "pre_observed_mean": NaN, "quantization_limited": false, "range_limit": false, "reject_reasons": "{\"events\": 40}", "relative_code_offset": 4, "repeat": 0, "requested_routes_match": false, "routes_consistent": true, "signal_downloaded": false, "signal_skipped": false, "signal_status": "not-advertised", "skew_mean": NaN, "skew_n": 0, "skew_point_mode": "absolute", "skew_route": "", "skew_sd": NaN, "skew_se": NaN, "target_code": 16, "tolerance": 10.0}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=16 code_after=16 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=16 code_after=15 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=15 code_after=14 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=14 code_after=13 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=13 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test park 24
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=12 code_after=13 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=13 code_after=14 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=14 code_after=15 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=15 code_after=16 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=16 code_after=17 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=17 code_after=18 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=18 code_after=19 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=19 code_after=20 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=20 code_after=21 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=21 code_after=22 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=22 code_after=23 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=23 code_after=24 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run skew 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=24
+LOOP-TEST-EVENT phase=pre attempt=0 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=0 reason=phase-spread nfft=512 peak_bin=79 bins=70 excluded_bins=13 neff_milli=25758 phase_mrad=230 power_a=700 power_b=770
+LOOP-TEST-EVENT phase=pre attempt=1 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=1 reason=phase-spread nfft=512 peak_bin=79 bins=144 excluded_bins=13 neff_milli=60181 phase_mrad=273 power_a=710 power_b=866
+LOOP-TEST-EVENT phase=pre attempt=2 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=2 reason=phase-spread nfft=512 peak_bin=78 bins=156 excluded_bins=13 neff_milli=73378 phase_mrad=262 power_a=715 power_b=937
+LOOP-TEST-EVENT phase=pre attempt=3 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=3 reason=phase-spread nfft=512 peak_bin=79 bins=134 excluded_bins=13 neff_milli=54511 phase_mrad=211 power_a=725 power_b=933
+LOOP-TEST-EVENT phase=pre attempt=4 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=4 reason=phase-spread nfft=512 peak_bin=78 bins=146 excluded_bins=13 neff_milli=64950 phase_mrad=299 power_a=718 power_b=946
+LOOP-TEST-EVENT phase=pre attempt=5 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=5 reason=phase-spread nfft=512 peak_bin=79 bins=133 excluded_bins=13 neff_milli=51052 phase_mrad=267 power_a=723 power_b=870
+LOOP-TEST-EVENT phase=pre attempt=6 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=6 reason=phase-spread nfft=512 peak_bin=79 bins=154 excluded_bins=13 neff_milli=60372 phase_mrad=272 power_a=724 power_b=824
+LOOP-TEST-EVENT phase=pre attempt=7 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=7 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=50774 phase_mrad=239 power_a=714 power_b=841
+LOOP-TEST-EVENT phase=pre attempt=8 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=8 reason=phase-spread nfft=512 peak_bin=79 bins=160 excluded_bins=13 neff_milli=70862 phase_mrad=319 power_a=719 power_b=816
+LOOP-TEST-EVENT phase=pre attempt=9 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=9 reason=phase-spread nfft=512 peak_bin=79 bins=134 excluded_bins=13 neff_milli=49773 phase_mrad=231 power_a=713 power_b=776
+LOOP-TEST-EVENT phase=pre attempt=10 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=10 reason=phase-spread nfft=512 peak_bin=79 bins=96 excluded_bins=13 neff_milli=34243 phase_mrad=175 power_a=710 power_b=812
+LOOP-TEST-EVENT phase=pre attempt=11 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=11 reason=phase-spread nfft=512 peak_bin=78 bins=140 excluded_bins=13 neff_milli=55240 phase_mrad=246 power_a=709 power_b=824
+LOOP-TEST-EVENT phase=pre attempt=12 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=12 reason=phase-spread nfft=512 peak_bin=79 bins=148 excluded_bins=13 neff_milli=60815 phase_mrad=249 power_a=712 power_b=890
+LOOP-TEST-EVENT phase=pre attempt=13 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=13 reason=phase-spread nfft=512 peak_bin=79 bins=163 excluded_bins=13 neff_milli=75298 phase_mrad=253 power_a=723 power_b=797
+LOOP-TEST-EVENT phase=pre attempt=14 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=14 reason=phase-spread nfft=512 peak_bin=79 bins=126 excluded_bins=13 neff_milli=49065 phase_mrad=272 power_a=709 power_b=907
+LOOP-TEST-EVENT phase=pre attempt=15 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=15 reason=phase-spread nfft=512 peak_bin=78 bins=137 excluded_bins=13 neff_milli=62625 phase_mrad=243 power_a=715 power_b=881
+LOOP-TEST-EVENT phase=pre attempt=16 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=16 reason=phase-spread nfft=512 peak_bin=78 bins=128 excluded_bins=13 neff_milli=52886 phase_mrad=249 power_a=720 power_b=804
+LOOP-TEST-EVENT phase=pre attempt=17 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=17 reason=phase-spread nfft=512 peak_bin=79 bins=72 excluded_bins=13 neff_milli=26757 phase_mrad=200 power_a=714 power_b=744
+LOOP-TEST-EVENT phase=pre attempt=18 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=18 reason=phase-spread nfft=512 peak_bin=79 bins=129 excluded_bins=13 neff_milli=49442 phase_mrad=221 power_a=722 power_b=791
+LOOP-TEST-EVENT phase=pre attempt=19 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=19 reason=phase-spread nfft=512 peak_bin=79 bins=135 excluded_bins=13 neff_milli=59062 phase_mrad=218 power_a=716 power_b=801
+LOOP-TEST-EVENT phase=pre attempt=20 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=20 reason=phase-spread nfft=512 peak_bin=79 bins=136 excluded_bins=13 neff_milli=48854 phase_mrad=238 power_a=716 power_b=794
+LOOP-TEST-EVENT phase=pre attempt=21 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=21 reason=phase-spread nfft=512 peak_bin=79 bins=129 excluded_bins=13 neff_milli=55704 phase_mrad=219 power_a=713 power_b=789
+LOOP-TEST-EVENT phase=pre attempt=23 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=23 reason=phase-spread nfft=512 peak_bin=79 bins=129 excluded_bins=13 neff_milli=52578 phase_mrad=238 power_a=705 power_b=803
+LOOP-TEST-EVENT phase=pre attempt=24 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=24 reason=phase-spread nfft=512 peak_bin=79 bins=120 excluded_bins=13 neff_milli=48279 phase_mrad=175 power_a=702 power_b=850
+LOOP-TEST-EVENT phase=pre attempt=25 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=25 reason=phase-spread nfft=512 peak_bin=79 bins=119 excluded_bins=13 neff_milli=49490 phase_mrad=200 power_a=717 power_b=843
+LOOP-TEST-EVENT phase=pre attempt=26 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=26 reason=phase-spread nfft=512 peak_bin=79 bins=82 excluded_bins=13 neff_milli=29422 phase_mrad=184 power_a=704 power_b=797
+LOOP-TEST-EVENT phase=pre attempt=27 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=27 reason=phase-spread nfft=512 peak_bin=79 bins=147 excluded_bins=13 neff_milli=65910 phase_mrad=233 power_a=704 power_b=741
+LOOP-TEST-EVENT phase=pre attempt=28 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=28 reason=phase-spread nfft=512 peak_bin=79 bins=67 excluded_bins=13 neff_milli=26940 phase_mrad=153 power_a=701 power_b=762
+LOOP-TEST-EVENT phase=pre attempt=29 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=29 reason=phase-spread nfft=512 peak_bin=79 bins=143 excluded_bins=13 neff_milli=64098 phase_mrad=241 power_a=727 power_b=831
+LOOP-TEST-EVENT phase=pre attempt=30 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=30 reason=phase-spread nfft=512 peak_bin=78 bins=131 excluded_bins=13 neff_milli=53561 phase_mrad=216 power_a=704 power_b=806
+LOOP-TEST-EVENT phase=pre attempt=31 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=31 reason=phase-spread nfft=512 peak_bin=79 bins=139 excluded_bins=13 neff_milli=69622 phase_mrad=225 power_a=708 power_b=808
+LOOP-TEST-EVENT phase=pre attempt=32 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=32 reason=phase-spread nfft=512 peak_bin=79 bins=124 excluded_bins=13 neff_milli=46357 phase_mrad=225 power_a=719 power_b=832
+LOOP-TEST-EVENT phase=pre attempt=33 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=33 reason=phase-spread nfft=512 peak_bin=79 bins=132 excluded_bins=13 neff_milli=52243 phase_mrad=225 power_a=707 power_b=757
+LOOP-TEST-EVENT phase=pre attempt=34 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=34 reason=phase-spread nfft=512 peak_bin=79 bins=135 excluded_bins=13 neff_milli=60475 phase_mrad=206 power_a=718 power_b=760
+LOOP-TEST-EVENT phase=pre attempt=35 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=35 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=60629 phase_mrad=220 power_a=715 power_b=727
+LOOP-TEST-EVENT phase=pre attempt=36 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=36 reason=phase-spread nfft=512 peak_bin=79 bins=122 excluded_bins=13 neff_milli=48965 phase_mrad=192 power_a=715 power_b=851
+LOOP-TEST-EVENT phase=pre attempt=37 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=37 reason=phase-spread nfft=512 peak_bin=79 bins=147 excluded_bins=13 neff_milli=65037 phase_mrad=201 power_a=716 power_b=799
+LOOP-TEST-EVENT phase=pre attempt=38 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=38 reason=phase-spread nfft=512 peak_bin=79 bins=142 excluded_bins=13 neff_milli=61421 phase_mrad=194 power_a=717 power_b=825
+LOOP-TEST-EVENT phase=pre attempt=39 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=pre attempt=39 reason=phase-spread nfft=512 peak_bin=79 bins=122 excluded_bins=13 neff_milli=52698 phase_mrad=189 power_a=713 power_b=795
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=1 offset_mc=297 gain_ppm=77642 skew_cps=14828
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=1 code=24 abort=0 offset_mc=297 offset_sd_mc=nan gain_ppm=77642 gain_sd_ppm=nan skew_cps=14828 skew_sd_cps=nan
+LOOP-TEST-PHASE phase=train axes=4 budget=300 code=24
+LOOP-TEST-EVENT phase=train attempt=0 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=0 reason=phase-spread nfft=512 peak_bin=79 bins=126 excluded_bins=13 neff_milli=52506 phase_mrad=201 power_a=701 power_b=881
+LOOP-TEST-EVENT phase=train attempt=1 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=1 reason=phase-spread nfft=512 peak_bin=79 bins=117 excluded_bins=13 neff_milli=49950 phase_mrad=181 power_a=707 power_b=803
+LOOP-TEST-EVENT phase=train attempt=2 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=2 reason=phase-spread nfft=512 peak_bin=78 bins=125 excluded_bins=13 neff_milli=52788 phase_mrad=172 power_a=694 power_b=788
+LOOP-TEST-EVENT phase=train attempt=3 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=3 reason=phase-spread nfft=512 peak_bin=79 bins=125 excluded_bins=13 neff_milli=48042 phase_mrad=218 power_a=699 power_b=806
+LOOP-TEST-EVENT phase=train attempt=4 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=4 reason=phase-spread nfft=512 peak_bin=79 bins=139 excluded_bins=13 neff_milli=67788 phase_mrad=193 power_a=720 power_b=897
+LOOP-TEST-EVENT phase=train attempt=5 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=5 reason=phase-spread nfft=512 peak_bin=79 bins=117 excluded_bins=13 neff_milli=44663 phase_mrad=175 power_a=708 power_b=793
+LOOP-TEST-EVENT phase=train attempt=6 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=6 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=57071 phase_mrad=215 power_a=712 power_b=767
+LOOP-TEST-EVENT phase=train attempt=7 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=7 reason=phase-spread nfft=512 peak_bin=79 bins=142 excluded_bins=13 neff_milli=65549 phase_mrad=192 power_a=725 power_b=799
+LOOP-TEST-EVENT phase=train attempt=8 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=8 reason=phase-spread nfft=512 peak_bin=79 bins=119 excluded_bins=13 neff_milli=54725 phase_mrad=186 power_a=713 power_b=775
+LOOP-TEST-EVENT phase=train attempt=9 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=9 reason=phase-spread nfft=512 peak_bin=79 bins=119 excluded_bins=13 neff_milli=47794 phase_mrad=166 power_a=718 power_b=779
+LOOP-TEST-EVENT phase=train attempt=10 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=10 reason=phase-spread nfft=512 peak_bin=79 bins=146 excluded_bins=13 neff_milli=68312 phase_mrad=188 power_a=701 power_b=801
+LOOP-TEST-EVENT phase=train attempt=11 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=11 reason=phase-spread nfft=512 peak_bin=79 bins=134 excluded_bins=13 neff_milli=58708 phase_mrad=204 power_a=718 power_b=735
+LOOP-TEST-EVENT phase=train attempt=12 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=12 reason=phase-spread nfft=512 peak_bin=79 bins=150 excluded_bins=13 neff_milli=68399 phase_mrad=183 power_a=725 power_b=847
+LOOP-TEST-EVENT phase=train attempt=13 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=13 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=54162 phase_mrad=169 power_a=712 power_b=777
+LOOP-TEST-EVENT phase=train attempt=14 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=14 reason=phase-spread nfft=512 peak_bin=79 bins=87 excluded_bins=13 neff_milli=31905 phase_mrad=185 power_a=728 power_b=862
+LOOP-TEST-EVENT phase=train attempt=16 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=16 reason=phase-spread nfft=512 peak_bin=79 bins=118 excluded_bins=13 neff_milli=47349 phase_mrad=157 power_a=705 power_b=806
+LOOP-TEST-EVENT phase=train attempt=18 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=18 reason=phase-spread nfft=512 peak_bin=79 bins=124 excluded_bins=13 neff_milli=51338 phase_mrad=165 power_a=720 power_b=769
+LOOP-TEST-EVENT phase=train attempt=20 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=20 reason=phase-spread nfft=512 peak_bin=79 bins=123 excluded_bins=13 neff_milli=49893 phase_mrad=157 power_a=714 power_b=753
+LOOP-TEST-EVENT phase=train attempt=24 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=24 reason=phase-spread nfft=512 peak_bin=79 bins=142 excluded_bins=13 neff_milli=60741 phase_mrad=172 power_a=719 power_b=779
+LOOP-TEST-EVENT phase=train attempt=26 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=26 reason=phase-spread nfft=512 peak_bin=79 bins=152 excluded_bins=13 neff_milli=72663 phase_mrad=164 power_a=713 power_b=843
+LOOP-TEST-EVENT phase=train attempt=27 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=27 reason=phase-spread nfft=512 peak_bin=79 bins=149 excluded_bins=13 neff_milli=73403 phase_mrad=181 power_a=711 power_b=761
+LOOP-TEST-EVENT phase=train attempt=28 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=28 reason=phase-spread nfft=512 peak_bin=79 bins=126 excluded_bins=13 neff_milli=52045 phase_mrad=173 power_a=711 power_b=734
+LOOP-TEST-EVENT phase=train attempt=29 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=29 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=59434 phase_mrad=151 power_a=703 power_b=687
+LOOP-TEST-EVENT phase=train attempt=30 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=30 reason=phase-spread nfft=512 peak_bin=79 bins=118 excluded_bins=13 neff_milli=46813 phase_mrad=157 power_a=726 power_b=808
+LOOP-TEST-EVENT phase=train attempt=33 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=33 reason=phase-spread nfft=512 peak_bin=79 bins=131 excluded_bins=13 neff_milli=61367 phase_mrad=181 power_a=709 power_b=750
+LOOP-TEST-EVENT phase=train attempt=36 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=36 reason=phase-spread nfft=512 peak_bin=79 bins=146 excluded_bins=13 neff_milli=69851 phase_mrad=163 power_a=705 power_b=784
+LOOP-TEST-EVENT phase=train attempt=41 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=41 reason=phase-spread nfft=512 peak_bin=78 bins=130 excluded_bins=13 neff_milli=62372 phase_mrad=169 power_a=704 power_b=742
+LOOP-TEST-EVENT phase=train attempt=42 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=42 reason=phase-spread nfft=512 peak_bin=79 bins=139 excluded_bins=13 neff_milli=58885 phase_mrad=159 power_a=710 power_b=762
+LOOP-TEST-EVENT phase=train attempt=46 st=events act=none code=24 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=46 reason=phase-spread nfft=512 peak_bin=79 bins=123 excluded_bins=13 neff_milli=52941 phase_mrad=162 power_a=718 power_b=814
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=24 code_after=23 stage=-
+LOOP-TEST-EVENT phase=train attempt=48 st=ok act=move:OK code=23 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=48 accepted=20 offset_mc=1367 gain_ppm=43794 skew_cps=19186
+LOOP-TEST-EVENT phase=train attempt=49 st=events act=none code=23 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=49 reason=phase-spread nfft=512 peak_bin=79 bins=119 excluded_bins=13 neff_milli=45258 phase_mrad=154 power_a=699 power_b=772
+LOOP-TEST-EVENT phase=train attempt=57 st=events act=none code=23 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=57 reason=phase-spread nfft=512 peak_bin=79 bins=146 excluded_bins=13 neff_milli=69360 phase_mrad=155 power_a=722 power_b=749
+LOOP-TEST-EVENT phase=train attempt=63 st=events act=none code=23 clips=0
+LOOP-TEST-SPECTRUM phase=train attempt=63 reason=phase-spread nfft=512 peak_bin=79 bins=153 excluded_bins=13 neff_milli=73795 phase_mrad=157 power_a=706 power_b=751
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP-TEST-EVENT phase=train attempt=71 st=ok act=move:OK code=22 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=71 accepted=20 offset_mc=1345 gain_ppm=31476 skew_cps=18358
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=22 code_after=21 stage=-
+LOOP-TEST-EVENT phase=train attempt=91 st=ok act=move:OK code=21 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=91 accepted=20 offset_mc=876 gain_ppm=38393 skew_cps=16428
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=21 code_after=20 stage=-
+LOOP-TEST-EVENT phase=train attempt=111 st=ok act=move:OK code=20 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=111 accepted=20 offset_mc=968 gain_ppm=27509 skew_cps=14765
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=20 code_after=19 stage=-
+LOOP-TEST-EVENT phase=train attempt=131 st=ok act=move:OK code=19 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=131 accepted=20 offset_mc=893 gain_ppm=21283 skew_cps=12894
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=19 code_after=18 stage=-
+LOOP-TEST-EVENT phase=train attempt=151 st=ok act=move:OK code=18 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=151 accepted=20 offset_mc=-119 gain_ppm=20527 skew_cps=11993
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=18 code_after=17 stage=-
+LOOP-TEST-EVENT phase=train attempt=171 st=ok act=move:OK code=17 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=171 accepted=20 offset_mc=-23 gain_ppm=14278 skew_cps=10133
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=17 code_after=16 stage=-
+LOOP-TEST-EVENT phase=train attempt=191 st=ok act=move:OK code=16 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=191 accepted=20 offset_mc=-609 gain_ppm=14318 skew_cps=8581
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=16 code_after=15 stage=-
+LOOP-TEST-EVENT phase=train attempt=211 st=ok act=move:OK code=15 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=211 accepted=20 offset_mc=-667 gain_ppm=14709 skew_cps=6481
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=15 code_after=14 stage=-
+LOOP-TEST-EVENT phase=train attempt=231 st=ok act=move:OK code=14 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=231 accepted=20 offset_mc=-650 gain_ppm=8070 skew_cps=5322
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=14 code_after=13 stage=-
+LOOP-TEST-EVENT phase=train attempt=251 st=ok act=move:OK code=13 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=251 accepted=20 offset_mc=-464 gain_ppm=11092 skew_cps=3728
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=13 code_after=12 stage=-
+LOOP-TEST-EVENT phase=train attempt=271 st=ok act=move:OK code=12 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=271 accepted=20 offset_mc=-517 gain_ppm=5900 skew_cps=1677
+LOOP-TEST-WINDOW phase=train through_attempt=291 accepted=20 offset_mc=176 gain_ppm=-102 skew_cps=-140
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=8 offset_mc=-648 gain_ppm=2778 skew_cps=-45
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=268 code=12 abort=0 offset_mc=173 offset_sd_mc=1222 gain_ppm=18833 gain_sd_ppm=18986 skew_cps=9656 skew_sd_cps=6477
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=12
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=259 gain_ppm=1042 skew_cps=-115
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-128 gain_ppm=1202 skew_cps=-384
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=150 gain_ppm=1634 skew_cps=207
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=262 gain_ppm=1441 skew_cps=-340
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=33 gain_ppm=8 skew_cps=-176
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=12 abort=0 offset_mc=115 offset_sd_mc=765 gain_ppm=1065 gain_sd_ppm=6965 skew_cps=-162 skew_sd_cps=919
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-OUTPUT status=ambiguous samples=1020 reference_free=1 coefficients=frozen method=learned_pulses tone_hz=199374241 period_samples=0 events=0 validation_a_mdb=0 validation_b_mdb=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop output
+
+LOOP-SIGNAL-BEGIN version=1 samples=1020 status=ambiguous sample_rate_hz=1300000000 coefficients=frozen
+LOOP-SIGNAL-END result=OK samples=1020 status=ambiguous
+# result: {"axis": "skew", "baseline_code": 12, "convergence_attempt": 286, "gain_mean": 0.00106534, "gain_n": 100, "gain_sd": 0.006965177731596464, "gain_se": 0.0006965177731596465, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "is_control": false, "last_code": "12", "last_train_action": "inside-deadband", "measurement_rejected": false, "offset_mean": 0.11502, "offset_n": 100, "offset_sd": 0.7652214834855846, "offset_se": 0.07652214834855846, "pass": true, "point": 24, "pre_mean": 148.28, "pre_observed_mean": 148.28, "quantization_limited": false, "range_limit": false, "reject_reasons": "{\"events\": 71}", "relative_code_offset": 12, "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "signal_csv": "skew_point24_repeat1_signal.csv", "signal_downloaded": true, "signal_skipped": false, "signal_status": "ambiguous", "skew_mean": -1.617, "skew_n": 100, "skew_point_mode": "absolute", "skew_route": "dither_cross_spectrum", "skew_sd": 9.192538641021134, "skew_se": 0.9192538641021134, "target_code": 24, "tolerance": 10.0}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test park 32
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=12 code_after=12 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=12 code_after=13 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=13 code_after=14 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=14 code_after=15 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=15 code_after=16 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=16 code_after=17 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=17 code_after=18 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=18 code_after=19 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=19 code_after=20 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=20 code_after=21 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=21 code_after=22 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=22 code_after=23 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=23 code_after=24 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=24 code_after=25 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=25 code_after=26 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=26 code_after=27 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=27 code_after=28 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=28 code_after=29 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=29 code_after=30 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=30 code_after=31 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+1 result=OK code_before=31 code_after=32 stage=-
+LOOP-TEST-END result=OK
+# command: adc -cal loop test run skew 40 300 100 full
+
+LOOP-TEST-PHASE phase=pre axes=0 budget=40 code=32
+LOOP-TEST-WINDOW phase=pre through_attempt=19 accepted=20 offset_mc=360 gain_ppm=25360 skew_cps=28931
+LOOP-TEST-WINDOW phase=pre through_attempt=39 accepted=20 offset_mc=154 gain_ppm=23058 skew_cps=29375
+LOOP-TEST-SUMMARY phase=pre attempts=40 accepted=40 code=32 abort=0 offset_mc=257 offset_sd_mc=742 gain_ppm=24209 gain_sd_ppm=6065 skew_cps=29153 skew_sd_cps=1423
+LOOP-TEST-PHASE phase=train axes=4 budget=300 code=32
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=32 code_after=31 stage=-
+LOOP-TEST-EVENT phase=train attempt=19 st=ok act=move:OK code=31 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=19 accepted=20 offset_mc=406 gain_ppm=23781 skew_cps=29879
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=31 code_after=30 stage=-
+LOOP-TEST-EVENT phase=train attempt=39 st=ok act=move:OK code=30 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=39 accepted=20 offset_mc=464 gain_ppm=24335 skew_cps=28003
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=30 code_after=29 stage=-
+LOOP-TEST-EVENT phase=train attempt=59 st=ok act=move:OK code=29 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=59 accepted=20 offset_mc=668 gain_ppm=25446 skew_cps=27457
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=29 code_after=28 stage=-
+LOOP-TEST-EVENT phase=train attempt=79 st=ok act=move:OK code=28 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=79 accepted=20 offset_mc=729 gain_ppm=21904 skew_cps=25886
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=28 code_after=27 stage=-
+LOOP-TEST-EVENT phase=train attempt=99 st=ok act=move:OK code=27 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=99 accepted=20 offset_mc=1133 gain_ppm=21708 skew_cps=24720
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=27 code_after=26 stage=-
+LOOP-TEST-EVENT phase=train attempt=119 st=ok act=move:OK code=26 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=119 accepted=20 offset_mc=1425 gain_ppm=23741 skew_cps=24158
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=26 code_after=25 stage=-
+LOOP-TEST-EVENT phase=train attempt=139 st=ok act=move:OK code=25 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=139 accepted=20 offset_mc=1697 gain_ppm=22669 skew_cps=21750
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=25 code_after=24 stage=-
+LOOP-TEST-EVENT phase=train attempt=159 st=ok act=move:OK code=24 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=159 accepted=20 offset_mc=1413 gain_ppm=21118 skew_cps=21084
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=24 code_after=23 stage=-
+LOOP-TEST-EVENT phase=train attempt=179 st=ok act=move:OK code=23 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=179 accepted=20 offset_mc=953 gain_ppm=20461 skew_cps=19138
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=23 code_after=22 stage=-
+LOOP-TEST-EVENT phase=train attempt=199 st=ok act=move:OK code=22 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=199 accepted=20 offset_mc=491 gain_ppm=19646 skew_cps=17449
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=22 code_after=21 stage=-
+LOOP-TEST-EVENT phase=train attempt=219 st=ok act=move:OK code=21 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=219 accepted=20 offset_mc=97 gain_ppm=18929 skew_cps=16219
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=21 code_after=20 stage=-
+LOOP-TEST-EVENT phase=train attempt=239 st=ok act=move:OK code=20 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=239 accepted=20 offset_mc=514 gain_ppm=15826 skew_cps=14389
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=20 code_after=19 stage=-
+LOOP-TEST-EVENT phase=train attempt=259 st=ok act=move:OK code=19 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=259 accepted=20 offset_mc=34 gain_ppm=13955 skew_cps=13212
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=19 code_after=18 stage=-
+LOOP-TEST-EVENT phase=train attempt=279 st=ok act=move:OK code=18 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=279 accepted=20 offset_mc=291 gain_ppm=11817 skew_cps=11672
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=18 code_after=17 stage=-
+LOOP-TEST-EVENT phase=train attempt=299 st=ok act=move:OK code=17 clips=0
+LOOP-TEST-WINDOW phase=train through_attempt=299 accepted=20 offset_mc=-293 gain_ppm=12256 skew_cps=9802
+LOOP-TEST-SUMMARY phase=train attempts=300 accepted=300 code=17 abort=0 offset_mc=668 offset_sd_mc=903 gain_ppm=19840 gain_sd_ppm=7143 skew_cps=20321 skew_sd_cps=6280
+LOOP-TEST-PHASE phase=hold axes=0 budget=100 code=17
+LOOP-TEST-WINDOW phase=hold through_attempt=19 accepted=20 offset_mc=-702 gain_ppm=12129 skew_cps=8433
+LOOP-TEST-WINDOW phase=hold through_attempt=39 accepted=20 offset_mc=-584 gain_ppm=9826 skew_cps=8480
+LOOP-TEST-WINDOW phase=hold through_attempt=59 accepted=20 offset_mc=-422 gain_ppm=11512 skew_cps=8180
+LOOP-TEST-WINDOW phase=hold through_attempt=79 accepted=20 offset_mc=216 gain_ppm=10466 skew_cps=8607
+LOOP-TEST-WINDOW phase=hold through_attempt=99 accepted=20 offset_mc=-435 gain_ppm=10107 skew_cps=8298
+LOOP-TEST-SUMMARY phase=hold attempts=100 accepted=100 code=17 abort=0 offset_mc=-385 offset_sd_mc=814 gain_ppm=10808 gain_sd_ppm=4936 skew_cps=8400 skew_sd_cps=798
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-OUTPUT status=ambiguous samples=1020 reference_free=1 coefficients=frozen method=learned_pulses tone_hz=199375278 period_samples=0 events=0 validation_a_mdb=0 validation_b_mdb=0
+LOOP-TEST-END result=OK
+# command: adc -cal loop output
+
+LOOP-SIGNAL-BEGIN version=1 samples=1020 status=ambiguous sample_rate_hz=1300000000 coefficients=frozen
+LOOP-SIGNAL-END result=OK samples=1020 status=ambiguous
+# result: {"axis": "skew", "baseline_code": 12, "convergence_attempt": null, "gain_mean": 0.010807579999999999, "gain_n": 100, "gain_sd": 0.00493639864265356, "gain_se": 0.000493639864265356, "gain_source": "dither_spectrum", "hold_accepted": 100, "hold_budget": 100, "hold_clock_frozen": true, "hold_continues_train": true, "hold_frozen": true, "hold_yield": 1.0, "inactive_frozen": true, "inactive_skew_frozen": true, "is_control": false, "last_code": "17", "last_train_action": "move:OK-1", "measurement_rejected": false, "offset_mean": -0.38545, "offset_n": 100, "offset_sd": 0.813651854855067, "offset_se": 0.0813651854855067, "pass": false, "point": 32, "pre_mean": 291.52875, "pre_observed_mean": 291.52875, "quantization_limited": false, "range_limit": false, "reject_reasons": "{}", "relative_code_offset": 20, "repeat": 0, "requested_routes_match": true, "routes_consistent": true, "signal_csv": "skew_point32_repeat1_signal.csv", "signal_downloaded": true, "signal_skipped": false, "signal_status": "ambiguous", "skew_mean": 83.9959, "skew_n": 100, "skew_point_mode": "absolute", "skew_route": "dither_cross_spectrum", "skew_sd": 7.984564540348454, "skew_se": 0.7984564540348453, "target_code": 32, "tolerance": 10.0}
+# command: adc -cal loop test restore
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=0 result=OK code_before=17 code_after=17 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=17 code_after=16 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=16 code_after=15 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=15 code_after=14 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=14 code_after=13 stage=-
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=-1 result=OK code_before=13 code_after=12 stage=-
+LOOP-TEST-END result=OK

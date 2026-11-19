@@ -8,6 +8,62 @@
 新版最终输出与三阶段接口已离线测试，尚未完成这次接线下的台架验证。
 本文是操作步骤，不是已经通过的测试记录。
 
+2026-11-18 合路全拒帧修正已加入当前源码，需使用新 ELF；`test status` 的
+路由行应包含 `spectral_line_rejection=1`。估计器仅从 ADC 频谱排除主导窄带峰，
+再用宽带 dither 估计相对误差；无需输入 tone 频率或模板。基准/HOLD 门限未改。
+修正与离线证据见 [COMBINER_REJECTION_DIAGNOSIS.md](COMBINER_REJECTION_DIAGNOSIS.md)。
+基准与 gain 单轴测试现以训练末段平均后的原始相对增益冻结系数，减少末帧
+噪声进入 HOLD；新 ELF 的 status 路由还应包含 `gain_freeze=training_mean`。
+HOLD 不参与平均和调参，其验收门限不变。
+
+## 2026-11-18 自动完成三项测试
+
+用户现要求把 offset、gain、skew 的手动参数修改全部自动化。加载带
+`gain_freeze=training_mean` 的当前 ELF、完成正常 bring-up 后，关闭串口终端，
+保持原合路输入。在仓库根目录运行：
+
+```powershell
+python tools/board_loop/board_axis_test.py suite --uart COM5 --execute
+```
+
+脚本只建立一次基准，验收成功后自动依次完成：
+
+1. Offset：B 软件偏置 +32、+31……−32，步长 −1，共 65 档。
+2. Gain：IFC 量程 1.36、1.47、1.59、1.70、1.81、1.93、2.04 Vpp，
+   对应码 10、11、12、13、14、15、0，共 7 档。
+3. Skew：绝对硬件控制码 0、1……32，步长 +1，共 33 档。
+4. 自动恢复基准 IFC/filter/code，清除软件注入，保存并打开汇总查看器。
+
+每个可执行点仍为 restore→注入→PRE/TRAIN/HOLD 40/300/100。默认每档一遍；
+`--repeats 5` 可将全扫描按轮重复五遍，每个点仍重新 restore。
+IFC 的 1.36→2.04 指满量程，不是幅度增益递增。等于基准的档位保留为 control。
+默认一轮共 105 档（65 offset + 7 IFC + 33 skew），全部位于硬件允许范围。
+Skew 点值不再加上基准 N：即使 N=12，点 0 也发送 `park 0`，点 12 才是
+基准 control。JSON 同时记录绝对目标 target_code 与相对偏移 relative_code_offset。
+需要旧的相对扫描时，显式加 `--skew-mode relative`；仅该模式可能产生超界
+SKIP，记录到 skipped.csv/meta.json，不发越界命令或伪造 HOLD 数据。
+
+全量程扫描默认 gain 捕获范围为 600000 ppm，覆盖所有 IFC 比值；HOLD 精度
+门限不变。复用旧基准时，CLI 配置必须匹配；若旧基准仍为 200000 ppm，可显式
+使用 `--gain-gate-ppm 200000`，超出捕获范围的档位将记录为失败点。
+已有 valid=1 基准时追加 `--reuse-baseline` 可跳过重建，脚本先只读核对有效性、
+路由和 config；不匹配即停止，不暗中修改已有基准的参数。
+
+自定义档位示例（gain 是 IFC 码、skew 是绝对硬件控制码）：
+
+```powershell
+python tools/board_loop/board_axis_test.py suite --uart COM5 --reuse-baseline --offset-points=-32,32 --gain-points=0x0D,0x0E --skew-points=0,16,32 --repeats 5 --execute
+```
+
+不带 `--execute` 只显示计划；默认 skew 绝对码 0..32 的执行范围与基准无关。
+每点的曲线和最终输出快照单独保存到新 `axis_suite_<timestamp>` 目录的对应轴
+子目录；汇总 `viewer.html` 同时包含三阶段数据和输出波形。
+`--no-signal` 跳过波形下载，`--no-viewer` 跳过 HTML 和打开浏览器。
+普通 HOLD 不通过或完整采集阶段因范围/质量门控被拒，会记录 FAIL 并继续下一点；
+基准失败、事务/方向故障、clipping、
+串口超时或波形传输失败会停止，保留数据，不重训或自动恢复写寄存器。
+下面的逐条手动操作仍可作为单点调试入口。
+
 ## 1. 接线和固定输入
 
 ```mermaid
@@ -56,7 +112,7 @@ TXT 只下载到 DPG。校准与最终抵消都从 ADC 采样获取观测量。
    完整仪器步骤见 [CALIBRATION_STARTUP.md](CALIBRATION_STARTUP.md) 第 1–5 节。
 3. 确认 DPG 的 dither 和外部 main tone 都已开启，再建立基准。
    后续基准和三个单轴测试保持相同的 RF 输入条件。
-4. 串口按本机实际端口连接，115200 baud。本文以 COM7 为例。
+4. 串口按本机实际端口连接，115200 baud。本文以 COM5 为例。
    每条串口命令完成后再输入下一条，不整段连续发送。
 
 先确认启动日志有 ADC PLL、JESD 接收链路正常的信息，再在串口逐条输入：
@@ -67,8 +123,18 @@ adc -cal skew step 0
 adc -cal loop test status
 ```
 
-检查时钟状态和 `SKEW-TXN ... result=OK`。记录当前 test config，沿用既有
-门限、batch、deadband 和 step 设置，不为了得到 PASS 临时放宽门限。
+检查时钟状态和 `SKEW-TXN ... result=OK`。当前无参考模式的初始 skew 捕获
+范围应为 `skew_milli=500`（0.5 sample，约 384.6 ps），与普通 loop 一致。
+早期手动 test ELF 默认为 250，会拒绝本次 neutral 状态约 209 ps 的初始偏差。
+若显示 250，且其余配置仍为本轮默认值，在串口执行：
+
+```text
+adc -cal loop test config 200000 500 1000 1910 20
+```
+
+这只将本轮 skew 捕获范围对齐到无参考模式的既有范围；HOLD 精度门限不变。
+如已单独标定 step 或调整其他配置，应保留对应实际值。记录当前 test config，
+后续各测试点保持配置一致。
 
 在 PowerShell 进入仓库，确认运行脚本的 Python 有依赖：
 
@@ -82,10 +148,10 @@ python -c "import serial, numpy, matplotlib; print('Python dependencies OK')"
 
 ## 3. 建立本轮基准，只做一次
 
-关闭占用 COM7 的串口终端。保持 **tone 与 dither 同时开启**，运行：
+关闭占用 COM5 的串口终端。保持 **tone 与 dither 同时开启**，运行：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test baseline 600 100" --out calibration_out/combiner_baseline.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test baseline 600 100" --out calibration_out/combiner_baseline.log
 ```
 
 这一步是 600 次全部轴训练尝试，再做 100 次全部冻结的 baseline HOLD。
@@ -146,7 +212,7 @@ RF combiner 的输入保持不变。
 关闭串口终端，在 PowerShell 执行：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/combiner_offset_p32_r01.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/combiner_offset_p32_r01.log
 ```
 
 PRE 应出现相应 offset 变化；TRAIN 只更新 offset，gain/skew 保持基准状态。
@@ -176,7 +242,7 @@ adc -cal loop test ifc B 0x0D
 关闭串口终端，运行：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run gain 40 300 100" --out calibration_out/combiner_gain_ifc0Cto0D_r01.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test run gain 40 300 100" --out calibration_out/combiner_gain_ifc0Cto0D_r01.log
 ```
 
 PRE 的幅度比应有变化；TRAIN 只更新数字 gain 系数，offset/skew 保持冻结。
@@ -209,14 +275,14 @@ Write-Host "本次手动 skew 注入: $baselineCode -> $injectCode"
 明确发送该控制码，记录每次事务 ACK：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test park $injectCode" --no-export --no-viewer --out calibration_out/combiner_skew_inject_r01.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test park $injectCode" --no-export --no-viewer --out calibration_out/combiner_skew_inject_r01.log
 ```
 
 确认 `LOOP-SKEW-TXN` 全部 `result=OK`，最后 `code_after` 为所选注入码，
 再运行三阶段：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run skew 40 300 100" --out calibration_out/combiner_skew_onecode_r01.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test run skew 40 300 100" --out calibration_out/combiner_skew_onecode_r01.log
 ```
 
 PRE 测实际初始 skew；TRAIN 只允许 skew 执行器通过 ACK 检查的事务动作，

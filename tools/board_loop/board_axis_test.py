@@ -1,8 +1,9 @@
 """Isolated on-board calibration experiments. No hardware access without --execute.
 
-Requires the new 'adc -cal loop test' firmware and the selected DPG
-vector. Budgets count attempts, not just qualified frames. The waveform is loaded
-manually. Logs, per-frame CSV and independent holdout summaries are retained.
+Requires reference-free 'adc -cal loop test' firmware and shared A/B dither.
+The suite command automates offset, gain and skew injection from one baseline.
+Budgets count attempts, not just qualified frames. Input sources remain manual.
+Logs, per-frame CSV, frozen output snapshots and holdout summaries are retained.
 """
 from __future__ import annotations
 
@@ -19,6 +20,11 @@ import time
 
 FIELDS = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)=([^\s]+)")
 IFC_CODES = {0, 10, 11, 12, 13, 14, 15}
+IFC_FULL_SCALE_ORDER = (10, 11, 12, 13, 14, 15, 0)
+IFC_FULL_SCALE_VPP = dict(zip(IFC_FULL_SCALE_ORDER, (1.36, 1.47, 1.59, 1.70, 1.81, 1.93, 2.04)))
+TOLERANCES = {"offset": 0.5, "gain": 0.001, "skew": 10.0}
+SUITE_DEFAULT_POINTS = {"offset": tuple(range(32, -33, -1)),
+                        "gain": IFC_FULL_SCALE_ORDER, "skew": tuple(range(33))}
 AXIS_FIELDS = {"offset": ("doff_mc", 1e-3), "gain": ("tone_ppm", 1e-6),
                "skew": ("skew_cps", 0.01)}
 STATE_FIELDS = ("corr_a_ppm", "corr_b_ppm", "offa_mc", "offb_mc")
@@ -196,17 +202,19 @@ class Console:
         self.pending = ""
         self.records = []
         self.context = {}
+        self.last_lines = []
 
-    def command(self, command, marker="LOOP-TEST-END"):
+    def command(self, command, marker="LOOP-TEST-END", timeout=None):
         if command.startswith(('adc -cal loop test baseline ', 'adc -cal loop test run ',
                                'adc -cal loop test step ')) and not command.endswith(' full'):
             command += ' full'
+        lines = []
+        self.last_lines = lines
         self.log.write(f"# command: {command}\n")
         self.log.flush()
         self.serial.write((command + "\r").encode("ascii"))
         self.serial.flush()
-        deadline = time.monotonic() + self.timeout
-        lines = []
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         fault_seen = False
         dma_fault = None
         while time.monotonic() < deadline:
@@ -217,16 +225,18 @@ class Console:
                 if line.startswith('uart-cmd$:'):
                     line = line.split(':', 1)[1].strip()
                 payload = line.startswith('LOOP-TEST-ROW ')
+                signal_payload = line.startswith('LOOP-SIGNAL-DATA ')
                 if payload or line.startswith('LOOP-TEST-CAPTURE '):
                     self.records.append(dict(fields(line), **self.context))
-                if not payload:
+                if not payload and not signal_payload:
                     print(line)
                     self.log.write(line + "\n")
                     self.log.flush()
                 lines.append(line)
                 if ("RECOVERY_REQUIRED" in line or "act=abort:direction" in line or
                         "act=move:FAILED" in line or "st=clipping" in line or
-                        "fault=1" in line):
+                        "fault=1" in line or
+                        (line.startswith('LOOP-SKEW-TXN ') and fields(line).get('result') != 'OK')):
                     fault_seen = True
                     if payload:
                         row = fields(line)
@@ -254,8 +264,8 @@ class Console:
         reason = f" after {dma_fault}" if dma_fault else ""
         raise BenchFault(f"Timeout waiting for {marker}{reason}; no further commands issued.")
 
-    def require(self, command, marker="LOOP-TEST-END"):
-        lines, ok = self.command(command, marker)
+    def require(self, command, marker="LOOP-TEST-END", timeout=None):
+        lines, ok = self.command(command, marker, timeout)
         if not ok:
             raise BenchFault(f"Setup/restore failed: {command}; see the log.")
         return lines
@@ -275,6 +285,8 @@ def point_values(axis, text):
     values = [int(s.strip(), 0) for s in text.split(",")]
     if not values:
         raise ValueError("at least one point is required")
+    if len(values) != len(set(values)):
+        raise ValueError("points must be unique; use --repeats to repeat a point")
     if axis == "gain" and any(v not in IFC_CODES for v in values):
         raise ValueError("gain points must be IFC codes 0,10,11,12,13,14,15")
     if axis == "offset" and any(abs(v) > 4096 for v in values):
@@ -284,7 +296,112 @@ def point_values(axis, text):
     return values
 
 
+def suite_points(args, baseline_code=None, baseline_ifc=None):
+    axes = getattr(args, 'axes', 'offset,gain,skew').split(',')
+    if (not axes or len(axes) != len(set(axes)) or
+            any(axis not in AXIS_FIELDS for axis in axes)):
+        raise ValueError("axes must be unique comma-separated names: offset,gain,skew")
+    points = {axis: point_values(axis, text) if text is not None else list(SUITE_DEFAULT_POINTS[axis])
+              for axis, text in (("offset", args.offset_points),
+                                 ("gain", args.gain_points), ("skew", args.skew_points))}
+    points = {axis: values if axis in axes else [] for axis, values in points.items()}
+    if args.skew_mode == 'absolute' and any(not 0 <= p <= 48 for p in points['skew']):
+        raise ValueError("absolute skew points must be hardware control codes 0..48")
+    if baseline_code is None:
+        return points
+    if baseline_ifc not in IFC_CODES:
+        raise ValueError("Saved baseline has no supported channel IFC; no injection sent")
+    return points
+
+
+def skew_target(args, baseline_code, point):
+    return point if args.mode == 'suite' and args.skew_mode == 'absolute' else baseline_code + point
+
+
+def quality_rejection_only(lines):
+    """A completed, rejected acquisition phase is a measured FAIL, not a write fault."""
+    phases = {fields(line).get('phase'): fields(line) for line in lines
+              if line.startswith('LOOP-TEST-PHASE ')}
+    summaries = [fields(line) for line in lines if line.startswith('LOOP-TEST-SUMMARY ')]
+    rows = rows_from(lines)
+    allowed = {'ok', 'margin', 'events', 'a_nan', 'b_nan', 'gain_range', 'skew_range'}
+    if (not phases or len(phases) != len(summaries) or not rows or
+            any(r.get('st') not in allowed for r in rows) or
+            not any(r.get('st') != 'ok' for r in rows) or
+            any(line.startswith('LOOP-TEST-CAPTURE ') for line in lines)):
+        return False
+    for summary in summaries:
+        phase = summary.get('phase')
+        if phase not in phases or summary.get('abort', '0') != '0':
+            return False
+        attempts = summary.get('attempts')
+        selected = [r for r in rows if r.get('phase') == phase]
+        accepted = summary.get('accepted', '')
+        if (attempts != phases[phase].get('budget') or not attempts or not attempts.isdecimal() or
+                not accepted.isdecimal() or int(accepted) != sum(r.get('st') == 'ok' for r in selected) or
+                [r.get('attempt') for r in selected] != [str(i) for i in range(int(attempts))]):
+            return False
+    return len(rows) == sum(int(s['attempts']) for s in summaries)
+
+
+def save_point(console, lines, log_path, result, args, read_signal=True):
+    """Save calibration before reading its separate frozen output snapshot."""
+    if __package__:
+        from .axis_result_export import save_test_results
+    else:
+        from axis_result_export import save_test_results
+    advertised = next((fields(line) for line in reversed(lines)
+                       if line.startswith('LOOP-OUTPUT ')), {})
+    result["signal_status"] = advertised.get("status", "not-advertised")
+    result["signal_downloaded"] = False
+    result["signal_skipped"] = args.no_signal or not read_signal
+    csv_path, json_path, _ = save_test_results(lines, log_path, result)
+    signal_path = None
+    try:
+        if (read_signal and not args.no_signal and int(advertised.get("samples", "0")) > 0 and
+                advertised.get("status") != "unavailable"):
+            if __package__:
+                from .board_signal_output import SignalDecoder
+            else:
+                from board_signal_output import SignalDecoder
+            output_lines = console.require("adc -cal loop output", "LOOP-SIGNAL-END",
+                                           timeout=min(args.timeout, 120.0))
+            decoder = SignalDecoder()
+            for line in output_lines:
+                if line.startswith('LOOP-SIGNAL-'):
+                    decoder.feed(line)
+            if (not decoder.done or decoder.meta["status"] != advertised.get("status") or
+                    int(decoder.meta["samples"]) != int(advertised["samples"])):
+                raise ValueError("Saved signal differs from advertised snapshot; calibration files retained")
+            signal_path = log_path.with_name(log_path.stem + '_signal.csv')
+            signal_meta = decoder.save(signal_path)
+            result["signal_status"] = signal_meta["status"]
+            result["signal_downloaded"] = True
+            result["signal_csv"] = signal_path.name
+            print(f"SIGNAL {signal_meta['status']}: {signal_path} (independent of HOLD)")
+    except Exception as exc:
+        result['signal_error'] = str(exc)
+        raise
+    finally:
+        # Keep the HOLD assessment even if waveform transport fails afterward.
+        saved = json.loads(json_path.read_text(encoding='utf-8'))
+        saved["assessment"].update({k: v for k, v in result.items() if k.startswith('signal_')})
+        json_path.write_text(json.dumps(saved, indent=2, allow_nan=False) + '\n', encoding='utf-8')
+    if not args.no_viewer:
+        if __package__:
+            from .loop_viewer_export import write_viewer
+        else:
+            from loop_viewer_export import write_viewer
+        write_viewer(csv_path, signal=signal_path)
+    return result
+
+
 def run(args):
+    suite = args.mode == "suite"
+    if suite and args.wave is not None:
+        raise ValueError("suite uses reference-free calibration; omit --wave")
+    if suite and not 150 <= args.acquire_phase_mrad <= 750:
+        raise ValueError("acquire-phase-mrad must be 150..750; HOLD stays at 150")
     if args.reuse_baseline and args.wave is not None:
         raise ValueError("reuse-baseline requires reference-free mode; omit --wave")
     if args.wave not in (None, 2, 3):
@@ -303,17 +420,22 @@ def run(args):
     axis = getattr(args, "axis", None)
     defaults = {"offset": "-64,-16,-4,0,4,16,64", "gain": "12,13,11,14,10,15,0",
                 "skew": "-8,-4,-2,-1,0,1,2,4,8"}
-    points = point_values(axis, args.points or defaults[axis]) if axis else []
+    points = suite_points(args) if suite else (
+        point_values(axis, args.points or defaults[axis]) if axis else [])
     tolerance = args.tolerance if args.tolerance is not None else {
         "offset": 0.5, "gain": 0.001, "skew": 10.0, None: 10.0}[axis]
     if not math.isfinite(tolerance) or tolerance <= 0:
         raise ValueError("tolerance must be positive and finite (codes, ratio, or ps)")
     config = (f"adc -cal loop test config {args.gain_gate_ppm} {args.skew_gate_milli} "
               f"{round(args.deadband_ps * 100)} {round(args.step_ps * 100)} {args.batch}")
-    print(f"mode={args.mode} uart={args.uart}; reference-free: supply shared A/B dither only.")
+    print(f"mode={args.mode} uart={args.uart}; reference-free calibration from shared A/B dither.")
     print(config)
     print(f"baseline={'reuse saved board baseline' if args.reuse_baseline else str(args.baseline_train) + '+' + str(args.baseline_hold)}; "
           f"pre/train/hold={args.pre}/{args.train}/{args.hold}; points={points}")
+    if suite:
+        print(f"PRE/TRAIN spectral phase gate: {args.acquire_phase_mrad} mrad; HOLD: 150 mrad.")
+        print(f"Order: offset -> IFC full scale -> skew ({args.skew_mode} control codes).")
+        print(f"Requested tests per repeat: {sum(map(len, points.values()))}; hardware skew range: 0..48.")
     if not args.execute:
         print("PLAN ONLY. Add --execute to connect and perform register/clock writes.")
         return 0
@@ -323,11 +445,14 @@ def run(args):
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=False)
-    records, summaries = [], []
+    records, summaries, skipped = [], [], []
     arguments = {key: value for key, value in vars(args).items() if key != "func"}
     meta = {"arguments": arguments, "tolerance": tolerance, "points": points,
             "started_utc": datetime.now(timezone.utc).isoformat(),
-            "completed": False, "units": {"offset": "calibrated output codes", "gain": "B/A - 1", "skew": "ps"}}
+            "completed": False, "restored": False,
+            "units": {"offset": "calibrated output codes", "gain": "B/A - 1", "skew": "ps"}}
+    if suite:
+        meta["tolerance"] = TOLERANCES
     try:
         with (out / "console.log").open("x", encoding="utf-8") as log:
             log.write("# arguments: " + json.dumps(arguments, sort_keys=True) + "\n")
@@ -335,12 +460,27 @@ def run(args):
                 port.reset_input_buffer()
                 console = Console(port, log, args.timeout)
                 records = console.records
+                if suite:
+                    preflight = console.require("adc -cal loop test status")
+                    routes = next((fields(line) for line in preflight
+                                   if line.startswith('LOOP-TEST-ROUTES ')), {})
+                    state = next((fields(line) for line in preflight
+                                  if line.startswith('LOOP-TEST-BASELINE ')), {})
+                    if (state.get('fault') != '0' or routes.get('reference_free') != '1' or
+                            routes.get('tone_free') != '1' or routes.get('gain') != 'dither_spectrum' or
+                            routes.get('skew') != 'dither_cross_spectrum' or
+                            routes.get('spectral_line_rejection') != '1' or
+                            routes.get('gain_freeze') != 'training_mean'):
+                        raise ValueError("suite requires the current reference-free gain-freeze ELF and no board fault; no writes sent")
+                    if args.acquire_phase_mrad != 150 and routes.get('acquisition_phase_gate') != '1':
+                        raise ValueError("Requested acquisition phase gate requires the updated ELF; no writes sent")
+                    quality_supported = routes.get('acquisition_phase_gate') == '1'
                 if args.wave is not None:  # optional compatibility with older firmware
                     console.require(f"adc -cal loop wave {args.wave}", "LOOP-WAVE")
                 if args.reuse_baseline:
                     # Read-only preflight: do not change a valid baseline's gates
                     # or clear the previous injection until status is verified.
-                    initial = console.require("adc -cal loop test status")
+                    initial = preflight if suite else console.require("adc -cal loop test status")
                     baseline = next((fields(line) for line in initial
                                      if line.startswith("LOOP-TEST-BASELINE ")), {})
                     routes = next((fields(line) for line in initial
@@ -365,10 +505,58 @@ def run(args):
                     console.require("adc -cal loop test offset A 0")
                     console.require("adc -cal loop test offset B 0")
                     console.context = {"experiment": "baseline"}
-                    initial = console.require(f"adc -cal loop test baseline {args.baseline_train} {args.baseline_hold}")
+                    baseline_command = f"adc -cal loop test baseline {args.baseline_train} {args.baseline_hold}"
+                    if suite:
+                        initial, baseline_ok = console.command(baseline_command)
+                        if __package__:
+                            from .axis_result_export import save_test_results
+                        else:
+                            from axis_result_export import save_test_results
+                        save_test_results(initial, out / 'baseline.log')
+                        if not baseline_ok:
+                            raise BenchFault("Baseline admission failed; files retained, no injections or retries sent")
+                    else:
+                        initial = console.require(baseline_command)
                     baseline = next(fields(line) for line in initial if line.startswith("LOOP-TEST-BASELINE "))
                 base_code = int(baseline["code"])
+                if baseline.get('valid') != '1' or not 0 <= base_code <= 48:
+                    raise ValueError("Baseline is not valid; no injections sent")
                 meta["baseline"] = baseline
+                baseline_ifc = None
+                if suite:
+                    snapshots = {fields(line).get('channel'): fields(line) for line in initial
+                                 if line.startswith('LOOP-TEST-SNAPSHOT ')}
+                    saved = snapshots.get('1' if args.channel == 'B' else '0', {})
+                    if 'ifc' not in saved or not 0 <= int(saved['ifc']) <= 255:
+                        raise ValueError("Missing baseline channel IFC snapshot; no injections sent")
+                    baseline_ifc = int(saved['ifc']) & 0x0F
+                    points = suite_points(args, base_code, baseline_ifc)
+                    meta['points'] = points
+                    meta['baseline_ifc'] = baseline_ifc
+                    executable = {a: list(p) for a, p in points.items()}
+                    executable['skew'] = [p for p in points['skew'] if 0 <= skew_target(args, base_code, p) <= 48]
+                    for repeat in range(args.repeats):
+                        for p in points['skew']:
+                            if not 0 <= skew_target(args, base_code, p) <= 48:
+                                skipped.append(dict(axis='skew', point=p, repeat=repeat,
+                                                    baseline_code=base_code, target_code=skew_target(args, base_code, p),
+                                                    status='SKIP', reason='outside hardware code range 0..48'))
+                    meta['skew_point_mode'] = args.skew_mode
+                    meta['executable_points'] = executable
+                    meta['skipped_points'] = skipped
+                    meta['coverage_complete'] = not skipped
+                    meta['requested_tests'] = sum(map(len, points.values())) * args.repeats
+                    meta['skipped_tests'] = len(skipped)
+                    print(f"Resolved suite points: {points}; baseline code={base_code}, IFC=0x{baseline_ifc:02X}")
+                    for skip in skipped:
+                        notice = (f"SKIP skew={skip['point']} repeat={skip['repeat']+1}: "
+                                  f"target={skip['target_code']} outside 0..48 (baseline={base_code})")
+                        print(notice)
+                        log.write(notice + '\n')
+                    if quality_supported:
+                        quality = console.require(f"adc -cal loop test quality {args.acquire_phase_mrad}")
+                        meta['board_quality'] = next(fields(line) for line in quality
+                                                     if line.startswith('LOOP-TEST-QUALITY '))
                 if axis == "skew" and any(not 0 <= base_code + p <= 48 for p in points):
                     raise ValueError(f"baseline code={base_code}; requested skew points exceed 0..48 (no clamping)")
                 if args.mode == "step":
@@ -390,45 +578,96 @@ def run(args):
                     save_test_results(lines, out / 'step.log', meta['step'])
                     console.require("adc -cal loop test restore")
                 else:
+                    experiments = ([(a, p) for a in AXIS_FIELDS for p in executable[a]] if suite else
+                                   [(axis, p) for p in points])
                     for repeat in range(args.repeats):
-                        for point in points:
+                        for point_axis, point in experiments:
+                            meta['active_point'] = dict(axis=point_axis, point=point, repeat=repeat+1)
                             console.require("adc -cal loop test restore")
-                            if axis == "skew":
-                                inject = f"park {base_code + point}"
-                            elif axis == "gain":
+                            if point_axis == "skew":
+                                target_code = skew_target(args, base_code, point)
+                                inject = f"park {target_code}"
+                            elif point_axis == "gain":
                                 inject = f"ifc {args.channel} {point}"
                             else:
                                 inject = f"offset {args.channel} {point}"
-                            console.require("adc -cal loop test " + inject)
-                            console.context = {"experiment": axis, "point": point, "repeat": repeat}
-                            lines, _ = console.command(f"adc -cal loop test run {axis} {args.pre} {args.train} {args.hold}")
-                            result = summarise_run(lines, axis, tolerance, args.hold, args.min_yield, args.window)
+                            injection_lines = console.require("adc -cal loop test " + inject)
+                            if suite and point_axis == 'skew' and target_code != base_code:
+                                transactions = [fields(line) for line in injection_lines
+                                                if line.startswith('LOOP-SKEW-TXN ')]
+                                if (not transactions or
+                                        transactions[-1].get('code_after') != str(target_code)):
+                                    raise BenchFault("Skew injection lacks the expected final ACK code; no further writes sent")
+                            console.context = {"experiment": point_axis, "point": point, "repeat": repeat}
+                            point_dir = out / point_axis if suite else out
+                            point_dir.mkdir(exist_ok=True)
+                            point_log = point_dir / f"{point_axis}_point{point}_repeat{repeat+1}.log"
+                            command = f"adc -cal loop test run {point_axis} {args.pre} {args.train} {args.hold}"
+                            try:
+                                lines, ended_ok = console.command(command)
+                            except BaseException as exc:
+                                # Keep a complete failed test export when END was received;
+                                # frames.csv also retains partial rows on timeout/interrupt.
+                                if suite and any(line.startswith('LOOP-TEST-END ') for line in console.last_lines):
+                                    failed = summarise_run(console.last_lines, point_axis, TOLERANCES[point_axis],
+                                                           args.hold, args.min_yield, args.window)
+                                    failed.update(point=point, repeat=repeat, baseline_code=base_code,
+                                                  aborted=True, stop_reason=str(exc))
+                                    summaries.append(failed)
+                                    try:
+                                        save_point(console, console.last_lines, point_log, failed, args, read_signal=False)
+                                    except (ValueError, OSError) as export_error:
+                                        log.write(f"# partial export: {export_error}\n")
+                                raise
+                            point_tolerance = TOLERANCES[point_axis] if suite else tolerance
+                            result = summarise_run(lines, point_axis, point_tolerance, args.hold, args.min_yield, args.window)
                             if args.wave in (None, 2, 3):
                                 result["requested_routes_match"] = (
                                     (result["gain_source"], result["skew_route"]) in
                                     (("dither_mag", "dither_phase"), ("dither_spectrum", "dither_cross_spectrum")))
                                 result["pass"] &= result["requested_routes_match"]
                             result.update(point=point, repeat=repeat, baseline_code=base_code)
-                            if __package__:
-                                from .axis_result_export import save_test_results
-                            else:
-                                from axis_result_export import save_test_results
-                            save_test_results(lines, out / f"{axis}_point{point}_repeat{repeat+1}.log", result)
+                            if point_axis == 'gain':
+                                result['nominal_ifc_vpp'] = IFC_FULL_SCALE_VPP[point]
+                            elif point_axis == 'skew':
+                                result['target_code'] = target_code
+                                result['relative_code_offset'] = target_code - base_code
+                                result['skew_point_mode'] = args.skew_mode if suite else 'relative'
+                            rejected_acquisition = not ended_ok and quality_rejection_only(lines)
+                            result['measurement_rejected'] = rejected_acquisition
+                            if rejected_acquisition:
+                                result['failure_reason'] = 'acquisition range/quality gate rejected the point'
+                            if suite:
+                                if point_axis == 'gain':
+                                    result['is_control'] = point == baseline_ifc
+                                elif point_axis == 'skew':
+                                    result['is_control'] = target_code == base_code
+                                else:
+                                    result['is_control'] = point == 0
                             summaries.append(result)
-                            print(f"POINT {'PASS' if result['pass'] else 'FAIL'}: {axis}={point} "
+                            save_point(console, lines, point_log, result, args)
+                            if suite and not ended_ok and not rejected_acquisition:
+                                raise BenchFault("Test ended with ERROR; records retained, no further injections or automatic restore")
+                            outcome = ('acquisition rejected; HOLD not qualified' if rejected_acquisition else
+                                       f"HOLD={result[point_axis + '_mean']:.6g}")
+                            print(f"POINT {'PASS' if result['pass'] else 'FAIL'}: {point_axis}={point} "
                                   f"repeat={repeat+1}/{args.repeats} "
-                                  f"HOLD={result[axis + '_mean']:.6g}; files saved", flush=True)
+                                  f"{outcome}; files saved", flush=True)
                             # Preserve completed points even if a later transaction fails.
                             log.write("# result: " + json.dumps(result, sort_keys=True) + "\n")
                     console.require("adc -cal loop test restore")
+                    meta['restored'] = True
+                    meta['active_point'] = None
                 meta["completed"] = True
     except BaseException as exc:
         meta["stop_reason"] = f"{type(exc).__name__}: {exc}"
         raise
     finally:
         meta["ended_utc"] = datetime.now(timezone.utc).isoformat()
+        meta['recorded_tests'] = len(summaries)
         write_csv(out / "frames.csv", records)
         write_csv(out / "summary.csv", summaries)
+        write_csv(out / "skipped.csv", skipped)
         with (out / "meta.json").open("x", encoding="utf-8") as fh:
             json.dump(meta, fh, indent=2)
         print(f"Results: {out}")
@@ -436,9 +675,21 @@ def run(args):
         print(json.dumps(meta["step"], indent=2))
         return 0 if meta["step"]["pass"] else 1
     for summary in summaries:
-        print(f"point={summary['point']} repeat={summary['repeat']} "
+        selected_axis = summary['axis']
+        print(f"axis={selected_axis} point={summary['point']} repeat={summary['repeat']} "
               f"{'PASS' if summary['pass'] else 'FAIL'} "
-              f"residual={summary[axis + '_mean']:.6g} {meta['units'][axis]}")
+              f"residual={summary[selected_axis + '_mean']:.6g} {meta['units'][selected_axis]}")
+    if suite:
+        print(f"Sweep processed: requested={meta['requested_tests']} executed={len(summaries)} "
+              f"SKIP={len(skipped)}")
+        if skipped:
+            print("See skipped.csv/meta.json for unreachable relative skew codes")
+    if suite and not args.no_viewer:
+        if __package__:
+            from .loop_viewer_export import write_viewer
+        else:
+            from loop_viewer_export import write_viewer
+        print(f"viewer: {write_viewer(out, open_browser=True)}")
     return 0 if all(s["pass"] for s in summaries) else 1
 
 
@@ -454,13 +705,19 @@ def analyse(args):
 def parser():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="mode", required=True)
-    for name in ("sweep", "step"):
+    for name in ("sweep", "step", "suite"):
         sp = sub.add_parser(name)
-        sp.add_argument("--uart", default="COM7")
-        sp.add_argument("--wave", type=int, choices=(2, 3), default=None,
-                        help="legacy firmware compatibility only; omit for reference-free calibration")
-        sp.add_argument("--out", default="calibration_out/axis_" + time.strftime("%Y%m%d_%H%M%S"))
-        sp.add_argument("--execute", action="store_true")
+        sp.add_argument("--uart", default="COM5")
+        if name != 'suite':
+            sp.add_argument("--wave", type=int, choices=(2, 3), default=None,
+                            help="legacy firmware compatibility only; omit for reference-free calibration")
+        else:
+            sp.set_defaults(wave=None)
+        sp.add_argument("--out", default="calibration_out/" +
+                        ("axis_suite_" if name == 'suite' else "axis_") + time.strftime("%Y%m%d_%H%M%S"))
+        sp.add_argument("--execute", action="store_true", help="execute serial commands; default: print plan only")
+        sp.add_argument("--no-signal", action="store_true", help="skip saved output-waveform downloads")
+        sp.add_argument("--no-viewer", action="store_true", help="skip HTML generation and browser opening")
         sp.add_argument("--reuse-baseline", action="store_true",
                         help="validate and reuse the current board baseline; do not recalibrate or rewrite config")
         sp.add_argument("--timeout", type=float, default=1800.0)
@@ -468,13 +725,17 @@ def parser():
                              ("baseline-train", 600), ("baseline-hold", 100)):
             sp.add_argument("--" + opt, type=int, choices=range(2, 2001), default=default,
                             metavar="2..2000")
-        sp.add_argument("--gain-gate-ppm", type=int, default=200000)
+        sp.add_argument("--gain-gate-ppm", type=int, default=600000 if name == 'suite' else 200000,
+                        help="acquisition gate: suite default 600000 covers all IFC ranges; HOLD limits unchanged")
         sp.add_argument("--skew-gate-milli", type=int,
-                        help="default: 500 for dither-only wave 2/3")
+                        help="default: 500 (reference-free acquisition range)")
         sp.add_argument("--deadband-ps", type=float, default=10.0)
         sp.add_argument("--step-ps", type=float, default=19.1)
         sp.add_argument("--batch", type=int, default=20)
-        sp.add_argument("--tolerance", type=float)
+        if name != 'suite':
+            sp.add_argument("--tolerance", type=float)
+        else:
+            sp.set_defaults(tolerance=None)
         sp.add_argument("--min-yield", type=float, default=0.8)
         sp.add_argument("--window", type=int, default=20)
         sp.set_defaults(func=run)
@@ -483,9 +744,21 @@ def parser():
             sp.add_argument("--channel", choices=("A", "B"), default="B")
             sp.add_argument("--points", help="comma-separated; skew relative codes, gain IFC register codes")
             sp.add_argument("--repeats", type=int, default=5)
-        else:
+        elif name == 'step':
             sp.add_argument("--code", type=int, help="base of paired step (default: converged baseline code)")
             sp.add_argument("--frames", type=int, choices=range(2, 2001), default=55, metavar="2..2000")
+        else:
+            sp.add_argument("--channel", choices=("A", "B"), default="B")
+            sp.add_argument("--acquire-phase-mrad", type=int, default=150,
+                            help="PRE/TRAIN spectral phase RMS limit, 150..750; HOLD stays 150 (updated ELF required)")
+            sp.add_argument("--axes", default="offset,gain,skew",
+                            help="comma-separated axes to run; default: offset,gain,skew")
+            sp.add_argument("--offset-points", help="ADC codes; default: 32,31,...,-32")
+            sp.add_argument("--gain-points", help="IFC codes; default: 10,11,12,13,14,15,0 (1.36..2.04 Vpp)")
+            sp.add_argument("--skew-mode", choices=('absolute', 'relative'), default='absolute',
+                            help="default: absolute hardware codes; relative adds the baseline code")
+            sp.add_argument("--skew-points", help="default: 0,1,...,32 absolute hardware codes")
+            sp.add_argument("--repeats", type=int, default=1)
     sp = sub.add_parser("analyse")
     sp.add_argument("--log", required=True)
     sp.add_argument("--axis", choices=(*AXIS_FIELDS, "step"), required=True)

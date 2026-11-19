@@ -7,7 +7,7 @@ For that experiment, restore the saved baseline code before each point instead
 of using this older guide's blanket instruction to park at code 24.
 
 Each time you come to the lab to run the on-board closed-loop calibration, work through this checklist from top to bottom. **Confirm each step is OK before moving on to the next.**
-Applies to: `firmware/thesis_v3_loop_appl` (reference-free, dither-only on-board closed loop), on the PC whose console is COM7.
+Applies to: `firmware/thesis_v3_loop_appl` (reference-free, dither-only on-board closed loop), on the PC whose console is COM5.
 
 ```
 Clocks (Holzworth HSX9002A)
@@ -77,10 +77,10 @@ Signal
 
 ---
 
-## 4. Vitis (load the firmware) + COM7 terminal
+## 4. Vitis (load the firmware) + COM5 terminal
 
 1. Open Vitis → `thesis_v3_loop_appl` → **Run**.
-2. Open a serial terminal on **COM7** (115200 baud). The boot messages **must include**:
+2. Open a serial terminal on **COM5** (115200 baud). The boot messages **must include**:
    ```
    ad9695 PLL LOCKED
    JESDPHY: RX reset complete and QPLL locked.
@@ -101,7 +101,7 @@ Signal
 
 ## 5. ADC full scale (IFC, optional)
 
-In the COM7 terminal:
+In the COM5 terminal:
 ```
 adc -gain
 IFC
@@ -145,27 +145,27 @@ Measured today (2026-11-04): when the tone is too large the estimator rejects ev
    - in the terminal: `adc -cal loop test park 24`
    - or, **after disconnecting the terminal**, in PowerShell at the repo root:
      ```powershell
-     python tools/skew/skew_park.py --uart COM7 --code 24 --verify-frames 0
+     python tools/skew/skew_park.py --uart COM5 --code 24 --verify-frames 0
      ```
-3. **Disconnect the COM7 terminal** (Disconnect in Vitis / VS Code Serial Monitor). The tool in the next step needs exclusive access to COM7.
+3. **Disconnect the COM5 terminal** (Disconnect in Vitis / VS Code Serial Monitor). The tool in the next step needs exclusive access to COM5.
 
 ---
 
 ## 7. Run the calibration
 
-All commands run in PowerShell at the repo root, with the COM7 terminal disconnected. The tool is `tools/board_loop/board_loop_log.py`; it sends one `adc -cal loop ...` command, streams every record to the PC, and saves the results.
+All commands run in PowerShell at the repo root, with the COM5 terminal disconnected. The tool is `tools/board_loop/board_loop_log.py`; it sends one `adc -cal loop ...` command, streams every record to the PC, and saves the results.
 
 ### 7.1 Standard run (300 frames, closed loop)
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/combiner_tone400mV_dither20Mhz_run300.log
+python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/combiner_tone400mV_dither20Mhz_run300.log
 ```
 
 Name the run `combiner_tone<amplitude>mV_dither<rate>Mhz_run300.log`. With no tone, use `combiner_notone_dither<rate>Mhz_run300.log`. If the run did not start at code 24, add the start code, e.g. `..._start12_run300.log`.
 
 ### 7.2 Other commands
 
-| Goal | Command (add `--uart COM7 --out calibration_out/<name>.log`) |
+| Goal | Command (add `--uart COM5 --out calibration_out/<name>.log`) |
 |---|---|
 | Standard closed loop, 300 frames | *(no extra option)*; the default is `--cmd "adc -cal loop 300"` |
 | More frames | `--cmd "adc -cal loop 600"` |
@@ -210,7 +210,7 @@ using frozen coefficients and learns/subtracts dither without a supplied
 reference. Close the serial terminal and download this saved frame:
 
 ```powershell
-python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/<name>/signal.csv
+python tools/board_loop/board_signal_output.py --uart COM5 --out calibration_out/<name>/signal.csv
 ```
 
 This only reads the saved frame. It saves `signal.csv`, `signal.json` and
@@ -242,7 +242,7 @@ At the end the console prints `RESULT qualified=... rejected=... code=...` and t
 ### 7.5 Returning the actuator automatically (`--park-after`)
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/<name>.log --park-after 24
+python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/<name>.log --park-after 24
 ```
 
 - After the run, it sends `adc -cal loop test park 24` and walks one code at a time through the ACK-checked transaction.
@@ -271,7 +271,7 @@ After a run that ended cleanly, the tool captures 2 raw ADC frames over UDP (`dm
 | `DMA capture timeout`, `RESET_REG = 0x00000081` | JESD link down, usually a clock problem | **Do not issue more skew commands.** Check with `adc -c`: `QPLL not locked` points to J202 (ch2), `PLL UNLOCKED` to P202 (ch4). Fix the clock, then Run again in Vitis |
 | `RECOVERY_REQUIRED` | Skew transaction failed | Do not retry; check the clocks first, then Run again |
 | `Invalid IFC command` | Stuck in the `adc -gain` menu | Type `quit` in the terminal |
-| `could not open port 'COM7'` | The terminal is still connected to COM7 | Disconnect the terminal |
+| `could not open port 'COM5'` | The terminal is still connected to COM5 | Disconnect the terminal |
 | `data arrived without its export header` | The previous run is still going (Ctrl+C only stops the PC side; the board keeps running) | Wait for the board to finish and show `uart-cmd$:`, then run again |
 | Every frame is `st=events` | Tone too large, or the DPG is not playing a dither-only file | Lower the DG922 amplitude; check the DPG file and the green SYNC |
 | `clipping` rejects | ADC clipping | Lower the DG922 amplitude |

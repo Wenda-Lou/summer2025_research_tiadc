@@ -1,9 +1,9 @@
 """Run dither calibration; save all frame records, plots and a compact UART log.
 
 Close the serial terminal first. One PC command calibrates and downloads:
-    python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+    python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/dither_run.log
 Download the last run without recalibrating:
-    python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop export"
+    python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop export"
 
 Each run gets its own folder: --out calibration_out/dither_run.log saves
 calibration_out/dither_run/dither_run.log, .csv, .json, .png, .svg and .html
@@ -187,7 +187,7 @@ def grab_waveform(ser, log, rx, state, code, n_frames):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--uart', default='COM7')
+    ap.add_argument('--uart', default='COM5')
     ap.add_argument('--cmd', default='adc -cal loop 300',
                     help='default: adc -cal loop 300; use adc -cal loop export to download only')
     ap.add_argument('--wave', type=int, choices=(2, 3),

@@ -10,6 +10,8 @@ network. It can also be run by hand for an existing CSV or a sweep folder:
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 from pathlib import Path
 import re
@@ -18,6 +20,36 @@ import webbrowser
 
 TEMPLATE = Path(__file__).with_name('loop_viewer.html')
 EMBEDDED = re.compile(r'(<script id="embedded" type="application/json">)(.*?)(</script>)', re.S)
+
+
+def _sweep_datasets(name, files):
+    """The viewer expects one axis per sweep; suite summaries contain all three."""
+    if 'summary.csv' not in files:
+        return [{'name': name, 'files': files}]
+    reader = csv.DictReader(io.StringIO(files['summary.csv']))
+    summary_columns = reader.fieldnames
+    summary = list(reader)
+    axes = list(dict.fromkeys(r.get('axis') for r in summary if r.get('axis')))
+    if not axes:
+        return [{'name': name, 'files': files}]
+    frame_reader = csv.DictReader(io.StringIO(files.get('frames.csv', '')))
+    frame_columns, frames = frame_reader.fieldnames, list(frame_reader)
+
+    def encoded(columns, rows):
+        stream = io.StringIO(newline='')
+        writer = csv.DictWriter(stream, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+        return stream.getvalue()
+
+    result = []
+    for axis in axes:
+        selected = {'summary.csv': encoded(summary_columns, [r for r in summary if r.get('axis') == axis])}
+        if frame_columns:
+            selected_frames = [r for r in frames if r.get('experiment', axis) == axis]
+            selected['frames.csv'] = encoded(frame_columns, selected_frames)
+        result.append({'name': f'{name} / {axis}' if len(axes) > 1 else name, 'files': selected})
+    return result
 
 
 def _datasets(source: Path):
@@ -39,7 +71,7 @@ def _datasets(source: Path):
         if (source / name).is_file():
             files[name] = (source / name).read_text(encoding='utf-8')
     if files:
-        out.append({'name': source.name, 'files': files})
+        out.extend(_sweep_datasets(source.name, files))
     for csv in sorted(source.glob('*.csv')):
         if csv.name in ('summary.csv', 'frames.csv'):
             continue

@@ -57,6 +57,8 @@ def decode_test_results(lines, assessment=None):
                 'gain_error_ppm', 'offset_error_codes', 'skew_error_ps')}}
     train = next((p for p in phases if p['phase'] == 'train'), None)
     axis = {1: 'offset', 2: 'gain', 4: 'skew'}.get(int(train['axes'])) if train else None
+    if axis is None and assessment and assessment.get('axis') in ('offset', 'gain', 'skew'):
+        axis = assessment['axis']  # acquisition may fail before TRAIN begins
     complete &= len(rows) == sum(int(s['attempts']) for s in summaries)
     if assessment is None and axis and 'hold' in budgets:
         # CLI module import is deferred so its sweep can use this exporter too.

@@ -1329,6 +1329,7 @@ void adc_cal_loop_default_options(adc_cal_loop_options_t *options)
     options->cancel_signal = 1;
     options->close_skew_loop = 1;
     options->min_align_margin = 6.0;
+    options->max_spectral_phase_rms = 0.15;
     options->max_skew_samples = 0.25;
     options->max_gain_deviation = 0.20;
     options->gain_observable = ADC_CAL_LOOP_GAIN_TONE;
@@ -1745,7 +1746,12 @@ int adc_cal_loop_init(adc_cal_loop_t *loop, const adc_cal_loop_config_t *cfg,
     } else {
         adc_cal_loop_default_options(&loop->opt);
     }
-    if (loop->opt.reference_free) loop->opt.tone_free = 1;
+    if (loop->opt.reference_free) {
+        if (!loop_isfinite(loop->opt.max_spectral_phase_rms) ||
+            loop->opt.max_spectral_phase_rms <= 0.0 ||
+            loop->opt.max_spectral_phase_rms > 0.75) return -2;
+        loop->opt.tone_free = 1;
+    }
     if (loop->opt.tone_free) {
         /* The mode explicitly chooses observables; no tone cancellation,
          * tone-quality gate or fallback is meaningful without a carrier. */
@@ -1813,7 +1819,11 @@ static adc_cal_loop_reject_t reject_reason(const adc_cal_loop_t *loop,
         return ADC_CAL_LOOP_REJECT_TONE;
     }
     if (loop->opt.tone_free) {
-        if (!loop_isfinite(est->dither_margin) || est->dither_margin < loop->opt.min_align_margin)
+        /* Reference-free spectral quality is gated by its explicit phase RMS
+         * limit in blind_estimate. Keep the independent de-framing margin
+         * above; do not impose a second implicit phase limit of 1/6 rad. */
+        if (!loop_isfinite(est->dither_margin) ||
+            (!loop->opt.reference_free && est->dither_margin < loop->opt.min_align_margin))
             return ADC_CAL_LOOP_REJECT_ALIGN_MARGIN;
         if (!loop_isfinite(est->skew_used_ps) || !loop_isfinite(est->mag_a) || est->mag_a <= 1e-9)
             return ADC_CAL_LOOP_REJECT_A_NOT_FINITE;

@@ -1,5 +1,17 @@
 # calibration_loop_c
 
+2026-11-18: `adc_cal_loop_options_t.max_spectral_phase_rms` makes the reference-
+free spectral phase gate explicit (default 0.15 rad, maximum 0.75). Ordinary
+runs retain 0.15. The board manual test's `quality PHASE_MRAD` command permits
+150--750 for PRE/TRAIN only; baseline, independent HOLD and output remain at
+0.15. The de-framing margin stays independent at 6.0; there is no second
+implicit spectral phase limit via its reciprocal. The host records the
+experimental setting and rejects an unsupported requested relaxation before
+writes. A subsequent board run passed the five skew starts 16,20,24,28,32
+using strict independent HOLD, one repeat each. See
+`docs/bench/COMBINER_REJECTION_DIAGNOSIS.md` for results and validation limits;
+this is not full-range or independent timing-metrology validation.
+
 2026-11-17: a separate **output-only** learned dither canceller now follows a
 completed board closed run. It takes a fresh frame with the final frozen gain/
 offset coefficients and physical skew state. Calibration itself is unchanged.
@@ -37,7 +49,7 @@ After rebuilding/downloading the firmware and running `adc -cal loop N`,
 Download the saved signal (no new capture) with:
 
 ```powershell
-python tools/board_loop/board_signal_output.py --uart COM7 --out calibration_out/signal.csv
+python tools/board_loop/board_signal_output.py --uart COM5 --out calibration_out/signal.csv
 ```
 
 This uses `adc -cal loop output` over UART and writes CSV/JSON plus a self-contained

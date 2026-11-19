@@ -1,7 +1,27 @@
 # Offset / gain / skew 单项校准极限测试
 
+最新自动入口（2026-11-18，用户明确要求三项参数自动修改）：
+
+```powershell
+python tools/board_loop/board_axis_test.py suite --uart COM5 --execute
+```
+
+一次有效基准后，自动 restore、注入和测试 offset/gain/skew，再恢复基准。
+默认 B offset +32→−32（步长 −1）、IFC 1.36→2.04 Vpp 全七档、相对基准
+skew 绝对硬件码 0→32（步长 +1，共 33 档），每档一遍；默认一轮共 105 档，
+PRE/TRAIN/HOLD=40/300/100；`--reuse-baseline` 复用有效基准，`--repeats 5` 重复。
+不带 `--execute` 仅打印计划。每点保存曲线、最终波形和 HOLD 评分，汇总查看器
+自动打开；故障停止、数据保留、没有 HOLD 调参。详细选项见
+[RF_COMBINER_MANUAL_TEST.md](../docs/bench/RF_COMBINER_MANUAL_TEST.md) 顶部。
+
 本次 main tone 与 dither 经 RF combiner 合路、手动注入 mismatch 的完整步骤：
 [RF_COMBINER_MANUAL_TEST.md](../docs/bench/RF_COMBINER_MANUAL_TEST.md)。
+
+2026-11-18 合路全拒帧修正已加入：估计器从 ADC 频谱屏蔽主导窄带峰及其
+泄漏区域，再用宽带余量校准；无参考、无 tone fit 反馈，HOLD 门限保持原值。
+下载新 ELF 后 `test status` 路由应有 `spectral_line_rejection=1`，然后按本页
+步骤重建基准。证据与验证范围见
+[合路拒帧排查](../docs/bench/COMBINER_REJECTION_DIAGNOSIS.md)。
 
 ## 2026-11-18 当前手动测试入口：PRE → TRAIN → HOLD + 最终波形
 
@@ -20,7 +40,7 @@ adc -cal loop test offset B 32
 关闭串口终端，在仓库根目录运行与之前相同的三阶段命令：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/manual_offset32.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/manual_offset32.log
 ```
 
 PRE 的 40 次尝试全部冻结；TRAIN 的 300 次只更新 offset；HOLD 的 100 次
@@ -117,10 +137,10 @@ adc -cal loop 300
 Gain/offset 是软件数字校正系数，skew 使用 ACK 检查的硬件延迟事务。
 
 **校准并自动保存到电脑：** 下载最新 ELF、正常上电并加载匹配 DPG 波形后，
-关闭占用串口的终端，在仓库根目录执行下面一条电脑指令（COM7 按实际修改）：
+关闭占用串口的终端，在仓库根目录执行下面一条电脑指令（COM5 按实际修改）：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --out calibration_out/dither_run.log
+python tools/board_loop/board_loop_log.py --uart COM5 --out calibration_out/dither_run.log
 ```
 
 脚本用一条 `adc -cal loop 300 stream` 完成校准和全程传输，全部逐帧校准
@@ -132,7 +152,7 @@ CSV 使用 ADC codes、ps、乘法增益系数；图和 JSON 标明反馈仍开�
 已经校准过、只想下载结果时，电脑指令是：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop export" --out calibration_out/dither_saved.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop export" --out calibration_out/dither_saved.log
 ```
 
 这不会重新采集或校准，也不写 ADC/延迟寄存器。只读保存的上一次普通 loop
@@ -228,7 +248,7 @@ HOLD 100/100、offset −1.623 codes、gain +0.1768%、skew −1.88 ps。
 手动注入后关闭串口终端，可运行下列指令保存本次单项测试并自动作图：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/offset_p16_r1.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test run offset 40 300 100" --out calibration_out/offset_p16_r1.log
 ```
 
 它只执行本次单项测试，不重建或覆盖已有基准。文件包含全部 PRE/TRAIN/HOLD
@@ -423,7 +443,7 @@ N -> N+1 -> N -> N+1 -> N
 4. 首次使用执行器：`adc -cal skew step 0`。应看到 `result=OK`。
    首次会进行 neutral 初始化；后续 `step 0` 不会自动回到 neutral。
 5. 选择波形：`adc -cal loop wave 3`。关闭占用串口的其他终端再运行 Python。
-6. 确定实际 COM 端口。以下 `COM7` 只是示例，不能假定每台电脑相同。
+6. 确定实际 COM 端口。以下 `COM5` 只是示例，不能假定每台电脑相同。
 
 Skew 写入必须走固件事务：读回、JESD 重同步、warm-up 和新 DMA 帧检查。
 本工具不直接写 `0x0110/0x0112/0x0114`。遇到失败 ACK 或反方向响应，
@@ -572,16 +592,16 @@ step 的五个状态都使用大帧数时，需要相应提高这个超时。
 
 ```powershell
 # Offset：注入量为软件原生 ADC codes
-python tools/board_loop/board_axis_test.py sweep --axis offset --uart COM7 --wave 3 --points=-64,-16,-4,0,4,16,64 --repeats 5 --out calibration_out/limits_offset_01
+python tools/board_loop/board_axis_test.py sweep --axis offset --uart COM5 --wave 3 --points=-64,-16,-4,0,4,16,64 --repeats 5 --out calibration_out/limits_offset_01
 
 # Gain：这里填的是 IFC 寄存器码，不是百分比
-python tools/board_loop/board_axis_test.py sweep --axis gain --uart COM7 --wave 3 --points=12,13,11,14,10,15,0 --gain-gate-ppm 300000 --repeats 5 --out calibration_out/limits_gain_01
+python tools/board_loop/board_axis_test.py sweep --axis gain --uart COM5 --wave 3 --points=12,13,11,14,10,15,0 --gain-gate-ppm 300000 --repeats 5 --out calibration_out/limits_gain_01
 
 # Skew：相对于本次收敛基准的控制码偏移
-python tools/board_loop/board_axis_test.py sweep --axis skew --uart COM7 --wave 3 --points=-8,-4,-2,-1,0,1,2,4,8 --repeats 5 --out calibration_out/limits_skew_01
+python tools/board_loop/board_axis_test.py sweep --axis skew --uart COM5 --wave 3 --points=-8,-4,-2,-1,0,1,2,4,8 --repeats 5 --out calibration_out/limits_skew_01
 
 # 配对步长：默认在本次收敛基准码 N 测 N/N+1；也可指定 --code N
-python tools/board_loop/board_axis_test.py step --uart COM7 --wave 3 --frames 55 --out calibration_out/limits_step_01
+python tools/board_loop/board_axis_test.py step --uart COM5 --wave 3 --frames 55 --out calibration_out/limits_step_01
 ```
 
 确认硬件和波形就绪后，在所需命令末尾加 `--execute`。
@@ -625,7 +645,7 @@ HOLD 至少要有 80% 合格帧，且 `abs(mean) + 1.96*SE <= tolerance`。
 也可以只记录一次手动运行并离线分析：
 
 ```powershell
-python tools/board_loop/board_loop_log.py --uart COM7 --cmd "adc -cal loop test run skew 40 300 100" --out calibration_out/skew_single_01.log
+python tools/board_loop/board_loop_log.py --uart COM5 --cmd "adc -cal loop test run skew 40 300 100" --out calibration_out/skew_single_01.log
 python tools/board_loop/board_axis_test.py analyse --log calibration_out/skew_single_01.log --axis skew --hold 100 --tolerance 10
 ```
 
