@@ -381,10 +381,10 @@ static void loop_test_status(void)
     xil_printf("\r\n");
     xil_printf("LOOP-TEST-QUALITY acquisition_phase_mrad=%ld hold_phase_mrad=150\r\n",
                g_loop_test_acquire_phase_mrad);
-    xil_printf("LOOP-TEST-ROUTES gain=%s skew=%s tone_free=%u reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1\r\n",
+    xil_printf("LOOP-TEST-ROUTES gain=%s skew=%s tone_free=%u reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1 output_revision=%u\r\n",
                "dither_spectrum",
                "dither_cross_spectrum",
-               1U);
+               1U, (unsigned)ADC_CAL_LOOP_OUTPUT_REVISION);
     if (g_loop_test_snapshot_valid) {
         for (unsigned c = 0U; c < 2U; ++c) {
             xil_printf("LOOP-TEST-SNAPSHOT channel=%u ifc=%u dc1=%u dc2=%u\r\n", c,

@@ -48,6 +48,13 @@ class FakePort:
 
 
 class AxisTests(unittest.TestCase):
+    def test_latched_board_fault_explains_restart_without_recovery_writes(self):
+        port = FakePort('LOOP-TEST-BASELINE valid=0 snapshot=1 code=-1 fault=1\r\n'
+                        'LOOP-TEST-END result=OK\r\n')
+        with self.assertRaisesRegex(BenchFault, 'fault is latched.*reload the ELF'):
+            Console(port, io.StringIO(), .1).command('adc -cal loop test status')
+        self.assertEqual(port.writes, [b'adc -cal loop test status\r'])
+
     def test_reference_free_routes(self):
         lines = [line + " used_gain_ppm=0 gsrc=dither_spectrum skew_route=dither_cross_spectrum"
                  if line.startswith("LOOP-TEST-ROW") else line for line in run_lines()]

@@ -1,5 +1,48 @@
 # AGENTS.md
 
+2026-11-19 fresh board confirmation: dither_cancel_verify_v2_20261119_124959
+completed 600/600 frames with code 13, no rejects or skew abort. Separate
+frozen output reports output_revision=2, status=cancelled, reason=validated,
+period=65, events=15, core=4, support=31, validation A/B=22.468/22.274 dB.
+Signal JSON confirms dither_cancelled=true and source=frozen_board_signal_snapshot.
+This validates output cancellation on this fresh board frame, not independent
+tone metrology or three-axis precision: the 600-frame run has active feedback
+and no independent HOLD. An earlier run dither_cancel_verify_v2 correctly
+reported no-tone/tone-dominance; preserve that failed-admission record too.
+
+2026-11-19 output revision 2 supersedes the initial half-period support fix.
+The fresh dither_cancel_verify snapshot had a 4-sample strong core and 33-sample
+ringing region at period 65, so the integer half-period cap still rejected it.
+Now core sparsity (<= period/3) and learned ringing support (<= 3*period/4) are
+separate gates, retaining a quarter-period of quiet data and all independent-
+event checks. Both 30- and 33-sample recorded cases are regression fixtures;
+the fresh case passes offline replay at 25.86/26.51 dB reduction. Board status,
+output and signal headers report output_revision=2 and output reason/core/
+support diagnostics. New firmware built; loading/rerunning is still required
+for on-board validation. Original non-cancelled captures remain unchanged.
+
+2026-11-19 direction-guard follow-up: a baseline run stopped at code 20 when
+two batch means changed 67.113 -> 67.223 ps after a negative step. Their SEs
+were 2.493 and 1.963 ps, so the +0.110 ps change did not identify direction.
+The C guard now also requires the opposite-signed change to exceed three times
+the combined batch SE before latching. The existing expected-step discrepancy
+test and unconditional failed-ACK stop remain; unavailable SE retains the old
+fail-closed rule. Tests retain the one-move stop on a clearly reversed bench.
+The board test fault still requires a real firmware restart/bring-up to clear;
+no host retry or automatic recovery writes are introduced. Updated ELF built,
+3400 native checks passed; no new bench validation of this guard yet.
+
+2026-11-19 output follow-up: support learned pulse/ringing regions up to half
+the inferred spacing (previously one third), while retaining opposite-event
+validation, the quiet-region check, and all calibration/HOLD isolation. The
+five saved final-skew snapshots now pass offline production-C replay with
+23.1--26.9 dB pulse-region energy reduction. This is archived-frame replay,
+not new on-board validation. `calibration_sim/fixtures/output_wide_impulse.csv`
+is the regression fixture; `adc_signal_replay INPUT.csv OUTPUT.csv RATE_HZ`
+exports separate CSV/JSON with source=offline_production_c_replay. No reference,
+tone or waveform parameters enter calibration feedback. Original captures and
+HOLD scores remain unchanged; unsupported data still pass through explicitly.
+
 2026-11-18 skew-sweep follow-up: manual `loop test quality PHASE_MRAD` and suite
 `--acquire-phase-mrad` permit an explicit 150--750 mrad spectral phase RMS gate
 for PRE/TRAIN only. Default is 150; baseline, HOLD and output stay at 150.

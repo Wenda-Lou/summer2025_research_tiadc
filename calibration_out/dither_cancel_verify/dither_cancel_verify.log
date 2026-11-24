@@ -1,0 +1,35 @@
+# cmd: adc -cal loop 300 stream
+# port: COM5
+# start: 2026-11-19 11:16:16
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+0 result=OK code_after=12 stage=-
+LOOP-START mode=closed samples=300 waveform=reference_free_dither code=12 gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 reject_clipping=1 export=1 stream=1 run_id=1
+LOOP-PROGRESS accepted=20/300 window=20 code=12 gain_ppm=1354 offset_mc=-611 skew_cps=73
+LOOP-PROGRESS accepted=40/300 window=20 code=12 gain_ppm=-134 offset_mc=-149 skew_cps=184
+LOOP-PROGRESS accepted=60/300 window=20 code=12 gain_ppm=310 offset_mc=-42 skew_cps=215
+LOOP-PROGRESS accepted=80/300 window=20 code=12 gain_ppm=-108 offset_mc=47 skew_cps=-48
+LOOP-PROGRESS accepted=100/300 window=20 code=12 gain_ppm=659 offset_mc=-106 skew_cps=156
+LOOP-PROGRESS accepted=120/300 window=20 code=12 gain_ppm=-755 offset_mc=2 skew_cps=344
+LOOP-PROGRESS accepted=140/300 window=20 code=12 gain_ppm=471 offset_mc=90 skew_cps=-19
+LOOP-PROGRESS accepted=160/300 window=20 code=12 gain_ppm=271 offset_mc=-2 skew_cps=-23
+LOOP-PROGRESS accepted=180/300 window=20 code=12 gain_ppm=-691 offset_mc=-34 skew_cps=349
+LOOP-PROGRESS accepted=200/300 window=20 code=12 gain_ppm=-175 offset_mc=18 skew_cps=191
+LOOP-PROGRESS accepted=220/300 window=20 code=12 gain_ppm=277 offset_mc=13 skew_cps=155
+LOOP-PROGRESS accepted=240/300 window=20 code=12 gain_ppm=72 offset_mc=87 skew_cps=266
+LOOP-PROGRESS accepted=260/300 window=20 code=12 gain_ppm=633 offset_mc=-6 skew_cps=219
+LOOP-PROGRESS accepted=280/300 window=20 code=12 gain_ppm=-819 offset_mc=-17 skew_cps=341
+LOOP-PROGRESS accepted=300/300 window=20 code=12 gain_ppm=435 offset_mc=-138 skew_cps=-87
+LOOP-OUTPUT status=ambiguous samples=1020 reference_free=1 coefficients=frozen method=learned_pulses tone_hz=199374238 period_samples=0 events=0 validation_a_mdb=0 validation_b_mdb=0
+LOOP-RESULT window=20 feedback=active gain_ppm=435 gain_sd_ppm=4973 offset_mc=-138 offset_sd_mc=598 skew_cps=-87 skew_sd_cps=648
+LOOP-END qualified=300/300 captures=300 rejected=0 code=12 skew_abort=0 elapsed_ms=31293 compute_ms_avg=1
+LOOP-STATUS mode=closed waveform=reference_free_dither qualified=300 captures=300 rejected=0 polarity=1 code=12 skew_abort=0 iteration=300 corr_a_ppm=6197 corr_b_ppm=-4981 offa_mc=2964 offb_mc=-2977
+# signal: calibration_out\dither_cancel_verify\dither_cancel_verify_signal.csv cancellation=ambiguous

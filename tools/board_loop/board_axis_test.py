@@ -216,6 +216,7 @@ class Console:
         self.serial.flush()
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         fault_seen = False
+        latched_fault = False
         dma_fault = None
         while time.monotonic() < deadline:
             self.pending += self.serial.read(self.serial.in_waiting or 1).decode(errors="replace")
@@ -233,6 +234,8 @@ class Console:
                     self.log.write(line + "\n")
                     self.log.flush()
                 lines.append(line)
+                if line.startswith('LOOP-TEST-BASELINE ') and fields(line).get('fault') == '1':
+                    latched_fault = True
                 if ("RECOVERY_REQUIRED" in line or "act=abort:direction" in line or
                         "act=move:FAILED" in line or "st=clipping" in line or
                         "fault=1" in line or
@@ -259,6 +262,9 @@ class Console:
                         raise BenchFault(f"DMA capture timed out during this test: {dma_fault}; "
                                          "command ended, partial data retained; no retry or automatic restore.")
                     if fault_seen:
+                        if latched_fault:
+                            raise BenchFault("Board test fault is latched (fault=1); reload the ELF in Vitis, "
+                                             "repeat bring-up and confirm fault=0. No recovery writes sent.")
                         raise BenchFault("Bench fault/clipping; data retained, no retry or automatic restore.")
                     return lines, not ("result=ERROR" in line)
         reason = f" after {dma_fault}" if dma_fault else ""

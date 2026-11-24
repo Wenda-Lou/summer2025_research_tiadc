@@ -352,6 +352,46 @@ static void test_batch_decision(sim_assert_context_t *ctx, FILE *summary, double
     SIM_ASSERT_EQ_INT(ctx, g_loop.act.code, bench.code);
 }
 
+static void test_direction_guard_batch_uncertainty(sim_assert_context_t *ctx)
+{
+    /* Reproduce the board's +0.11 ps apparent reversal with a 2.49 ps batch
+     * SE. Also require a clearly reversed response to latch before any move. */
+    for (int test = 0; test < 3; ++test) {
+        adc_cal_loop_config_t cfg;
+        adc_cal_loop_options_t opt;
+        adc_cal_loop_actuator_t act;
+        lt_bench_t bench;
+        static uint8_t buf[2 * LT_WORDS];
+        adc_cal_loop_default_config(&cfg); adc_cal_loop_default_options(&opt);
+        adc_cal_loop_default_actuator(&act);
+        lt_bench_init(&bench, &cfg, 91U);
+        bench.noise = 0.0; bench.skew_b_ps = 45.0;
+        opt.skew_batch_frames = 5; opt.close_skew_loop = 0;
+        act.ctx = &bench; act.request_steps = lt_request_steps;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, &act), 0);
+        adc_cal_loop_row_t row;
+        for (int i = 0; i < 5; ++i) {
+            const long bytes = lt_capture(&bench, buf, sizeof(buf));
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)bytes, &row), 0);
+        }
+        SIM_ASSERT_TRUE(ctx, lt_isfinite(row.skew_batch_error_ps));
+        const double apparent_move = test == 1 ? 15.0 : 0.11;
+        g_loop.skew_have_prev = 1;
+        g_loop.skew_prev_error = row.skew_batch_error_ps - apparent_move;
+        g_loop.skew_prev_se_ps = test == 0 ? 2.49 : (test == 1 ? 0.2 : NAN);
+        g_loop.skew_expected_shift = -act.step_ps;
+        g_loop.opt.close_skew_loop = 1;
+        for (int i = 0; i < 5; ++i) {
+            const long bytes = lt_capture(&bench, buf, sizeof(buf));
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, buf, (size_t)bytes, &row), 0);
+        }
+        SIM_ASSERT_EQ_INT(ctx, g_loop.skew_abort, test != 0);
+        SIM_ASSERT_EQ_INT(ctx, bench.moves, test == 0 ? 1 : 0);
+        SIM_ASSERT_EQ_INT(ctx, row.skew_action, test == 0 ? ADC_CAL_LOOP_SKEW_ACTION_MOVE_OK :
+                                                       ADC_CAL_LOOP_SKEW_ACTION_ABORT_DIRECTION);
+    }
+}
+
 static void test_single_axis_experiments(sim_assert_context_t *ctx)
 {
     adc_cal_loop_config_t cfg;
@@ -1041,11 +1081,14 @@ static void test_learned_dither_output(sim_assert_context_t *ctx, FILE *summary)
     }
     /* A clean sinusoid is passed through; noise, multiple tones and irregular
      * pulses must never be returned as a successful dither cancellation. */
-    for (int kind = 0; kind < 4; ++kind) {
+    for (int kind = 0; kind < 5; ++kind) {
         for (int i = 0; i < 2048; ++i) {
             a[i] = b[i] = kind == 1 ? lt_gauss(&noise) : 800*sin(2*LT_PI*0.173251*i);
             if (kind == 2) a[i] = b[i] = a[i] + 300*sin(2*LT_PI*0.27131*i);
             if (kind == 3 && i%137 < 4) a[i] = b[i] = a[i] + ((i/137)%3+1)*100.0;
+            /* A broad strong core exceeds the sparse-impulse limit even
+             * when the carrier is clear and the ringing allowance is wider. */
+            if (kind == 4 && i%65 < 22) a[i] = b[i] = a[i] + (i/65%2 ? -600.0 : 600.0);
         }
         SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_cancel_dither(&g_loop, a, b, 2048), 0);
         SIM_ASSERT_TRUE(ctx, g_loop.output.status != ADC_CAL_LOOP_OUTPUT_CANCELLED);
@@ -1120,6 +1163,62 @@ static void test_learned_dither_output(sim_assert_context_t *ctx, FILE *summary)
     SIM_ASSERT_TRUE(ctx, memcmp(a, g_loop.output_a, sizeof(a)) == 0);
 }
 
+static void test_recorded_wide_dither_output(sim_assert_context_t *ctx, FILE *summary)
+{
+    /* Separate frozen frames from the real board, never HOLD tuning data.
+     * Their 30/65 and 33/65 ringing supports exceeded the old fixed caps;
+     * opposite-event validation supports cancelling both learned tails. */
+    static double a[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES], b[ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES];
+    const char *paths[2] = {ADC_CAL_TEST_OUTPUT_SNAPSHOT_PATH, ADC_CAL_TEST_RINGING_SNAPSHOT_PATH};
+    for (unsigned test = 0U; test < 2U; ++test) {
+        FILE *input = fopen(paths[test], "r");
+        SIM_ASSERT_TRUE(ctx, input != NULL);
+        if (!input) return;
+        char row[512]; unsigned count = 0U, index; double time;
+        if (!fgets(row, sizeof(row), input)) { fclose(input); return; }
+        while (fgets(row, sizeof(row), input) && count < ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES)
+            if (sscanf(row, "%u,%lf,%lf,%lf", &index, &time, &a[count], &b[count]) == 4) count++;
+        fclose(input);
+        SIM_ASSERT_EQ_INT(ctx, count, 1020U);
+        adc_cal_loop_config_t cfg = {0}; cfg.fs_dac = 1.3e9; cfg.adc_ratio = 1;
+        adc_cal_loop_options_t opt; adc_cal_loop_default_options(&opt); opt.reference_free = 1;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &cfg, &opt, NULL, NULL), 0);
+        const adc_cal_loop_state_t frozen = g_loop.state;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_cancel_dither(&g_loop, a, b, count), 0);
+        SIM_ASSERT_EQ_INT(ctx, g_loop.output.status, ADC_CAL_LOOP_OUTPUT_CANCELLED);
+        SIM_ASSERT_EQ_INT(ctx, g_loop.output.period_samples, 65U);
+        SIM_ASSERT_EQ_INT(ctx, g_loop.output.events, 15U);
+        SIM_ASSERT_TRUE(ctx, strcmp(g_loop.output.reason, "validated") == 0);
+        SIM_ASSERT_TRUE(ctx, g_loop.output.pulse_core_samples <= g_loop.output.period_samples/3U);
+        SIM_ASSERT_EQ_INT(ctx, g_loop.output.pulse_support_samples, test == 0U ? 30U : 33U);
+        SIM_ASSERT_TRUE(ctx, g_loop.output.validation_db_a > 20.0);
+        SIM_ASSERT_TRUE(ctx, g_loop.output.validation_db_b > 20.0);
+        SIM_ASSERT_TRUE(ctx, memcmp(&frozen, &g_loop.state, sizeof(frozen)) == 0);
+        unsigned untouched = 0U; double max_subtracted = 0.0;
+        for (unsigned i = 0U; i < count; ++i) {
+            if (a[i] == g_loop.output_a[i] && b[i] == g_loop.output_b[i]) untouched++;
+            max_subtracted = fmax(max_subtracted, fabs(a[i]-g_loop.output_a[i]));
+        }
+        SIM_ASSERT_TRUE(ctx, untouched >= count*(test == 0U ? 2U : 1U)/4U);
+        SIM_ASSERT_TRUE(ctx, max_subtracted > 250.0);
+        const double *out[2] = {g_loop.output_a, g_loop.output_b};
+        const double *in[2] = {a, b};
+        for (int ch = 0; ch < 2; ++ch) {
+            adc_cal_loop_tone_fit_t before, after;
+            const double freq = g_loop.output.tone_hz / 1.3e9;
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_fit_tone(in[ch], count, freq, 0, &before), 0);
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_fit_tone(out[ch], count, freq, 0, &after), 0);
+            SIM_ASSERT_TRUE(ctx, after.sse < before.sse / 80.0);
+            SIM_ASSERT_TRUE(ctx, sqrt(after.sse/count) < 8.0);
+            SIM_ASSERT_NEAR(ctx, after.amplitude, ch == 0 ? 298.5 : 300.2, 1.0);
+        }
+        fprintf(summary, "recorded wide pulse output: status=%s period=%u events=%u cv_db=%g/%g untouched=%u/%u\n",
+                adc_cal_loop_output_status_name(g_loop.output.status), g_loop.output.period_samples,
+                g_loop.output.events, g_loop.output.validation_db_a, g_loop.output.validation_db_b,
+                untouched, count);
+    }
+}
+
 void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
 {
     fprintf(summary, "\n== calibration_loop_c native tests ==\n");
@@ -1129,6 +1228,7 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_closed_loop_model(ctx, summary);
     test_batch_decision(ctx, summary, +1.0);
     test_batch_decision(ctx, summary, -1.0);
+    test_direction_guard_batch_uncertainty(ctx);
     test_reject_streak(ctx);
     test_single_axis_experiments(ctx);
     test_dither_only(ctx, summary);
@@ -1139,6 +1239,7 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_blind_combiner_closed_loop(ctx, summary);
     test_blind_closed_loop(ctx, summary);
     test_learned_dither_output(ctx, summary);
+    test_recorded_wide_dither_output(ctx, summary);
     sim_board_axis_tests_run(ctx, summary);
 }
 

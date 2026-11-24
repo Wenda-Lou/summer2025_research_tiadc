@@ -1,0 +1,10 @@
+{
+  "source": "calibration_out/axis_suite_20261118_180755/skew/skew_point32_repeat1_signal.csv",
+  "source_commit": "18f7f5c031b7f62dc6d0be97adf5f34901419e07",
+  "kind": "separate frozen post-HOLD corrected board snapshot",
+  "sample_rate_hz": 1300000000,
+  "samples": 1020,
+  "original_status": "ambiguous",
+  "original_rejection": "learned support 30 samples exceeds period/3 for period 65",
+  "scope": "output-only replay; no supplied pulse template, polarity, period or tone frequency"
+}

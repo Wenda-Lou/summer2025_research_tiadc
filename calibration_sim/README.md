@@ -1,5 +1,21 @@
 # ADC Calibration Desktop Simulation
 
+For an archived corrected A/B signal snapshot, the `adc_signal_replay` target
+calls the exact production output canceller without running calibration:
+
+```powershell
+./build-dither/adc_signal_replay.exe fixtures/output_wide_impulse.csv output/replayed.csv 1300000000
+python ../tools/board_loop/loop_viewer_export.py output/replayed.csv --open
+```
+
+Build with the usual CMake command; create the destination folder first. The
+tool creates CSV/JSON exclusively, preserves the input, and marks the sidecar
+`source=offline_production_c_replay`. Exit 0 means cancellation validated, 1
+means an explicitly non-cancelled pass-through, and 2 means invalid input or an
+I/O error. The sample rate is the only supplied signal parameter. The archived
+wide-impulse fixture covers a real 30/65-sample ringing support; native tests
+check independent-event validation, preserved main tone and frozen state.
+
 `calibration_sim` is a desktop C test harness for the ADC calibration code.
 It compiles the production calibration modules on a PC and drives them with
 synthetic or recorded captures. It runs on Linux or WSL and needs no FPGA, Vitis,

@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "samples": 1020,
+  "status": "ambiguous",
+  "sample_rate_hz": "1300000000",
+  "coefficients": "frozen",
+  "dither_cancelled": false,
+  "source": "frozen_board_signal_snapshot"
+}

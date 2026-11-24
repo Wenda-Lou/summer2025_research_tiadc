@@ -1,0 +1,50 @@
+# cmd: adc -cal loop 600 stream
+# port: COM5
+# start: 2026-11-19 12:49:59
+
+JESD204C IP Reset Starting...
+Initial RESET_REG = 0x00000000
+After assert RESET_REG = 0x000000A1
+After release RESET_REG = 0x00000000
+JESD204C IP Reset Finished.
+Resetting DMA...
+DMA status after reset: 0x00000001
+Starting DMA capture of 4095 bytes...
+DMA capture complete.
+LOOP-SKEW-TXN steps=+0 result=OK code_after=13 stage=-
+LOOP-START mode=closed samples=600 waveform=reference_free_dither code=13 gain=dither_spectrum skew=dither_cross_spectrum tone_free=1 reference_free=1 reject_clipping=1 export=1 stream=1 run_id=2
+LOOP-PROGRESS accepted=20/600 window=20 code=13 gain_ppm=1534 offset_mc=-872 skew_cps=636
+LOOP-PROGRESS accepted=40/600 window=20 code=13 gain_ppm=-66 offset_mc=-18 skew_cps=598
+LOOP-PROGRESS accepted=60/600 window=20 code=13 gain_ppm=-171 offset_mc=84 skew_cps=653
+LOOP-PROGRESS accepted=80/600 window=20 code=13 gain_ppm=12 offset_mc=-103 skew_cps=566
+LOOP-PROGRESS accepted=100/600 window=20 code=13 gain_ppm=-62 offset_mc=73 skew_cps=844
+LOOP-PROGRESS accepted=120/600 window=20 code=13 gain_ppm=-505 offset_mc=83 skew_cps=915
+LOOP-PROGRESS accepted=140/600 window=20 code=13 gain_ppm=420 offset_mc=-32 skew_cps=592
+LOOP-PROGRESS accepted=160/600 window=20 code=13 gain_ppm=767 offset_mc=-11 skew_cps=825
+LOOP-PROGRESS accepted=180/600 window=20 code=13 gain_ppm=-757 offset_mc=-19 skew_cps=947
+LOOP-PROGRESS accepted=200/600 window=20 code=13 gain_ppm=1012 offset_mc=-47 skew_cps=570
+LOOP-PROGRESS accepted=220/600 window=20 code=13 gain_ppm=-81 offset_mc=-17 skew_cps=612
+LOOP-PROGRESS accepted=240/600 window=20 code=13 gain_ppm=-445 offset_mc=149 skew_cps=845
+LOOP-PROGRESS accepted=260/600 window=20 code=13 gain_ppm=-26 offset_mc=-110 skew_cps=887
+LOOP-PROGRESS accepted=280/600 window=20 code=13 gain_ppm=381 offset_mc=35 skew_cps=674
+LOOP-PROGRESS accepted=300/600 window=20 code=13 gain_ppm=-386 offset_mc=-124 skew_cps=533
+LOOP-PROGRESS accepted=320/600 window=20 code=13 gain_ppm=-54 offset_mc=115 skew_cps=701
+LOOP-PROGRESS accepted=340/600 window=20 code=13 gain_ppm=231 offset_mc=7 skew_cps=493
+LOOP-PROGRESS accepted=360/600 window=20 code=13 gain_ppm=-417 offset_mc=-10 skew_cps=672
+LOOP-PROGRESS accepted=380/600 window=20 code=13 gain_ppm=-309 offset_mc=14 skew_cps=699
+LOOP-PROGRESS accepted=400/600 window=20 code=13 gain_ppm=327 offset_mc=-33 skew_cps=794
+LOOP-PROGRESS accepted=420/600 window=20 code=13 gain_ppm=428 offset_mc=-3 skew_cps=822
+LOOP-PROGRESS accepted=440/600 window=20 code=13 gain_ppm=-410 offset_mc=-38 skew_cps=707
+LOOP-PROGRESS accepted=460/600 window=20 code=13 gain_ppm=745 offset_mc=35 skew_cps=702
+LOOP-PROGRESS accepted=480/600 window=20 code=13 gain_ppm=-740 offset_mc=0 skew_cps=665
+LOOP-PROGRESS accepted=500/600 window=20 code=13 gain_ppm=1071 offset_mc=16 skew_cps=813
+LOOP-PROGRESS accepted=520/600 window=20 code=13 gain_ppm=-633 offset_mc=-25 skew_cps=887
+LOOP-PROGRESS accepted=540/600 window=20 code=13 gain_ppm=-271 offset_mc=-23 skew_cps=596
+LOOP-PROGRESS accepted=560/600 window=20 code=13 gain_ppm=137 offset_mc=133 skew_cps=511
+LOOP-PROGRESS accepted=580/600 window=20 code=13 gain_ppm=126 offset_mc=-118 skew_cps=832
+LOOP-PROGRESS accepted=600/600 window=20 code=13 gain_ppm=771 offset_mc=-114 skew_cps=723
+LOOP-OUTPUT status=cancelled samples=1020 reference_free=1 coefficients=frozen method=learned_pulses tone_hz=199374549 period_samples=65 events=15 output_revision=2 reason=validated core_samples=4 support_samples=31 validation_a_mdb=22468 validation_b_mdb=22274
+LOOP-RESULT window=20 feedback=active gain_ppm=771 gain_sd_ppm=5308 offset_mc=-114 offset_sd_mc=667 skew_cps=723 skew_sd_cps=551
+LOOP-END qualified=600/600 captures=600 rejected=0 code=13 skew_abort=0 elapsed_ms=62318 compute_ms_avg=1
+LOOP-STATUS mode=closed waveform=reference_free_dither qualified=600 captures=600 rejected=0 polarity=1 code=13 skew_abort=0 iteration=600 corr_a_ppm=8967 corr_b_ppm=-6325 offa_mc=3402 offb_mc=-3398
+# signal: calibration_out\dither_cancel_verify_v2_20261119_124959\dither_cancel_verify_v2_20261119_124959_signal.csv cancellation=cancelled

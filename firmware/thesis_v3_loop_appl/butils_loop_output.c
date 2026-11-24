@@ -8,6 +8,9 @@ static void board_loop_output_status(void)
                adc_cal_loop_output_status_name(o->status), (unsigned)o->n_samples);
     board_loop_put("tone_hz", o->tone_hz, 1.0);
     xil_printf(" period_samples=%u events=%u", o->period_samples, o->events);
+    xil_printf(" output_revision=%u reason=%s core_samples=%u support_samples=%u",
+               (unsigned)ADC_CAL_LOOP_OUTPUT_REVISION, o->reason ? o->reason : "unspecified",
+               o->pulse_core_samples, o->pulse_support_samples);
     board_loop_put("validation_a_mdb", o->validation_db_a, 1000.0);
     board_loop_put("validation_b_mdb", o->validation_db_b, 1000.0);
     xil_printf("\r\n");
@@ -20,8 +23,10 @@ static void board_loop_output_export(void)
         xil_printf("LOOP-SIGNAL-END result=ERROR reason=no-output\r\n");
         return;
     }
-    xil_printf("LOOP-SIGNAL-BEGIN version=1 samples=%u status=%s sample_rate_hz=1300000000 coefficients=frozen\r\n",
-               (unsigned)o->n_samples, adc_cal_loop_output_status_name(o->status));
+    xil_printf("LOOP-SIGNAL-BEGIN version=1 samples=%u status=%s sample_rate_hz=1300000000 coefficients=frozen output_revision=%u reason=%s core_samples=%u support_samples=%u\r\n",
+               (unsigned)o->n_samples, adc_cal_loop_output_status_name(o->status),
+               (unsigned)ADC_CAL_LOOP_OUTPUT_REVISION, o->reason ? o->reason : "unspecified",
+               o->pulse_core_samples, o->pulse_support_samples);
     for (size_t i = 0; i < o->n_samples; ++i) {
         xil_printf("LOOP-SIGNAL-DATA %u,%ld,%ld\r\n", (unsigned)i,
                    (long)lround(g_board_loop.output_a[i]*1000.0),

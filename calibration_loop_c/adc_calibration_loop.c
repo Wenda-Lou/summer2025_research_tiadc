@@ -1680,8 +1680,15 @@ static void skew_decision(adc_cal_loop_t *loop, const adc_cal_loop_block_estimat
 
     if (loop->skew_have_prev && loop->skew_expected_shift != 0.0) {
         const double moved = error - loop->skew_prev_error;
+        /* A tiny opposite-signed difference is not evidence of reversed
+         * actuation. Compare the two independent batch means at 3 standard
+         * errors before latching a direction fault. Missing uncertainty keeps
+         * the previous fail-closed rule; ACK failures remain unconditional. */
+        const double uncertainty = loop_isfinite(batch.se_ps) && batch.se_ps >= 0.0 &&
+            loop_isfinite(loop->skew_prev_se_ps) && loop->skew_prev_se_ps >= 0.0 ?
+            3.0 * hypot(batch.se_ps, loop->skew_prev_se_ps) : 0.0;
         if (fabs(moved - loop->skew_expected_shift) > loop->opt.skew_direction_tol_ps &&
-            sign_of(moved) != sign_of(loop->skew_expected_shift)) {
+            sign_of(moved) != sign_of(loop->skew_expected_shift) && fabs(moved) > uncertainty) {
             loop->skew_abort = 1;
             row->skew_action = ADC_CAL_LOOP_SKEW_ACTION_ABORT_DIRECTION;
             return;
@@ -1715,6 +1722,7 @@ static void skew_decision(adc_cal_loop_t *loop, const adc_cal_loop_block_estimat
     loop->act.code = ack.code_after;
     loop->skew_have_prev = 1;
     loop->skew_prev_error = error;
+    loop->skew_prev_se_ps = batch.se_ps;
     loop->skew_expected_shift = (double)steps * loop->act.step_ps;
 }
 

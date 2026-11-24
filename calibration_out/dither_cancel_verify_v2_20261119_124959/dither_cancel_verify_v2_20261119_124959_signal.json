@@ -1,0 +1,13 @@
+{
+  "version": "1",
+  "samples": 1020,
+  "status": "cancelled",
+  "sample_rate_hz": "1300000000",
+  "coefficients": "frozen",
+  "output_revision": "2",
+  "reason": "validated",
+  "core_samples": "4",
+  "support_samples": "31",
+  "dither_cancelled": true,
+  "source": "frozen_board_signal_snapshot"
+}

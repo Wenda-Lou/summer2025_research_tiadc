@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "source": "firmware_export_v2",
+  "metadata": {
+    "run_id": "1",
+    "mode": "closed",
+    "waveform": "reference_free_dither",
+    "requested": "600",
+    "qualified": "600",
+    "captures": "600",
+    "rejected": "0",
+    "code": "13",
+    "skew_abort": "0",
+    "elapsed_ms": "63138",
+    "compute_ms_avg": "2",
+    "gsrc": "dither_spectrum",
+    "skew_route": "dither_cross_spectrum",
+    "reference_free": "1",
+    "feedback": "active",
+    "corr_a_ppm": "4999",
+    "corr_b_ppm": "-3268",
+    "offa_mc": "2560",
+    "offb_mc": "-2556",
+    "polarity": "1",
+    "deadband_cps": "1000",
+    "step_cps": "1910",
+    "mu_offset_ppm": "350000",
+    "mu_gain_ppm": "350000"
+  },
+  "waveform": "reference_free_dither",
+  "gain_source": "dither_spectrum",
+  "skew_route": "dither_cross_spectrum",
+  "requested": 600,
+  "qualified": 600,
+  "captures": 600,
+  "rejected": 0,
+  "skew_abort": 0,
+  "run_completed": true,
+  "run_healthy": true,
+  "finite_accepted_rows": 600,
+  "exported_rows": 600,
+  "total_rows": 600,
+  "dropped_rows": 0,
+  "history_complete": true,
+  "capture_failures_without_measurement": 0,
+  "actuator": {
+    "code": 13,
+    "deadband_ps": 10.0,
+    "step_ps": 19.1
+  },
+  "actuator_code": 13,
+  "correction": {
+    "equation": "(raw - offset_codes) * gain_corr",
+    "gain_corr_a": 1.004999,
+    "gain_corr_b": 0.996732,
+    "offset_a_codes": 2.56,
+    "offset_b_codes": -2.556
+  },
+  "tail": {
+    "window": 20,
+    "feedback": "active",
+    "gain_error_ppm": {
+      "n": 20,
+      "mean": -131.6,
+      "sd": 4326.3605757702335
+    },
+    "offset_error_codes": {
+      "n": 20,
+      "mean": -0.01585000000000001,
+      "sd": 0.9901929251147821
+    },
+    "skew_error_ps": {
+      "n": 20,
+      "mean": 7.416,
+      "sd": 3.8720719327811537
+    }
+  },
+  "precision_validation": "training_residuals_only",
+  "plots": {
+    "png": "calibration_out\\dither_cancel_verify_v2\\dither_cancel_verify_v2.png",
+    "svg": "calibration_out\\dither_cancel_verify_v2\\dither_cancel_verify_v2.svg"
+  }
+}

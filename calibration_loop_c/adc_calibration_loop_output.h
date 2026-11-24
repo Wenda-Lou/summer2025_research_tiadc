@@ -98,11 +98,12 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
                                size_t count)
 {
     int nfft = 1, peak_bin = 0, peaks[ADC_CAL_LOOP_MAX_EVENTS], np = 0;
-    int period = 0, phase = 0, events = 0, group_n[2] = {0, 0};
+    int period = 0, phase = 0, events = 0, core_width = 0, group_n[2] = {0, 0};
     double total = 0.0, peak = 0.0, freq, sigma[2], before[2] = {0}, after[2] = {0};
     double *ar, *ai, *mask, *scratch, *res[2], *profile[2][2];
     if (!loop) return -1;
     memset(&loop->output, 0, sizeof(loop->output));
+    loop->output.reason = "invalid-input";
     if (!a || !b || count < 512 || count > ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES) return -1;
     const int n = (int)count;
     for (int i = 0; i < n; ++i)
@@ -111,6 +112,7 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
     memmove(loop->output_b, b, count*sizeof(double));
     loop->output.n_samples = count;
     loop->output.status = ADC_CAL_LOOP_OUTPUT_NO_TONE;
+    loop->output.reason = "tone-dominance";
     while (2*nfft <= n) nfft *= 2;
     ar = loop->score; ai = ar + nfft;
     mask = loop->score + 2*ADC_CAL_LOOP_MAX_CHANNEL_SAMPLES;
@@ -130,26 +132,31 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
     if (!(peak > 0.15*total) || peak_bin == 0) return 0;
     freq = (double)peak_bin / nfft;
     res[0] = loop->work_y; res[1] = loop->work_r;
+    loop->output.reason = "tone-fit";
     if (output_fit(a, n, &freq, 1, mask, scratch, res[0], &sigma[0]) != 0 ||
         output_fit(b, n, &freq, 0, mask, scratch, res[1], &sigma[1]) != 0) return 0;
     loop->output.tone_hz = freq * adc_cal_loop_fs_adc(&loop->cfg);
     loop->output.status = ADC_CAL_LOOP_OUTPUT_NO_DITHER;
+    loop->output.reason = "no-pulse";
     peak = 0.0;
     for (int i = 0; i < n; ++i) peak = fmax(peak, fabs(res[0][i]));
     const double threshold = fmax(8.0*sigma[0], 0.10*peak);
     /* Discover pulse events from contiguous outliers after robust tone fitting. */
     for (int i = 0; i < n; ++i) {
         if (fabs(res[0][i]) <= threshold) continue;
-        int at = i;
+        int at = i, first = i;
         while (i + 1 < n && fabs(res[0][i+1]) > threshold) {
             i++;
             if (fabs(res[0][i]) > fabs(res[0][at])) at = i;
         }
         if (np >= ADC_CAL_LOOP_MAX_EVENTS) return 0;
         peaks[np++] = at;
+        if (i-first+1 > core_width) core_width = i-first+1;
     }
     if (np == 0) return 0;
     loop->output.status = ADC_CAL_LOOP_OUTPUT_AMBIGUOUS;
+    loop->output.reason = "too-few-pulses";
+    loop->output.pulse_core_samples = (unsigned)core_width;
     if (np < 6) return 0;
     for (int i = 1; i < np; ++i) scratch[i-1] = peaks[i] - peaks[i-1];
     const int spacing = (int)lround(output_median(scratch, np-1));
@@ -167,8 +174,14 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
             if (error < best) { best = error; period = p; phase = ph; }
         }
     }
+    loop->output.reason = "pulse-spacing";
     if (!period || best > np || abs((peaks[np-1]-peaks[0]) - (np-1)*period) > 2)
         return 0;
+    loop->output.period_samples = (unsigned)period;
+    /* Sparsity describes the strong outlier core. Weaker analog ringing may
+     * occupy more of the period, and must be learned/validated separately. */
+    loop->output.reason = "broad-core";
+    if (core_width > period/3) return 0;
     /* Four learned profiles: A/B, even/odd events. Every output event uses the
      * opposite group, so its own ADC noise is never fitted out of that event. */
     for (int ch = 0; ch < 2; ++ch)
@@ -187,6 +200,8 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
         }
         group_n[g]++; events++;
     }
+    loop->output.events = (unsigned)events;
+    loop->output.reason = "too-few-independent-events";
     if (group_n[0] < 3 || group_n[1] < 3) return 0;
     for (int ch = 0; ch < 2; ++ch)
         for (int g = 0; g < 2; ++g)
@@ -201,7 +216,12 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
     }
     if (left > 0) left--;
     if (right < period-1) right++;
-    if (right-left+1 > period/3 || left == 0 || right == period-1) return 0;
+    loop->output.pulse_support_samples = (unsigned)(right-left+1);
+    loop->output.reason = "ringing-support";
+    /* Keep at least a quarter-period outside the learned ringing support.
+     * The strong core is independently constrained above, and all tail
+     * samples must pass the opposite-event and quiet-region checks below. */
+    if (right-left+1 > 3*period/4 || left == 0 || right == period-1) return 0;
     int event = 0;
     for (int base = start; base + period <= n; base += period, ++event) {
         const int g = 1 - event%2;
@@ -215,7 +235,9 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
         }
     }
     for (int ch = 0; ch < 2; ++ch) {
+        loop->output.reason = "independent-event-improvement";
         if (!(before[ch] > 4.0*after[ch])) return 0;
+        loop->output.reason = "independent-event-residual";
         if (after[ch] > 9.0*sigma[ch]*sigma[ch]*events*(right-left+1)) return 0;
         double outside = 0.0; int used = 0;
         for (int i = 0; i < n; ++i) {
@@ -225,6 +247,7 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
         }
         /* Multiple carriers, broad pulses, or irregular excitation are not
          * silently relabelled dither. The non-pulse region must fit the tone. */
+        loop->output.reason = "non-pulse-residual";
         if (outside > 4.0*sigma[ch]*sigma[ch]*used) return 0;
     }
     double *out[2] = {loop->output_a, loop->output_b};
@@ -245,6 +268,7 @@ int adc_cal_loop_cancel_dither(adc_cal_loop_t *loop, const double *a, const doub
     loop->output.validation_db_a = 10.0*log10(before[0]/fmax(after[0], 1e-30));
     loop->output.validation_db_b = 10.0*log10(before[1]/fmax(after[1], 1e-30));
     loop->output.status = ADC_CAL_LOOP_OUTPUT_CANCELLED;
+    loop->output.reason = "validated";
     return 0;
 }
 

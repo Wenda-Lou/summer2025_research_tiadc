@@ -1,5 +1,18 @@
 # calibration_loop_c
 
+2026-11-19 output revision 2 separates the sparse strong core (at most one
+third of the inferred spacing) from weaker ringing support (at most three
+quarters). A quiet quarter-period and independent-event checks remain
+mandatory. The earlier half-period fix accepted archived 30/65-sample tails
+but rejected a fresh 33/65-sample tail. Both cases now pass production-C replay;
+the fresh case has a four-sample core and 25.86/26.51 dB validation reduction.
+Board output/status/export report output_revision=2 plus reason/core/support
+diagnostics. A subsequent fresh 600-frame board run
+`dither_cancel_verify_v2_20261119_124959` reports cancelled/validated at
+22.468/22.274 dB, with its frozen signal JSON confirming cancellation. This
+validates one board output frame, not full-range or independent tone metrology.
+There are no calibration or HOLD feedback changes from the output canceller.
+
 2026-11-18: `adc_cal_loop_options_t.max_spectral_phase_rms` makes the reference-
 free spectral phase gate explicit (default 0.15 rad, maximum 0.75). Ordinary
 runs retain 0.15. The board manual test's `quality PHASE_MRAD` command permits

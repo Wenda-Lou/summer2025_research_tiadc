@@ -1,5 +1,104 @@
 # Combined tone/dither rejection diagnosis
 
+## Fresh board cancellation confirmed, 2026-11-19
+
+The final run `dither_cancel_verify_v2_20261119_124959` completed 600/600
+captures, zero rejects, code 13 and skew_abort=0. Its separate frozen output
+reports revision 2, `status=cancelled reason=validated`, 65-sample spacing,
+15 events, four-sample core and 31-sample support. Independent-event pulse
+energy reductions are 22.468 dB on A and 22.274 dB on B. The signal sidecar
+confirms `dither_cancelled=true`, source `frozen_board_signal_snapshot`.
+This is fresh on-board output validation, rather than offline reprocessing.
+It does not provide independent tone metrology or an independent HOLD score:
+the calibration tail is explicitly feedback=active/training_residuals_only.
+
+The immediately preceding `dither_cancel_verify_v2` run also completed 600/600,
+but output was `no-tone reason=tone-dominance`; it is retained as failed
+admission. Use the final timestamped run's page when reviewing cancelled data.
+
+## Fresh-output ringing boundary, revision 2
+
+The new `dither_cancel_verify` closed run completed 300/300 frames at code 12
+with no rejection or abort, but output remained `ambiguous`. Replaying its own
+saved signal (rather than the earlier skew snapshot) reproduced the failure:
+sixteen candidates spaced by 65 samples, with core width four and learned
+support width 33. The initial half-period patch allowed only floor(65/2)=32.
+It had not covered this new frame's weak tail extent.
+
+Revision 2 separates strong-core sparsity from weaker ringing extent. The
+outlier core must remain <= period/3; the learned, independently validated
+support can extend to 3*period/4, leaving at least a quarter-period of quiet
+samples. Event-spacing, group counts, independent improvement/residual checks
+and non-pulse residual checks all remain mandatory. Persistent wide cores and
+unsupported data still pass through without a cancellation claim.
+
+The fresh recorded frame is now a second fixture,
+`calibration_sim/fixtures/output_ringing_boundary.csv`. It passes offline
+production-C replay at 25.86/26.51 dB pulse-region reduction. A separate tone
+check using the untouched samples finds amplitude changes 0.085%/0.006% and
+phase changes 0.025/-0.017 degrees; residual RMS drops from about 66 codes to
+5.05/4.89 codes. These are output-only diagnostics, never calibration feedback.
+
+The board's test status, LOOP-OUTPUT and LOOP-SIGNAL-BEGIN now advertise
+`output_revision=2`. Output/signal rows include `reason`, `core_samples` and
+`support_samples`, including on non-cancelled frames. Host sidecars preserve
+these diagnostics. Load the new ELF and check the revision before a fresh
+verification run; existing snapshots and HOLD results are not rewritten.
+
+## Baseline direction fault, 2026-11-19
+
+`axis_suite_20261119_104908` accepted all 100 attempted baseline TRAIN frames,
+then latched `abort:direction` at attempt 99, code 20. Subsequent suite attempts
+105237 and 105257 saw `fault=1` in their first status command and sent no test
+writes. This was neither a CLI argument error nor a clipping/DMA failure.
+
+The code 21 batch mean was 67.113 ps (SE 2.493); the next code 20 batch mean
+was 67.223 ps (SE 1.963). The old check saw a positive 0.110 ps change versus
+the expected negative 19.1 ps and latched, despite the combined SE of 3.173 ps.
+The direction guard now requires an opposite-signed change exceeding three
+combined SEs, in addition to the existing expected-step discrepancy test.
+Unknown uncertainty keeps the previous fail-closed check; failed actuator ACKs
+still stop unconditionally. Regression cases cover the noisy near-zero shift,
+a clearly reversed shift, unknown uncertainty and the existing lying-bench
+one-move stop. This guards against noise-triggered direction claims; it is not
+evidence that the physical code 21->20 step has the nominal size or even a
+measurable response. Calibration/HOLD precision gates remain unchanged.
+
+The host's latched-fault error now explicitly requests an ELF reload, bring-up
+and confirmation of `fault=0`. A fault cannot be cleared by rerunning Python,
+changing acquisition thresholds or issuing test restore. Restart the firmware
+with the rebuilt ELF; inspect clocks, initialize via `adc -cal skew step 0`,
+then read `adc -cal loop test status` before starting another suite.
+
+## Output cancellation follow-up, 2026-11-19
+
+Replaying the exact production output stage on the final skew32 corrected
+snapshot reproduced `ambiguous`: sixteen pulse candidates have spacing 65
+samples and zero spacing-fit error; fifteen complete events form groups of
+eight and seven. The learned support is 30 samples wide, exceeding the old
+`period/3` cap (21). No subtraction was performed on the board's saved frame.
+
+The output-only cap now permits `period/2`, retaining at least half a period
+outside the subtraction region. Opposite-event validation, minimum event
+counts, phase/spacing checks and the quiet-region criterion remain unchanged.
+No calibration estimator, correction coefficient or HOLD score is modified.
+
+All five final skew snapshots pass offline production-C replay. Their A/B
+pulse-region validation reductions are 25.56/26.93, 23.80/23.80, 25.68/26.25,
+24.26/24.10, and 23.13/23.31 dB for starts 16,20,24,28,32. For skew32, the
+full-frame residual RMS about the main-tone fit drops from approximately
+65 codes to 6.23/5.91 codes. An output-only tone diagnostic (before fit on
+unchanged samples, after fit on the complete output) finds amplitude changes
+below 0.12% and phase changes below 0.044 degrees across all five snapshots.
+These diagnostics are not calibration feedback or independent tone metrology.
+
+The archived 1020-sample skew32 frame is retained as
+`calibration_sim/fixtures/output_wide_impulse.csv`, with provenance in its JSON.
+The CMake target `adc_signal_replay` writes new cancelled CSV/JSON; regenerated
+pages explicitly use these new files. Original non-cancelled records are
+retained. New firmware is built, but fresh on-board output still needs loading
+that ELF and completing a new run; reading an old snapshot does not reprocess it.
+
 ## Final single-axis results, 2026-11-18
 
 The three-axis tests show substantial error correction, with full precision

@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "source": "single_axis_test",
+  "axis": null,
+  "metadata": {
+    "mode": "single_axis",
+    "feedback_by_phase": {
+      "baseline_train": "selected axes",
+      "baseline_hold": "frozen"
+    }
+  },
+  "requested": 700,
+  "qualified": 700,
+  "budget_unit": "attempts",
+  "captures": 700,
+  "rejected": 0,
+  "exported_rows": 700,
+  "total_rows": 700,
+  "history_complete": true,
+  "dropped_rows": 0,
+  "run_completed": true,
+  "run_healthy": true,
+  "actuator_code": 12,
+  "phase_statistics": {
+    "baseline_train": {
+      "attempts": 600,
+      "budget": 600,
+      "accepted": 600,
+      "gain_error_ppm": {
+        "n": 600,
+        "mean": 60.913333333333334,
+        "sd": 4337.4459695062715
+      },
+      "offset_error_codes": {
+        "n": 600,
+        "mean": -0.027155,
+        "sd": 0.866687278688263
+      },
+      "skew_error_ps": {
+        "n": 600,
+        "mean": 24.889166666666668,
+        "sd": 37.0180330729931
+      }
+    },
+    "baseline_hold": {
+      "attempts": 100,
+      "budget": 100,
+      "accepted": 100,
+      "gain_error_ppm": {
+        "n": 100,
+        "mean": 84.23,
+        "sd": 3776.7360068924036
+      },
+      "offset_error_codes": {
+        "n": 100,
+        "mean": -0.059269999999999996,
+        "sd": 0.8388695839574164
+      },
+      "skew_error_ps": {
+        "n": 100,
+        "mean": -0.05209999999999997,
+        "sd": 4.127190522142224
+      }
+    }
+  },
+  "assessment": null,
+  "correction": {
+    "gain_corr_a": 1.0061,
+    "gain_corr_b": 0.995555,
+    "offset_a_codes": 2.853,
+    "offset_b_codes": -2.847
+  },
+  "tail": {
+    "window": 20,
+    "feedback": "frozen",
+    "gain_error_ppm": {
+      "n": 20,
+      "mean": 530.0,
+      "sd": 3615.572124778274
+    },
+    "offset_error_codes": {
+      "n": 20,
+      "mean": 0.6879000000000001,
+      "sd": 0.6975835660184
+    },
+    "skew_error_ps": {
+      "n": 20,
+      "mean": -1.4244999999999999,
+      "sd": 4.281896376484065
+    }
+  },
+  "precision_validation": "independent_holdout",
+  "plots": {
+    "png": "calibration_out\\axis_suite_20261119_110354\\baseline.png",
+    "svg": "calibration_out\\axis_suite_20261119_110354\\baseline.svg"
+  }
+}
