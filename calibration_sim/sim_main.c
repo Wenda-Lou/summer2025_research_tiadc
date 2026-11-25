@@ -20,6 +20,8 @@ static void print_help(const char *program)
     printf("  --run-controller-tests\n");
     printf("  --run-loop-tests          calibration_loop_c native tests\n");
     printf("  --run-joint               joint three-axis matrix only; writes joint_trace.csv\n");
+    printf("  --joint-dither LSB        joint run with this DAC dither peak (ungraded sweep)\n");
+    printf("  --joint-noise CODES       joint run with this ADC noise RMS (ungraded sweep)\n");
     printf("  --loop-golden FILE        replay a calibration_loop_c/export_golden.py file\n");
     printf("  --run-all\n");
     printf("  --stress-seeds N\n");
@@ -36,6 +38,7 @@ int main(int argc, char **argv)
     memset(&options, 0, sizeof(options));
     options.output_dir = SIM_OUTPUT_DIR_DEFAULT;
     options.seed = 1U;
+    options.joint_noise = -1.0; /* unset: graded default noise */
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--help") == 0) {
@@ -67,6 +70,21 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--run-loop-tests") == 0) {
             options.run_loop_tests = true;
         } else if (strcmp(argv[i], "--run-joint") == 0) {
+            options.run_joint_test = true;
+        } else if (strcmp(argv[i], "--joint-dither") == 0 || strcmp(argv[i], "--joint-noise") == 0) {
+            const bool dither = strcmp(argv[i], "--joint-dither") == 0;
+            char *endptr = NULL;
+            double parsed;
+            if (i + 1 >= argc) {
+                fprintf(stderr, "%s requires a value\n", argv[i]);
+                return 2;
+            }
+            parsed = strtod(argv[++i], &endptr);
+            if (endptr == argv[i] || *endptr != '\0' || !(parsed >= 0.0) || (dither && parsed <= 0.0)) {
+                fprintf(stderr, "Invalid value: %s\n", argv[i]);
+                return 2;
+            }
+            if (dither) options.joint_dither_scale = parsed; else options.joint_noise = parsed;
             options.run_joint_test = true;
         } else if (strcmp(argv[i], "--loop-golden") == 0) {
             if (i + 1 >= argc) {

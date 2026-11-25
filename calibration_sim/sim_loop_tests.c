@@ -1016,7 +1016,11 @@ static void lt_joint_trace(FILE *trace, unsigned corner, const char *phase, int 
             loop->state.gain_corr_a, loop->state.gain_corr_b);
 }
 
-static void test_joint_three_axis(sim_assert_context_t *ctx, FILE *summary, FILE *trace)
+/* DITHER_SCALE is the dither peak in DAC LSB (ADC peak = x0.25 in this bench
+ * model), NOISE the per-sample ADC noise RMS in codes. GRADE=0 is the dither
+ * power sweep: record everything in TRACE, assert nothing about precision. */
+static void test_joint_three_axis(sim_assert_context_t *ctx, FILE *summary, FILE *trace,
+                                  double dither_scale, double noise, int grade)
 {
     enum { TRAIN = 600, HOLD = 100, FREEZE = 100, WINDOW = 20 };
     const double tol[3] = {0.5, 0.001, 10.0}; /* offset codes, gain ratio, skew ps */
@@ -1051,12 +1055,13 @@ static void test_joint_three_axis(sim_assert_context_t *ctx, FILE *summary, FILE
         adc_cal_loop_default_config(&physical);
         physical.amp_dbfs = -6.0;
         physical.dither_edge_dac = physical.dither_top_dac = 4;
-        physical.dither_scale_lsb = 2400.0;
-        physical.dither_period_dac = 260;
-        physical.n_events = physical.n_dac_points / 260;
+        physical.dither_scale_lsb = dither_scale;
+        /* Bench vector *_p130: 130 DAC = 65 ADC samples, 128 events. */
+        physical.dither_period_dac = 130;
+        physical.n_events = physical.n_dac_points / 130;
         for (int k = 0; k < physical.n_events; ++k) physical.polarity[k] = k % 3 ? -1 : 1;
         lt_bench_init(&bench, &physical, 7000U + corner);
-        bench.noise = 1.0;
+        bench.noise = noise;
         bench.invert_b = (int)(corner & 1U);
         bench.offset_a = 14.0;
         bench.offset_b = 14.0 + (centre ? 0.0 : offsets[io]);
@@ -1105,7 +1110,7 @@ static void test_joint_three_axis(sim_assert_context_t *ctx, FILE *summary, FILE
             }
             converge[a] = last_bad + 1;
         }
-        SIM_ASSERT_TRUE(ctx, freeze_n >= 20U);
+        if (grade) SIM_ASSERT_TRUE(ctx, freeze_n >= 20U);
         if (freeze_n >= 20U) {
             const double common = 0.5 * (log(g_loop.state.gain_corr_a) + log(g_loop.state.gain_corr_b));
             const double mean_log = freeze_log_gain / freeze_n;
@@ -1133,28 +1138,31 @@ static void test_joint_three_axis(sim_assert_context_t *ctx, FILE *summary, FILE
             SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, frozen.gain_corr_b, 0.0);
             SIM_ASSERT_EQ_INT(ctx, bench.moves, moves);
         }
-        SIM_ASSERT_TRUE(ctx, hold_n * 5U >= HOLD * 4U);
         if (hold_n > 0U) {
             hold_offset /= hold_n; hold_gain /= hold_n; hold_skew /= hold_n;
         }
-        /* Independent HOLD estimates and truth must both be inside the suite
-         * tolerances; skew truth is bounded by the 10 ps deadband. */
-        SIM_ASSERT_NEAR(ctx, hold_offset, 0.0, tol[0]);
-        SIM_ASSERT_NEAR(ctx, hold_gain, 0.0, tol[1]);
-        SIM_ASSERT_NEAR(ctx, hold_skew, 0.0, tol[2]);
-        SIM_ASSERT_NEAR(ctx, lt_true_offset(&bench, &g_loop.state), 0.0, tol[0]);
-        SIM_ASSERT_NEAR(ctx, lt_true_gain(&bench, &g_loop.state), 0.0, tol[1]);
-        SIM_ASSERT_NEAR(ctx, lt_true_skew(&bench), 0.0, tol[2]);
-        SIM_ASSERT_TRUE(ctx, !g_loop.skew_abort);
+        if (grade) {
+            /* Independent HOLD estimates and truth must both be inside the suite
+             * tolerances; skew truth is bounded by the 10 ps deadband. */
+            SIM_ASSERT_TRUE(ctx, hold_n * 5U >= HOLD * 4U);
+            SIM_ASSERT_NEAR(ctx, hold_offset, 0.0, tol[0]);
+            SIM_ASSERT_NEAR(ctx, hold_gain, 0.0, tol[1]);
+            SIM_ASSERT_NEAR(ctx, hold_skew, 0.0, tol[2]);
+            SIM_ASSERT_NEAR(ctx, lt_true_offset(&bench, &g_loop.state), 0.0, tol[0]);
+            SIM_ASSERT_NEAR(ctx, lt_true_gain(&bench, &g_loop.state), 0.0, tol[1]);
+            SIM_ASSERT_NEAR(ctx, lt_true_skew(&bench), 0.0, tol[2]);
+            SIM_ASSERT_TRUE(ctx, !g_loop.skew_abort);
+        }
         for (int a = 0; a < 3; ++a) {
             /* Must settle before the freeze tail starts averaging. */
-            SIM_ASSERT_TRUE(ctx, converge[a] <= TRAIN - FREEZE);
+            if (grade) SIM_ASSERT_TRUE(ctx, converge[a] <= TRAIN - FREEZE);
             if (converge[a] > worst[a]) worst[a] = converge[a];
         }
-        fprintf(summary, "joint offset=%+g gain_b=%.4f skew=%+g inverted=%d accepted=%u/%d "
+        fprintf(summary, "joint dither_dac=%g noise=%g abort=%d offset=%+g gain_b=%.4f skew=%+g inverted=%d accepted=%u/%d "
                 "moves=%d converge_frames offset=%d gain=%d skew=%d freeze_n=%u "
                 "lms_end_gain_ppm=%.0f hold offset=%.3f gain_ppm=%.0f skew_ps=%.2f "
                 "truth offset=%.3f gain_ppm=%.0f skew_ps=%.2f\n",
+                dither_scale, noise, (int)g_loop.skew_abort,
                 bench.offset_b - bench.offset_a, bench.gain_b, bench.skew_b_ps, bench.invert_b,
                 accepted, TRAIN, bench.moves, converge[0], converge[1], converge[2], freeze_n,
                 lms_gain * 1e6, hold_offset, hold_gain * 1e6, hold_skew,
@@ -1432,7 +1440,7 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_blind_tone_without_dither(ctx);
     test_blind_dither_observable_with_main(ctx);
     test_blind_combiner_closed_loop(ctx, summary);
-    test_joint_three_axis(ctx, summary, NULL);
+    test_joint_three_axis(ctx, summary, NULL, 2400.0, 1.0, 1);
     test_blind_closed_loop(ctx, summary);
     test_learned_dither_output(ctx, summary);
     test_recorded_wide_dither_output(ctx, summary);
@@ -1757,7 +1765,11 @@ void sim_loop_tests_run_golden(sim_assert_context_t *ctx, FILE *summary, const c
     fclose(fp);
 }
 
-void sim_loop_tests_run_joint(sim_assert_context_t *ctx, FILE *summary, FILE *trace)
+void sim_loop_tests_run_joint(sim_assert_context_t *ctx, FILE *summary, FILE *trace,
+                              double dither_scale, double noise)
 {
-    test_joint_three_axis(ctx, summary, trace);
+    /* Defaults are the graded regression; any override is a measurement sweep. */
+    const int grade = dither_scale <= 0.0 && noise < 0.0;
+    test_joint_three_axis(ctx, summary, trace, dither_scale > 0.0 ? dither_scale : 2400.0,
+                          noise >= 0.0 ? noise : 1.0, grade);
 }

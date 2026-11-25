@@ -4,6 +4,26 @@ Full pre-compaction AGENTS.md, kept verbatim: dated status notes, bench
 measurements and the long architecture rationale. The current, short agent
 guide is the root AGENTS.md. Add new dated notes here, not there.
 
+2026-11-25 dither-power ladder, start. The bench vector is
+`dither_only/*_amp32767_dither_only_p130.txt` (65-sample spacing, 128 events),
+not 260-spacing wave 3; `waveforms/dither_power/*_p130.txt` scale it exactly
+(32767..1024, -6 dB steps). An earlier 260-spacing ladder was replaced after
+one baseline at it (axis_suite_20261125_161338/161858) rejected 600/600
+`phase-spread`. One DMA capture timeout (RECOVERY_REQUIRED at warmup, 162654)
+required an ELF reload. Two baselines right after that reload failed:
+163018 (HOLD gain SD x4 vs full scale, 21 % phase-spread, freeze 27 samples,
+yield 79/100, gain -3677 ppm) and 163426 (SD x2, offset -0.581 code, gain
+-2889 ppm). In both, TRAIN tail residuals were ~0 and HOLD walked away
+monotonically (163426 offset -0.01 -> -0.39 -> -0.77, gain +109 -> -2675 ->
+-3103 ppm); TRAIN-tail correction drift was 2-3x the successful 160344
+(gain -841/-1028 vs -368 ppm per 100 frames). Reading: post-reload drift
+(warm-up suspected, unconfirmed) plus lower dither SNR; neither is a clean
+ladder point. Interleave a full-scale control between levels.
+Sim: `adc_cal_sim --joint-dither LSB --joint-noise N` (ungraded) and
+`checks/dither_power_sim.py`; joint test now uses 130-DAC spacing. Model
+prediction: all 9 corners pass to ~300 ADC codes peak (300x noise), gain fails
+first; the model has no phase-spread rejection or drift.
+
 2026-11-25 first joint bench runs (one repeat each, baseline code 12, IFC 12).
 axis_suite_20261125_151104: offset B +32, IFC 0, park 32. PRE +32.09 code,
 -21.0 %, +302 ps (~15 ps/code). TRAIN 600: offset/gain inside ~40 frames, skew

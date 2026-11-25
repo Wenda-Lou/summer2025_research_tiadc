@@ -6801,7 +6801,8 @@ int sim_tests_run(const sim_run_options_t *options, sim_run_summary_t *summary)
         if (trace == NULL) {
             fprintf(stderr, "Failed to open %s\n", trace_path);
         }
-        sim_loop_tests_run_joint(&asserts, summary_file, trace);
+        sim_loop_tests_run_joint(&asserts, summary_file, trace,
+                                 options->joint_dither_scale, options->joint_noise);
         if (trace != NULL) {
             (void)fclose(trace);
         }

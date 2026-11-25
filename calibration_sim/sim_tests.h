@@ -13,6 +13,8 @@ typedef struct {
     bool run_pipeline_scenarios;
     bool run_loop_tests;
     bool run_joint_test; /* joint three-axis matrix only, writes joint_trace.csv */
+    double joint_dither_scale; /* > 0: dither peak in DAC LSB, ungraded sweep */
+    double joint_noise;        /* >= 0: ADC noise RMS codes, ungraded sweep */
     const char *loop_golden_path;
     const char *scenario;
     const char *pipeline_scenario;

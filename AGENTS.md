@@ -66,6 +66,7 @@ cd calibration_sim && cmake -S . -B build && cmake --build build
 ./build/adc_cal_sim --run-all          # also: --run-loop-tests, --run-unit-tests, --stress-seeds N
 ./build/adc_cal_sim --run-joint        # joint 3-axis matrix only, writes joint_trace.csv
 python checks/plot_joint_sim.py [--corner N] [--no-run] [--show]   # build+run+plot it
+python checks/dither_power_sim.py [--noise N] [--levels ...]       # dither power sweep (--joint-dither/--joint-noise)
 ./build/adc_signal_replay INPUT.csv OUTPUT.csv RATE_HZ
 ```
 
@@ -143,6 +144,9 @@ Procedures: `docs/bench/CALIBRATION_STARTUP.md`, `calibration_loop/CALIBRATION_L
 - Opening the project in Vitis 2025.2 regenerates `final_ver_1/` (~1900 files)
   and rewrites app paths; never commit those (local clone may use `--skip-worktree`).
 - A wrong DPG vector is not rejected: check `LOOP-START` waveform fields and margin.
+- The bench actually plays `dither_only/*_amp32767_dither_only_p130.txt` (65-sample
+  spacing, 128 events; output reports `period_samples=65`), not the 260-spacing wave 3
+  file. Derive new vectors (e.g. `waveforms/dither_power/`) from the `_p130` one.
 - First UDP transfer after boot often times out; retry first.
 - `fs_dac/fs_adc` must be an integer (bench 2600/1300).
 - `xemacif_input()` runs only after a console line; host tools send a bare newline.
