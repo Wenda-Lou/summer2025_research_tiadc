@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 from datetime import datetime, timezone
+import itertools
 import json
 import math
 from pathlib import Path
@@ -25,6 +26,8 @@ IFC_FULL_SCALE_VPP = dict(zip(IFC_FULL_SCALE_ORDER, (1.36, 1.47, 1.59, 1.70, 1.8
 TOLERANCES = {"offset": 0.5, "gain": 0.001, "skew": 10.0}
 SUITE_DEFAULT_POINTS = {"offset": tuple(range(32, -33, -1)),
                         "gain": IFC_FULL_SCALE_ORDER, "skew": tuple(range(33))}
+# --joint: corners of the single-axis ranges, combined as a Cartesian product.
+JOINT_DEFAULT_POINTS = {"offset": (-32, 32), "gain": (10, 0), "skew": (0, 32)}
 AXIS_FIELDS = {"offset": ("doff_mc", 1e-3), "gain": ("tone_ppm", 1e-6),
                "skew": ("skew_cps", 0.01)}
 STATE_FIELDS = ("corr_a_ppm", "corr_b_ppm", "offa_mc", "offb_mc")
@@ -75,7 +78,10 @@ def audit_routes(rows):
             "skew_route": ",".join(sorted(routes)), "routes_consistent": consistent}
 
 
-def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20):
+def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20, active=None):
+    """Grade AXIS on the independent HOLD. ACTIVE are the axes TRAIN may change
+    (default: AXIS only); every other state field and the clock must stay frozen."""
+    active = frozenset((axis,) if active is None else active)
     rows = rows_from(lines)
     metrics = dict(AXIS_FIELDS)
     if any("used_gain_ppm" in r for r in rows):
@@ -112,8 +118,8 @@ def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20)
     train_all = [r for r in rows if r.get("phase") == "train"]
     result["hold_continues_train"] = bool(train_all and hold_all) and all(
         train_all[-1].get(k) == hold_all[0].get(k) for k in STATE_FIELDS)
-    frozen = STATE_FIELDS[:2] if axis == "offset" else (
-        STATE_FIELDS[2:] if axis == "gain" else STATE_FIELDS)
+    frozen = (STATE_FIELDS[:2] if "gain" not in active else ()) + (
+        STATE_FIELDS[2:] if "offset" not in active else ())
     result["inactive_frozen"] = bool(rows) and all(
         r.get(k) == rows[0].get(k) for r in rows for k in frozen)
     phase_codes = {fields(line).get("phase"): fields(line).get("code") for line in lines
@@ -121,7 +127,7 @@ def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20)
     result["hold_clock_frozen"] = (phase_codes.get("train") is not None and
                                    phase_codes.get("train") == phase_codes.get("hold") and
                                    len({r["code"] for r in hold_all if "code" in r}) <= 1)
-    result["inactive_skew_frozen"] = axis == "skew" or (
+    result["inactive_skew_frozen"] = "skew" in active or (
         len(set(phase_codes.values())) == 1 and not any("act=move:" in line for line in lines))
     result["last_code"] = next((fields(line).get("code") for line in reversed(lines)
                                 if line.startswith("LOOP-TEST-SUMMARY ")), None)
@@ -151,6 +157,26 @@ def summarise_run(lines, axis, tolerance, hold_budget, min_yield=0.8, window=20)
                       result["hold_continues_train"] and result["inactive_frozen"] and
                       result["hold_clock_frozen"] and result["inactive_skew_frozen"] and
                       not result["range_limit"] and result["routes_consistent"])
+    return result
+
+
+def summarise_joint(lines, hold_budget, min_yield=0.8, window=20):
+    """One `run all`: every axis graded on the same independent HOLD at its own
+    suite tolerance. PASS needs all three; per-axis fields are prefixed."""
+    per_axis = {axis: summarise_run(lines, axis, TOLERANCES[axis], hold_budget, min_yield,
+                                    window, active=AXIS_FIELDS) for axis in AXIS_FIELDS}
+    result = dict(per_axis["skew"])  # shared HOLD statistics, audits and limits
+    result.update(axis="joint", tolerance=json.dumps(TOLERANCES, sort_keys=True))
+    for axis, r in per_axis.items():
+        result[f"{axis}_tolerance"] = TOLERANCES[axis]
+        result[f"{axis}_pre_mean"] = r["pre_mean"]
+        result[f"{axis}_convergence_attempt"] = r["convergence_attempt"]
+        result[f"{axis}_pass"] = r["pass"]
+    attempts = [r["convergence_attempt"] for r in per_axis.values()]
+    # Joint convergence: the slowest axis; None unless all three settled.
+    result["convergence_attempt"] = None if None in attempts else max(attempts)
+    result["pre_mean"] = math.nan
+    result["pass"] = all(r["pass"] for r in per_axis.values())
     return result
 
 
@@ -307,7 +333,11 @@ def suite_points(args, baseline_code=None, baseline_ifc=None):
     if (not axes or len(axes) != len(set(axes)) or
             any(axis not in AXIS_FIELDS for axis in axes)):
         raise ValueError("axes must be unique comma-separated names: offset,gain,skew")
-    points = {axis: point_values(axis, text) if text is not None else list(SUITE_DEFAULT_POINTS[axis])
+    joint = getattr(args, 'joint', False)
+    if joint and set(axes) != set(AXIS_FIELDS):
+        raise ValueError("--joint injects all three axes together; do not combine it with --axes")
+    defaults = JOINT_DEFAULT_POINTS if joint else SUITE_DEFAULT_POINTS
+    points = {axis: point_values(axis, text) if text is not None else list(defaults[axis])
               for axis, text in (("offset", args.offset_points),
                                  ("gain", args.gain_points), ("skew", args.skew_points))}
     points = {axis: values if axis in axes else [] for axis, values in points.items()}
@@ -318,6 +348,28 @@ def suite_points(args, baseline_code=None, baseline_ifc=None):
     if baseline_ifc not in IFC_CODES:
         raise ValueError("Saved baseline has no supported channel IFC; no injection sent")
     return points
+
+
+def joint_combinations(points):
+    """(offset, IFC, skew) for every combination, offset varying slowest."""
+    return list(itertools.product(points['offset'], points['gain'], points['skew']))
+
+
+def suite_test_count(points, joint):
+    return len(joint_combinations(points)) if joint else sum(map(len, points.values()))
+
+
+def assess(lines, point_axis, hold, min_yield, window):
+    if point_axis == 'joint':
+        return summarise_joint(lines, hold, min_yield, window)
+    return summarise_run(lines, point_axis, TOLERANCES[point_axis], hold, min_yield, window)
+
+
+def holdout_text(result):
+    if result.get('axis') == 'joint':
+        return "HOLD " + " ".join(
+            f"{a}={result[a + '_mean']:.6g}{'' if result[a + '_pass'] else '(FAIL)'}" for a in AXIS_FIELDS)
+    return f"HOLD={result[result['axis'] + '_mean']:.6g}"
 
 
 def skew_target(args, baseline_code, point):
@@ -438,10 +490,17 @@ def run(args):
     print(config)
     print(f"baseline={'reuse saved board baseline' if args.reuse_baseline else str(args.baseline_train) + '+' + str(args.baseline_hold)}; "
           f"pre/train/hold={args.pre}/{args.train}/{args.hold}; points={points}")
+    joint = suite and getattr(args, 'joint', False)
     if suite:
         print(f"PRE/TRAIN spectral phase gate: {args.acquire_phase_mrad} mrad; HOLD: 150 mrad.")
-        print(f"Order: offset -> IFC full scale -> skew ({args.skew_mode} control codes).")
-        print(f"Requested tests per repeat: {sum(map(len, points.values()))}; hardware skew range: 0..48.")
+        if joint:
+            print(f"JOINT: each test injects offset {args.channel}, IFC {args.channel} and skew "
+                  f"({args.skew_mode} control code) together, then 'test run all'.")
+            print("Skew moves one code per batch: TRAIN needs >= batch x |target - baseline code| "
+                  f"attempts plus settling (batch={args.batch}, TRAIN={args.train}).")
+        else:
+            print(f"Order: offset -> IFC full scale -> skew ({args.skew_mode} control codes).")
+        print(f"Requested tests per repeat: {suite_test_count(points, joint)}; hardware skew range: 0..48.")
     if not args.execute:
         print("PLAN ONLY. Add --execute to connect and perform register/clock writes.")
         return 0
@@ -480,6 +539,8 @@ def run(args):
                         raise ValueError("suite requires the current reference-free gain-freeze ELF and no board fault; no writes sent")
                     if args.acquire_phase_mrad != 150 and routes.get('acquisition_phase_gate') != '1':
                         raise ValueError("Requested acquisition phase gate requires the updated ELF; no writes sent")
+                    if joint and routes.get('joint_run') != '1':
+                        raise ValueError("--joint requires the joint-run ELF (LOOP-TEST-ROUTES joint_run=1); no writes sent")
                     quality_supported = routes.get('acquisition_phase_gate') == '1'
                 if args.wave is not None:  # optional compatibility with older firmware
                     console.require(f"adc -cal loop wave {args.wave}", "LOOP-WAVE")
@@ -542,16 +603,27 @@ def run(args):
                     executable = {a: list(p) for a, p in points.items()}
                     executable['skew'] = [p for p in points['skew'] if 0 <= skew_target(args, base_code, p) <= 48]
                     for repeat in range(args.repeats):
-                        for p in points['skew']:
-                            if not 0 <= skew_target(args, base_code, p) <= 48:
-                                skipped.append(dict(axis='skew', point=p, repeat=repeat,
-                                                    baseline_code=base_code, target_code=skew_target(args, base_code, p),
-                                                    status='SKIP', reason='outside hardware code range 0..48'))
+                        unreachable = [p for p in points['skew']
+                                       if not 0 <= skew_target(args, base_code, p) <= 48]
+                        # A joint combination is skipped with its unreachable skew code.
+                        others = ([(o, g) for o in points['offset'] for g in points['gain']]
+                                  if joint else [None])
+                        for p in unreachable:
+                            for other in others:
+                                skip = dict(axis='joint' if joint else 'skew', point=p, repeat=repeat,
+                                            baseline_code=base_code, target_code=skew_target(args, base_code, p),
+                                            status='SKIP', reason='outside hardware code range 0..48')
+                                if joint:
+                                    skip.update(offset_point=other[0], gain_point=other[1], skew_point=p)
+                                skipped.append(skip)
                     meta['skew_point_mode'] = args.skew_mode
+                    meta['joint'] = joint
                     meta['executable_points'] = executable
+                    if joint:
+                        meta['joint_points'] = joint_combinations(executable)
                     meta['skipped_points'] = skipped
                     meta['coverage_complete'] = not skipped
-                    meta['requested_tests'] = sum(map(len, points.values())) * args.repeats
+                    meta['requested_tests'] = suite_test_count(points, joint) * args.repeats
                     meta['skipped_tests'] = len(skipped)
                     print(f"Resolved suite points: {points}; baseline code={base_code}, IFC=0x{baseline_ifc:02X}")
                     for skip in skipped:
@@ -584,21 +656,32 @@ def run(args):
                     save_test_results(lines, out / 'step.log', meta['step'])
                     console.require("adc -cal loop test restore")
                 else:
-                    experiments = ([(a, p) for a in AXIS_FIELDS for p in executable[a]] if suite else
-                                   [(axis, p) for p in points])
+                    if joint:
+                        # The joint point id is its index; the three injections are separate fields.
+                        experiments = [('joint', i) for i in range(len(meta['joint_points']))]
+                    elif suite:
+                        experiments = [(a, p) for a in AXIS_FIELDS for p in executable[a]]
+                    else:
+                        experiments = [(axis, p) for p in points]
                     for repeat in range(args.repeats):
                         for point_axis, point in experiments:
                             meta['active_point'] = dict(axis=point_axis, point=point, repeat=repeat+1)
                             console.require("adc -cal loop test restore")
-                            if point_axis == "skew":
+                            if point_axis == "joint":
+                                joint_offset, joint_ifc, joint_skew = meta['joint_points'][point]
+                                target_code = skew_target(args, base_code, joint_skew)
+                                injects = [f"offset {args.channel} {joint_offset}",
+                                           f"ifc {args.channel} {joint_ifc}", f"park {target_code}"]
+                            elif point_axis == "skew":
                                 target_code = skew_target(args, base_code, point)
-                                inject = f"park {target_code}"
+                                injects = [f"park {target_code}"]
                             elif point_axis == "gain":
-                                inject = f"ifc {args.channel} {point}"
+                                injects = [f"ifc {args.channel} {point}"]
                             else:
-                                inject = f"offset {args.channel} {point}"
-                            injection_lines = console.require("adc -cal loop test " + inject)
-                            if suite and point_axis == 'skew' and target_code != base_code:
+                                injects = [f"offset {args.channel} {point}"]
+                            for inject in injects:
+                                injection_lines = console.require("adc -cal loop test " + inject)
+                            if (suite and point_axis in ('skew', 'joint') and target_code != base_code):
                                 transactions = [fields(line) for line in injection_lines
                                                 if line.startswith('LOOP-SKEW-TXN ')]
                                 if (not transactions or
@@ -607,32 +690,45 @@ def run(args):
                             console.context = {"experiment": point_axis, "point": point, "repeat": repeat}
                             point_dir = out / point_axis if suite else out
                             point_dir.mkdir(exist_ok=True)
-                            point_log = point_dir / f"{point_axis}_point{point}_repeat{repeat+1}.log"
-                            command = f"adc -cal loop test run {point_axis} {args.pre} {args.train} {args.hold}"
+                            if point_axis == 'joint':
+                                point_log = point_dir / (f"joint_point{point}_off{joint_offset}_ifc{joint_ifc}"
+                                                         f"_code{target_code}_repeat{repeat+1}.log")
+                            else:
+                                point_log = point_dir / f"{point_axis}_point{point}_repeat{repeat+1}.log"
+                            joint_fields = {} if point_axis != 'joint' else dict(
+                                offset_point=joint_offset, gain_point=joint_ifc, skew_point=joint_skew,
+                                nominal_ifc_vpp=IFC_FULL_SCALE_VPP[joint_ifc], target_code=target_code,
+                                relative_code_offset=target_code - base_code, skew_point_mode=args.skew_mode)
+                            run_axis = 'all' if point_axis == 'joint' else point_axis
+                            command = f"adc -cal loop test run {run_axis} {args.pre} {args.train} {args.hold}"
                             try:
                                 lines, ended_ok = console.command(command)
                             except BaseException as exc:
                                 # Keep a complete failed test export when END was received;
                                 # frames.csv also retains partial rows on timeout/interrupt.
                                 if suite and any(line.startswith('LOOP-TEST-END ') for line in console.last_lines):
-                                    failed = summarise_run(console.last_lines, point_axis, TOLERANCES[point_axis],
-                                                           args.hold, args.min_yield, args.window)
+                                    failed = assess(console.last_lines, point_axis,
+                                                    args.hold, args.min_yield, args.window)
                                     failed.update(point=point, repeat=repeat, baseline_code=base_code,
-                                                  aborted=True, stop_reason=str(exc))
+                                                  aborted=True, stop_reason=str(exc), **joint_fields)
                                     summaries.append(failed)
                                     try:
                                         save_point(console, console.last_lines, point_log, failed, args, read_signal=False)
                                     except (ValueError, OSError) as export_error:
                                         log.write(f"# partial export: {export_error}\n")
                                 raise
-                            point_tolerance = TOLERANCES[point_axis] if suite else tolerance
-                            result = summarise_run(lines, point_axis, point_tolerance, args.hold, args.min_yield, args.window)
+                            if suite:
+                                result = assess(lines, point_axis, args.hold, args.min_yield, args.window)
+                            else:
+                                result = summarise_run(lines, point_axis, tolerance, args.hold,
+                                                       args.min_yield, args.window)
                             if args.wave in (None, 2, 3):
                                 result["requested_routes_match"] = (
                                     (result["gain_source"], result["skew_route"]) in
                                     (("dither_mag", "dither_phase"), ("dither_spectrum", "dither_cross_spectrum")))
                                 result["pass"] &= result["requested_routes_match"]
                             result.update(point=point, repeat=repeat, baseline_code=base_code)
+                            result.update(joint_fields)
                             if point_axis == 'gain':
                                 result['nominal_ifc_vpp'] = IFC_FULL_SCALE_VPP[point]
                             elif point_axis == 'skew':
@@ -644,7 +740,10 @@ def run(args):
                             if rejected_acquisition:
                                 result['failure_reason'] = 'acquisition range/quality gate rejected the point'
                             if suite:
-                                if point_axis == 'gain':
+                                if point_axis == 'joint':
+                                    result['is_control'] = (joint_offset == 0 and joint_ifc == baseline_ifc and
+                                                            target_code == base_code)
+                                elif point_axis == 'gain':
                                     result['is_control'] = point == baseline_ifc
                                 elif point_axis == 'skew':
                                     result['is_control'] = target_code == base_code
@@ -655,8 +754,10 @@ def run(args):
                             if suite and not ended_ok and not rejected_acquisition:
                                 raise BenchFault("Test ended with ERROR; records retained, no further injections or automatic restore")
                             outcome = ('acquisition rejected; HOLD not qualified' if rejected_acquisition else
-                                       f"HOLD={result[point_axis + '_mean']:.6g}")
-                            print(f"POINT {'PASS' if result['pass'] else 'FAIL'}: {point_axis}={point} "
+                                       holdout_text(result))
+                            label = (f"joint={point} (offset={joint_offset} ifc={joint_ifc} code={target_code})"
+                                     if point_axis == 'joint' else f"{point_axis}={point}")
+                            print(f"POINT {'PASS' if result['pass'] else 'FAIL'}: {label} "
                                   f"repeat={repeat+1}/{args.repeats} "
                                   f"{outcome}; files saved", flush=True)
                             # Preserve completed points even if a later transaction fails.
@@ -682,6 +783,13 @@ def run(args):
         return 0 if meta["step"]["pass"] else 1
     for summary in summaries:
         selected_axis = summary['axis']
+        if selected_axis == 'joint':
+            residual = " ".join(f"{a}={summary[a + '_mean']:.6g} {meta['units'][a]}" for a in AXIS_FIELDS)
+            print(f"axis=joint point={summary['point']} offset={summary['offset_point']} "
+                  f"ifc={summary['gain_point']} code={summary['target_code']} repeat={summary['repeat']} "
+                  f"{'PASS' if summary['pass'] else 'FAIL'} residual {residual} "
+                  f"converged_attempt={summary['convergence_attempt']}")
+            continue
         print(f"axis={selected_axis} point={summary['point']} repeat={summary['repeat']} "
               f"{'PASS' if summary['pass'] else 'FAIL'} "
               f"residual={summary[selected_axis + '_mean']:.6g} {meta['units'][selected_axis]}")
@@ -759,6 +867,10 @@ def parser():
                             help="PRE/TRAIN spectral phase RMS limit, 150..750; HOLD stays 150 (updated ELF required)")
             sp.add_argument("--axes", default="offset,gain,skew",
                             help="comma-separated axes to run; default: offset,gain,skew")
+            sp.add_argument("--joint", action="store_true",
+                            help="inject offset, IFC and skew together and run 'test run all' on every "
+                                 "combination of the point lists (default corners: offset -32,32 x "
+                                 "IFC 10,0 x skew code 0,32); needs joint_run=1 firmware")
             sp.add_argument("--offset-points", help="ADC codes; default: 32,31,...,-32")
             sp.add_argument("--gain-points", help="IFC codes; default: 10,11,12,13,14,15,0 (1.36..2.04 Vpp)")
             sp.add_argument("--skew-mode", choices=('absolute', 'relative'), default='absolute',

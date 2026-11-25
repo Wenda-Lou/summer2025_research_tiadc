@@ -56,18 +56,19 @@ def decode_test_results(lines, assessment=None):
             **{key: metric_stats(accepted, key) for key in (
                 'gain_error_ppm', 'offset_error_codes', 'skew_error_ps')}}
     train = next((p for p in phases if p['phase'] == 'train'), None)
-    axis = {1: 'offset', 2: 'gain', 4: 'skew'}.get(int(train['axes'])) if train else None
-    if axis is None and assessment and assessment.get('axis') in ('offset', 'gain', 'skew'):
+    axis = {1: 'offset', 2: 'gain', 4: 'skew', 7: 'joint'}.get(int(train['axes'])) if train else None
+    if axis is None and assessment and assessment.get('axis') in ('offset', 'gain', 'skew', 'joint'):
         axis = assessment['axis']  # acquisition may fail before TRAIN begins
     complete &= len(rows) == sum(int(s['attempts']) for s in summaries)
     if assessment is None and axis and 'hold' in budgets:
         # CLI module import is deferred so its sweep can use this exporter too.
         if __package__:
-            from .board_axis_test import summarise_run
+            from .board_axis_test import summarise_joint, summarise_run
         else:
-            from board_axis_test import summarise_run
-        assessment = summarise_run(lines, axis, {'offset': .5, 'gain': .001, 'skew': 10}[axis],
-                                   budgets.get('hold', 0))
+            from board_axis_test import summarise_joint, summarise_run
+        assessment = (summarise_joint(lines, budgets.get('hold', 0)) if axis == 'joint' else
+                      summarise_run(lines, axis, {'offset': .5, 'gain': .001, 'skew': 10}[axis],
+                                    budgets.get('hold', 0)))
     elif assessment is None and axis:
         assessment = {'pass': False, 'reason': 'HOLD not completed'}
     accepted = [r for r in rows if r['status'] == 'ok']

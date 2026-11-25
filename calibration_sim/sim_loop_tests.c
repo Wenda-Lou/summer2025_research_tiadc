@@ -974,6 +974,201 @@ static void test_blind_combiner_closed_loop(sim_assert_context_t *ctx, FILE *sum
     }
 }
 
+/* Truth-domain residuals of the calibrated A/B pair (sim only; the board
+ * cannot see these). Each channel's DC is driven to zero independently.
+ * De-framing re-orients an inverted B before correction, so the loop's B
+ * offset is in the un-inverted domain. */
+static double lt_true_offset(const lt_bench_t *b, const adc_cal_loop_state_t *s)
+{
+    return (b->offset_b - s->offset_b) * s->gain_corr_b - (b->offset_a - s->offset_a) * s->gain_corr_a;
+}
+static double lt_true_gain(const lt_bench_t *b, const adc_cal_loop_state_t *s)
+{
+    return b->gain_b * s->gain_corr_b / (b->gain_a * s->gain_corr_a) - 1.0;
+}
+static double lt_true_skew(const lt_bench_t *b)
+{
+    return b->skew_b_ps + b->skew_cmd_b_ps - b->skew_a_ps;
+}
+
+/* All three mismatches injected at once, at the bench ranges of the axis
+ * suite: offset +/-32 codes, IFC 1.36..2.04 Vpp around 1.59 (gain_b ~0.78..1.17),
+ * skew ~+/-10 codes at 19.1 ps/code. Tone + dither as through the RF combiner,
+ * reference-free, board TRAIN/HOLD budgets. The TRAIN tail freeze mirrors
+ * loop_test_phase() in butils_loop_test.c (offset and gain training means at
+ * one actuator code). Frames-to-converge use the truth through a 20-frame
+ * moving mean, like the host summary window; grading uses independent HOLD. */
+/* One CSV row per frame; truth is sim-only, est are the loop's own residuals. */
+static void lt_joint_trace(FILE *trace, unsigned corner, const char *phase, int frame,
+                           const lt_bench_t *b, const adc_cal_loop_t *loop,
+                           const adc_cal_loop_row_t *row)
+{
+    const int ok = row->rejected == ADC_CAL_LOOP_REJECT_NONE;
+    if (trace == NULL) return;
+    fprintf(trace, "%u,%s,%d,%g,%.6f,%g,%d,%d,%d,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.6g,%.9g,%.9g\n",
+            corner, phase, frame, b->offset_b - b->offset_a, b->gain_b, b->skew_b_ps, b->invert_b,
+            loop->act.code, (int)row->rejected,
+            lt_true_offset(b, &loop->state), lt_true_gain(b, &loop->state) * 1e6, lt_true_skew(b),
+            ok ? row->est.offset_mismatch_codes : NAN,
+            ok ? (row->est.gain_mag_ratio - 1.0) * 1e6 : NAN,
+            ok ? row->est.skew_used_ps : NAN,
+            loop->state.offset_a, loop->state.offset_b,
+            loop->state.gain_corr_a, loop->state.gain_corr_b);
+}
+
+static void test_joint_three_axis(sim_assert_context_t *ctx, FILE *summary, FILE *trace)
+{
+    enum { TRAIN = 600, HOLD = 100, FREEZE = 100, WINDOW = 20 };
+    const double tol[3] = {0.5, 0.001, 10.0}; /* offset codes, gain ratio, skew ps */
+    const double offsets[2] = {-32.0, 32.0};
+    const double gains[2] = {1.59 / 2.04, 1.59 / 1.36};
+    const double skews[2] = {-187.3, 187.3};
+    static double truth[3][TRAIN];
+    unsigned corner = 0U;
+    int worst[3] = {0, 0, 0};
+    fprintf(summary, "\n== joint three-axis matrix (tone+dither, reference-free) ==\n");
+    if (trace != NULL)
+        fprintf(trace, "corner,phase,frame,offset_inj,gain_b,skew_inj_ps,inverted,code,rejected,"
+                "true_offset,true_gain_ppm,true_skew_ps,est_offset,est_gain_ppm,est_skew_ps,"
+                "offset_a,offset_b,gain_corr_a,gain_corr_b\n");
+    for (int io = 0; io < 3; ++io) {
+    for (int ig = 0; ig < 3; ++ig) {
+    for (int is = 0; is < 3; ++is) {
+        /* Eight corners plus the centre; edges are covered by single-axis tests. */
+        const int centre = io == 2 && ig == 2 && is == 2;
+        adc_cal_loop_config_t physical, hardware = {0};
+        adc_cal_loop_options_t opt;
+        adc_cal_loop_actuator_t act;
+        lt_bench_t bench;
+        static uint8_t raw[2 * LT_WORDS];
+        int converge[3] = {0, 0, 0};
+        unsigned accepted = 0U, freeze_n = 0U;
+        double freeze_a = 0.0, freeze_b = 0.0, freeze_log_gain = 0.0;
+        double lms_gain = 0.0;
+        double hold_offset = 0.0, hold_gain = 0.0, hold_skew = 0.0;
+        unsigned hold_n = 0U;
+        if ((io == 2 || ig == 2 || is == 2) && !centre) continue;
+        adc_cal_loop_default_config(&physical);
+        physical.amp_dbfs = -6.0;
+        physical.dither_edge_dac = physical.dither_top_dac = 4;
+        physical.dither_scale_lsb = 2400.0;
+        physical.dither_period_dac = 260;
+        physical.n_events = physical.n_dac_points / 260;
+        for (int k = 0; k < physical.n_events; ++k) physical.polarity[k] = k % 3 ? -1 : 1;
+        lt_bench_init(&bench, &physical, 7000U + corner);
+        bench.noise = 1.0;
+        bench.invert_b = (int)(corner & 1U);
+        bench.offset_a = 14.0;
+        bench.offset_b = 14.0 + (centre ? 0.0 : offsets[io]);
+        bench.gain_b = centre ? 1.0 : gains[ig];
+        bench.skew_b_ps = centre ? 0.0 : skews[is];
+        hardware.fs_dac = 1.3e9; hardware.adc_ratio = 1;
+        adc_cal_loop_default_options(&opt);
+        opt.reference_free = opt.tone_free = opt.reject_clipping = 1;
+        opt.max_skew_samples = 0.5;          /* board loop test default 500 milli */
+        opt.max_gain_deviation = 0.6;        /* suite default 600000 ppm */
+        opt.skew_batch_frames = 20;
+        adc_cal_loop_default_actuator(&act);
+        act.ctx = &bench; act.request_steps = lt_request_steps;
+        act.deadband_ps = 10.0; act.step_ps = 19.1;
+        SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_init(&g_loop, &hardware, &opt, NULL, &act), 0);
+        for (int i = 0; i < TRAIN; ++i) {
+            adc_cal_loop_row_t row;
+            const adc_cal_loop_state_t before = g_loop.state;
+            const int code_before = g_loop.act.code;
+            const long bytes = lt_capture(&bench, raw, sizeof(raw));
+            SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, raw, (size_t)bytes, &row), 0);
+            if (row.rejected == ADC_CAL_LOOP_REJECT_NONE) accepted++;
+            if (i >= TRAIN - FREEZE) {
+                if (code_before != g_loop.act.code) {
+                    freeze_n = 0U; freeze_a = freeze_b = freeze_log_gain = 0.0;
+                } else if (row.rejected == ADC_CAL_LOOP_REJECT_NONE && row.est.gain_mag_ratio > 0.0) {
+                    freeze_n++;
+                    freeze_a += before.offset_a + row.est.ch_a.offset_codes / before.gain_corr_a;
+                    freeze_b += before.offset_b + row.est.ch_b.offset_codes / before.gain_corr_b;
+                    freeze_log_gain += log(row.est.gain_mag_ratio) +
+                                       log(before.gain_corr_a) - log(before.gain_corr_b);
+                }
+            }
+            truth[0][i] = lt_true_offset(&bench, &g_loop.state);
+            truth[1][i] = lt_true_gain(&bench, &g_loop.state);
+            truth[2][i] = lt_true_skew(&bench);
+            lt_joint_trace(trace, corner, "train", i, &bench, &g_loop, &row);
+        }
+        lms_gain = truth[1][TRAIN - 1];
+        for (int a = 0; a < 3; ++a) {
+            int last_bad = WINDOW - 2;
+            for (int i = WINDOW - 1; i < TRAIN; ++i) {
+                double m = 0.0;
+                for (int j = i + 1 - WINDOW; j <= i; ++j) m += truth[a][j];
+                if (!(fabs(m / WINDOW) <= tol[a])) last_bad = i;
+            }
+            converge[a] = last_bad + 1;
+        }
+        SIM_ASSERT_TRUE(ctx, freeze_n >= 20U);
+        if (freeze_n >= 20U) {
+            const double common = 0.5 * (log(g_loop.state.gain_corr_a) + log(g_loop.state.gain_corr_b));
+            const double mean_log = freeze_log_gain / freeze_n;
+            g_loop.state.offset_a = freeze_a / freeze_n;
+            g_loop.state.offset_b = freeze_b / freeze_n;
+            g_loop.state.gain_corr_a = exp(common + 0.5 * mean_log);
+            g_loop.state.gain_corr_b = exp(common - 0.5 * mean_log);
+        }
+        g_loop.opt.update_axes = 0U;
+        {
+            const adc_cal_loop_state_t frozen = g_loop.state;
+            const int moves = bench.moves;
+            for (int i = 0; i < HOLD; ++i) {
+                adc_cal_loop_row_t row;
+                const long bytes = lt_capture(&bench, raw, sizeof(raw));
+                SIM_ASSERT_EQ_INT(ctx, adc_cal_loop_step(&g_loop, raw, (size_t)bytes, &row), 0);
+                lt_joint_trace(trace, corner, "hold", TRAIN + i, &bench, &g_loop, &row);
+                if (row.rejected != ADC_CAL_LOOP_REJECT_NONE) continue;
+                hold_n++;
+                hold_offset += row.est.offset_mismatch_codes;
+                hold_gain += row.est.gain_mag_ratio - 1.0;
+                hold_skew += row.est.skew_used_ps;
+            }
+            SIM_ASSERT_NEAR(ctx, g_loop.state.offset_b, frozen.offset_b, 0.0);
+            SIM_ASSERT_NEAR(ctx, g_loop.state.gain_corr_b, frozen.gain_corr_b, 0.0);
+            SIM_ASSERT_EQ_INT(ctx, bench.moves, moves);
+        }
+        SIM_ASSERT_TRUE(ctx, hold_n * 5U >= HOLD * 4U);
+        if (hold_n > 0U) {
+            hold_offset /= hold_n; hold_gain /= hold_n; hold_skew /= hold_n;
+        }
+        /* Independent HOLD estimates and truth must both be inside the suite
+         * tolerances; skew truth is bounded by the 10 ps deadband. */
+        SIM_ASSERT_NEAR(ctx, hold_offset, 0.0, tol[0]);
+        SIM_ASSERT_NEAR(ctx, hold_gain, 0.0, tol[1]);
+        SIM_ASSERT_NEAR(ctx, hold_skew, 0.0, tol[2]);
+        SIM_ASSERT_NEAR(ctx, lt_true_offset(&bench, &g_loop.state), 0.0, tol[0]);
+        SIM_ASSERT_NEAR(ctx, lt_true_gain(&bench, &g_loop.state), 0.0, tol[1]);
+        SIM_ASSERT_NEAR(ctx, lt_true_skew(&bench), 0.0, tol[2]);
+        SIM_ASSERT_TRUE(ctx, !g_loop.skew_abort);
+        for (int a = 0; a < 3; ++a) {
+            /* Must settle before the freeze tail starts averaging. */
+            SIM_ASSERT_TRUE(ctx, converge[a] <= TRAIN - FREEZE);
+            if (converge[a] > worst[a]) worst[a] = converge[a];
+        }
+        fprintf(summary, "joint offset=%+g gain_b=%.4f skew=%+g inverted=%d accepted=%u/%d "
+                "moves=%d converge_frames offset=%d gain=%d skew=%d freeze_n=%u "
+                "lms_end_gain_ppm=%.0f hold offset=%.3f gain_ppm=%.0f skew_ps=%.2f "
+                "truth offset=%.3f gain_ppm=%.0f skew_ps=%.2f\n",
+                bench.offset_b - bench.offset_a, bench.gain_b, bench.skew_b_ps, bench.invert_b,
+                accepted, TRAIN, bench.moves, converge[0], converge[1], converge[2], freeze_n,
+                lms_gain * 1e6, hold_offset, hold_gain * 1e6, hold_skew,
+                lt_true_offset(&bench, &g_loop.state), lt_true_gain(&bench, &g_loop.state) * 1e6,
+                lt_true_skew(&bench));
+        corner++;
+    }
+    }
+    }
+    SIM_ASSERT_EQ_INT(ctx, corner, 9U);
+    fprintf(summary, "joint worst converge_frames offset=%d gain=%d skew=%d (train=%d)\n",
+            worst[0], worst[1], worst[2], TRAIN);
+}
+
 static void test_blind_closed_loop(sim_assert_context_t *ctx, FILE *summary)
 {
     for (int inverted = 0; inverted <= 1; ++inverted) {
@@ -1237,6 +1432,7 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary)
     test_blind_tone_without_dither(ctx);
     test_blind_dither_observable_with_main(ctx);
     test_blind_combiner_closed_loop(ctx, summary);
+    test_joint_three_axis(ctx, summary, NULL);
     test_blind_closed_loop(ctx, summary);
     test_learned_dither_output(ctx, summary);
     test_recorded_wide_dither_output(ctx, summary);
@@ -1559,4 +1755,9 @@ void sim_loop_tests_run_golden(sim_assert_context_t *ctx, FILE *summary, const c
         }
     }
     fclose(fp);
+}
+
+void sim_loop_tests_run_joint(sim_assert_context_t *ctx, FILE *summary, FILE *trace)
+{
+    test_joint_three_axis(ctx, summary, trace);
 }

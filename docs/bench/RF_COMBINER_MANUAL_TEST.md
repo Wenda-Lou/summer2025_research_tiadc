@@ -62,6 +62,22 @@ python tools/board_loop/board_axis_test.py suite --uart COM5 --reuse-baseline --
 普通 HOLD 不通过或完整采集阶段因范围/质量门控被拒，会记录 FAIL 并继续下一点；
 基准失败、事务/方向故障、clipping、
 串口超时或波形传输失败会停止，保留数据，不重训或自动恢复写寄存器。
+
+三轴联合（2026-11-24，仅离线验证，未上板）：`--joint` 对三组点的每个组合
+执行 restore→`offset B o`→`ifc B g`→`park c`→`adc -cal loop test run all
+PRE TRAIN HOLD`。需要状态行带 `joint_run=1` 的新 ELF，否则在任何写入前停止。
+默认 8 个角点：offset −32,32 × IFC 10,0 × skew 绝对码 0,32。同一个独立 HOLD
+分别按 offset 0.5 code、gain 0.001、skew 10 ps 评分，三轴都过才 PASS；
+summary.csv 记录各轴 `*_pass`、`*_convergence_attempt`，`convergence_attempt`
+取最慢轴。Skew 每 batch 只走一个码，TRAIN 至少需 batch×|目标码−基准码|
+次尝试再加稳定时间；从基准 12 到 32 用 `--train 600`：
+
+```powershell
+python tools/board_loop/board_axis_test.py suite --uart COM5 --joint --train 600 --repeats 3 --execute
+```
+
+结果在 `joint/` 子目录，`viewer.html` 按 joint offset/gain/skew 分三组，横轴是
+joint 点编号。`--joint` 不能与 `--axes` 同用。
 下面的逐条手动操作仍可作为单点调试入口。
 
 ## 1. 接线和固定输入

@@ -364,6 +364,11 @@ All of these are compiled in. Changing one means rebuilding the ELF.
 
 ## 5. Running the loop and recording a log
 
+`adc -cal loop test run all PRE TRAIN HOLD` (status `joint_run=1`) is the joint
+form: offset, IFC and park may all be injected on one channel, TRAIN updates
+every axis and freezes both training means, HOLD stays frozen. Offline (sim
+spies and physics matrix) only; not bench-validated.
+
 For isolated offset/gain/skew limits, register perturbations, paired clock steps
 and frozen independent holdout, use `adc -cal loop test help` and
 [`CALIBRATION_LIMIT_TEST.md`](../../calibration_loop/CALIBRATION_LIMIT_TEST.md).

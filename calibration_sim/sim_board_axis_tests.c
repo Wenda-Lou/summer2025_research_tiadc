@@ -377,6 +377,49 @@ void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary)
     SIM_ASSERT_TRUE(ctx, bt_command("step 24 4"));
     SIM_ASSERT_EQ_INT(ctx, bt_code, 24);
     SIM_ASSERT_NEAR(ctx, g_board_loop.state.gain_corr_b, baseline.gain_corr_b, 0.0);
+    /* Joint run: offset, IFC and clock code all injected on B at once. One
+     * TRAIN updates every axis and freezes both training means; HOLD and the
+     * output snapshot stay frozen. Single-axis runs still refuse this state. */
+    SIM_ASSERT_TRUE(ctx, bt_command("status"));
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, " joint_run=1 ") != NULL);
+    baseline = g_loop_test_baseline;
+    SIM_ASSERT_TRUE(ctx, bt_command("offset B 16"));
+    SIM_ASSERT_TRUE(ctx, bt_command("ifc B 13"));
+    SIM_ASSERT_TRUE(ctx, bt_command("park 25"));
+    SIM_ASSERT_TRUE(ctx, !bt_command("run offset 4 4 4"));
+    SIM_ASSERT_TRUE(ctx, !bt_command("run gain 4 4 4"));
+    SIM_ASSERT_TRUE(ctx, !bt_command("run skew 4 4 4"));
+    SIM_ASSERT_TRUE(ctx, !g_loop_test_fault);
+    SIM_ASSERT_TRUE(ctx, bt_command("run all 4 40 8"));
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "LOOP-TEST-PHASE phase=train axes=7 budget=40") != NULL);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "source=dither_training_mean samples=20 code=25 phase=train") != NULL);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "source=dither_gain_training_mean samples=20 code=25 phase=train") != NULL);
+    SIM_ASSERT_TRUE(ctx, strstr(bt_output, "phase=hold attempts=8 accepted=8") != NULL);
+    SIM_ASSERT_NEAR(ctx, g_board_loop.state.offset_b - baseline.offset_b, 16.0, 0.01);
+    SIM_ASSERT_NEAR(ctx, g_board_loop.state.gain_corr_b / g_board_loop.state.gain_corr_a, 1.0, 1e-10);
+    SIM_ASSERT_NEAR(ctx, g_loop_test_baseline.offset_b, baseline.offset_b, 0.0);
+    SIM_ASSERT_EQ_INT(ctx, g_board_loop.opt.update_axes, 0);
+    SIM_ASSERT_EQ_INT(ctx, bt_output_calls, 1);
+    SIM_ASSERT_EQ_INT(ctx, bt_output_axes, 0);
+    SIM_ASSERT_NEAR(ctx, bt_output_offset[1], 16.0, 0.0);
+    SIM_ASSERT_TRUE(ctx, memcmp(&bt_output_state, &g_board_loop.state, sizeof(bt_output_state)) == 0);
+    SIM_ASSERT_TRUE(ctx, bt_command("restore"));
+    SIM_ASSERT_EQ_INT(ctx, bt_code, 24);
+    SIM_ASSERT_EQ_INT(ctx, bt_regs[1][0], 12);
+    SIM_ASSERT_NEAR(ctx, g_loop_test_offset[1], 0.0, 0.0);
+    /* Joint still allows one perturbed channel only; refusal writes nothing. */
+    SIM_ASSERT_TRUE(ctx, bt_command("offset A 8"));
+    SIM_ASSERT_TRUE(ctx, bt_command("ifc B 13"));
+    writes = bt_writes;
+    SIM_ASSERT_TRUE(ctx, !bt_command("run all 4 4 4"));
+    SIM_ASSERT_TRUE(ctx, !g_loop_test_fault);
+    SIM_ASSERT_EQ_INT(ctx, bt_capture_calls, 0);
+    /* Only bank-selector writes of the 2x3 isolation readbacks; no values. */
+    SIM_ASSERT_EQ_INT(ctx, bt_writes - writes, 12);
+    SIM_ASSERT_EQ_INT(ctx, bt_regs[1][0], 13);
+    SIM_ASSERT_EQ_INT(ctx, bt_index, 3);
+    SIM_ASSERT_TRUE(ctx, bt_command("restore"));
+    SIM_ASSERT_TRUE(ctx, !bt_command("run both 4 4 4"));
     g_board_loop_wave = 3U;
     SIM_ASSERT_TRUE(ctx, bt_command("baseline 40 10"));
     SIM_ASSERT_NEAR(ctx, g_board_loop.cfg.dither_scale_lsb, 0.0, 0.0);

@@ -11,6 +11,10 @@ void sim_loop_tests_run_native(sim_assert_context_t *ctx, FILE *summary);
  * compares the C loop with the Python loop field by field. */
 void sim_loop_tests_run_golden(sim_assert_context_t *ctx, FILE *summary, const char *path);
 
+/* Joint three-axis matrix alone. TRACE (may be NULL) receives one CSV row per
+ * TRAIN/HOLD frame with truth and estimated residuals (checks/plot_joint_sim.py). */
+void sim_loop_tests_run_joint(sim_assert_context_t *ctx, FILE *summary, FILE *trace);
+
 void sim_board_axis_tests_run(sim_assert_context_t *ctx, FILE *summary);
 
 #endif /* SIM_LOOP_TESTS_H */

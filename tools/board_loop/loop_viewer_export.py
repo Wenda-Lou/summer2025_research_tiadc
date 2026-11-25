@@ -29,8 +29,14 @@ def _sweep_datasets(name, files):
     reader = csv.DictReader(io.StringIO(files['summary.csv']))
     summary_columns = reader.fieldnames
     summary = list(reader)
-    axes = list(dict.fromkeys(r.get('axis') for r in summary if r.get('axis')))
-    if not axes:
+    # (label, experiment, rows): one viewer dataset per axis. Joint tests stay
+    # one dataset; the viewer shows all three axes of each test side by side.
+    groups = {}
+    for r in summary:
+        axis = r.get('axis')
+        if axis:
+            groups.setdefault(axis, (axis, axis, []))[2].append(r)
+    if not groups:
         return [{'name': name, 'files': files}]
     frame_reader = csv.DictReader(io.StringIO(files.get('frames.csv', '')))
     frame_columns, frames = frame_reader.fieldnames, list(frame_reader)
@@ -43,12 +49,12 @@ def _sweep_datasets(name, files):
         return stream.getvalue()
 
     result = []
-    for axis in axes:
-        selected = {'summary.csv': encoded(summary_columns, [r for r in summary if r.get('axis') == axis])}
+    for label, experiment, rows in groups.values():
+        selected = {'summary.csv': encoded(summary_columns, rows)}
         if frame_columns:
-            selected_frames = [r for r in frames if r.get('experiment', axis) == axis]
+            selected_frames = [r for r in frames if r.get('experiment', experiment) == experiment]
             selected['frames.csv'] = encoded(frame_columns, selected_frames)
-        result.append({'name': f'{name} / {axis}' if len(axes) > 1 else name, 'files': selected})
+        result.append({'name': f'{name} / {label}' if len(groups) > 1 else name, 'files': selected})
     return result
 
 

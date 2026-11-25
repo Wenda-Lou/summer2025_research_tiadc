@@ -160,6 +160,20 @@ tbody tr[aria-selected="true"] { background: color-mix(in srgb, var(--s1) 12%, t
 }
 body.dragging .drop { display: flex; }
 code { font-family: var(--font-mono); font-size: 12.5px; }
+.intro p { margin: 4px 0 10px; color: var(--ink-2); max-width: 90ch; }
+.steps { list-style: none; padding: 0; margin: 0 0 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.steps li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
+.steps li b { font-size: 13px; }
+.steps li span { color: var(--ink-2); font-size: 12.5px; }
+.steps li.pre { background: var(--ph-pre); }
+.steps li.train { background: var(--ph-train); }
+.steps li.hold { background: var(--ph-hold); }
+td.cell { font-family: var(--font-mono); }
+td.cell .arrow { color: var(--muted); padding: 0 4px; }
+td.cell .ok { color: var(--good); font-weight: 600; }
+td.cell .bad { color: var(--critical); font-weight: 600; }
+td.wrap, th.wrap { white-space: normal; text-align: left; font-family: var(--font-body); min-width: 220px; }
+.why { color: var(--ink-2); font-size: 12px; font-family: var(--font-body); white-space: normal; }
 @media (prefers-reduced-motion: no-preference) { .chip, .btn { transition: border-color .15s; } }
 </style>
 </head>
@@ -313,7 +327,46 @@ const AXES = {
   gain: { key: "gain", unit: "%", label: "Gain 殘差", scale: 100, dp: 4 },
   skew: { key: "skew", unit: "ps", label: "Skew", scale: 1, dp: 2 }
 };
+function framesByTest(frameObjs) {
+  const runs = new Map();
+  if (!frameObjs) return runs;
+  const groups = new Map();
+  for (const o of frameObjs) {
+    const k = num(o.point) + "|" + num(o.repeat);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(o);
+  }
+  for (const [k, list] of groups) runs.set(k, list.map(frameRow));
+  return runs;
+}
+/* Joint test: offset, gain and skew injected together, one TRAIN, one HOLD graded per axis. */
+const JOINT_AXES = [
+  { k: "offset", key: "off", label: "Offset", what: "B−A 直流差", unit: "code", scale: 1, dp: 3 },
+  { k: "gain", key: "gain", label: "Gain", what: "B/A − 1", unit: "%", scale: 100, dp: 3 },
+  { k: "skew", key: "skew", label: "Skew", what: "B−A 取樣時間差", unit: "ps", scale: 1, dp: 2 }
+];
+function buildJoint(name, summaryObjs, frameObjs) {
+  const rows = summaryObjs.map(o => {
+    const axes = {};
+    for (const a of JOINT_AXES) axes[a.k] = {
+      pre: num(o[a.k + "_pre_mean"]) * a.scale, mean: num(o[a.k + "_mean"]) * a.scale,
+      se: num(o[a.k + "_se"]) * a.scale, tol: num(o[a.k + "_tolerance"]) * a.scale,
+      pass: String(o[a.k + "_pass"]) === "True", conv: num(o[a.k + "_convergence_attempt"])
+    };
+    let rejects = {}; try { rejects = JSON.parse(o.reject_reasons || "{}"); } catch (e) { rejects = {}; }
+    return {
+      point: num(o.point), repeat: num(o.repeat), pass: String(o.pass) === "True",
+      offsetInj: num(o.offset_point), ifc: num(o.gain_point), vpp: num(o.nominal_ifc_vpp),
+      code: num(o.target_code), baseCode: num(o.baseline_code), lastCode: num(o.last_code),
+      holdAcc: num(o.hold_accepted), holdBudget: num(o.hold_budget), rejects,
+      acquisitionRejected: String(o.measurement_rejected) === "True",
+      signal: o.signal_status || "", axes
+    };
+  }).sort((a, b) => a.point - b.point || a.repeat - b.repeat);
+  return { kind: "joint", name, axis: "joint", rows, runs: framesByTest(frameObjs) };
+}
 function buildSweep(name, summaryObjs, frameObjs) {
+  if (summaryObjs[0] && summaryObjs[0].axis === "joint") return buildJoint(name, summaryObjs, frameObjs);
   const axis = (summaryObjs[0] && summaryObjs[0].axis) || (frameObjs && frameObjs[0] && frameObjs[0].experiment) || "offset";
   const A = AXES[axis] || AXES.offset;
   const rows = summaryObjs.map(o => {
@@ -676,7 +729,7 @@ function trajectory(container, rows, opts) {
 function renderChips() {
   const host = document.getElementById("datasets");
   host.innerHTML = state.datasets.map((d, i) =>
-    `<button class="chip" aria-pressed="${i === state.active}" data-i="${i}"><span class="kind">${d.kind === "sweep" ? d.axis + " 掃描" : d.kind === "signal" ? "輸出波形" : "run"}</span><b>${esc(d.name)}</b></button>`).join("");
+    `<button class="chip" aria-pressed="${i === state.active}" data-i="${i}"><span class="kind">${d.kind === "joint" ? "三軸聯合" : d.kind === "sweep" ? d.axis + " 掃描" : d.kind === "signal" ? "輸出波形" : "run"}</span><b>${esc(d.name)}</b></button>`).join("");
   host.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => { state.active = +b.dataset.i; state.selected = null; render(); }));
 }
 function tile(k, v, small) { return `<div class="tile"><div class="k">${k}</div><div class="v">${v}${small ? ` <small>${small}</small>` : ""}</div></div>`; }
@@ -979,6 +1032,103 @@ function renderDetail(host, d) {
   trajectory(host.querySelector(".traj"), frames, opts);
 }
 
+/* ---------- joint three-axis view ---------- */
+function jointInjection(r) {
+  const off = fin(r.offsetInj) && r.offsetInj !== 0 ? `B 加 ${fmt(r.offsetInj, 0)} code` : "未注入";
+  const gain = fin(r.ifc) ? `B 量程改為 IFC ${r.ifc}${fin(r.vpp) ? `（${r.vpp.toFixed(2)} Vpp）` : ""}` : "—";
+  const skew = !fin(r.code) ? "—" : r.code === r.baseCode ? `未注入（停在 baseline code ${r.baseCode}）`
+    : `時脈延遲 code ${r.baseCode} → ${r.code}（${fmt(r.code - r.baseCode, 0)} 碼）`;
+  return { offset: off, gain, skew };
+}
+function jointWhy(a, r) {
+  const x = r.axes[a.k];
+  if (r.acquisitionRejected) return "校準前的量測被品質門檻拒收，沒有 HOLD 資料。";
+  if (!fin(x.mean)) return "沒有 HOLD 資料。";
+  const bound = Math.abs(x.mean) + 1.96 * x.se;
+  if (x.pass) return `HOLD 平均 ${fmt(x.mean, a.dp)} ${a.unit}，連同不確定度最多 ${fmtU(bound, a.dp)}，在容差 ±${fmtU(x.tol, a.dp)} 內。`;
+  if (Math.abs(x.mean) <= x.tol) return `平均值在容差內，但資料太吵：平均 + 不確定度 = ${fmtU(bound, a.dp)} > ${fmtU(x.tol, a.dp)}。加長 HOLD 可縮小不確定度。`;
+  return `HOLD 平均 ${fmt(x.mean, a.dp)} ${a.unit} 超出容差 ±${fmtU(x.tol, a.dp)}：沒有校準回來。`;
+}
+function renderJoint(view, d) {
+  const rows = d.rows, n = rows.length, npass = rows.filter(r => r.pass).length;
+  const keyOf = r => r.point + "|" + r.repeat;
+  if (!state.selected || !rows.some(r => keyOf(r) === state.selected)) {
+    const first = rows.find(r => !r.pass) || rows[0]; state.selected = first ? keyOf(first) : null;
+  }
+  const cell = (a, r) => {
+    const x = r.axes[a.k];
+    return `<td class="cell">${fmt(x.pre, a.dp)}<span class="arrow">→</span>${fmt(x.mean, a.dp)} <span class="${x.pass ? "ok" : "bad"}">${x.pass ? "✓" : "✕"}</span></td>`;
+  };
+  view.innerHTML = `
+    <section class="card intro">
+      <h2>這個實驗在做什麼</h2>
+      <p>故意在通道 B 加上失配（offset、gain、skew 可以同時加），然後讓板上的校準<b>一次把三個軸一起修正</b>，看它能不能修回來。</p>
+      <ol class="steps">
+        <li class="pre"><b>① PRE：校準前</b><span>加完失配、還沒校準時先量一段，確認失配真的加進去了。</span></li>
+        <li class="train"><b>② TRAIN：校準中</b><span>回授打開，三個軸同時修正。Skew 每 20 幀最多移動 1 個延遲 code，所以最慢。</span></li>
+        <li class="hold"><b>③ HOLD：校準後驗證</b><span>修正係數凍結，用全新的資料量殘差。PASS / FAIL 只看這一段。</span></li>
+      </ol>
+      <p class="note">PASS 的條件：HOLD 殘差的平均值，加上 95% 不確定度（1.96 × 標準誤差），仍在容差內。所以平均值在容差內、但資料太吵時，也會判 FAIL；加長 HOLD（例如 <code>--hold 400</code>）可縮小不確定度。</p>
+    </section>
+    <div class="tiles">
+      ${tile("測試次數", n)}
+      ${tile("三軸全部通過", `${npass} / ${n}`, npass === n ? "全部通過" : `${n - npass} 次未通過`)}
+      ${JOINT_AXES.map(a => tile(`${a.label} 通過`, `${rows.filter(r => r.axes[a.k].pass).length} / ${n}`,
+          rows[0] ? `容差 ±${fmtU(rows[0].axes[a.k].tol, a.dp)} ${a.unit}` : "")).join("")}
+    </div>
+    <section class="card">
+      <h2>每次測試：校準前 → 校準後</h2>
+      <p class="note">每格是「校準前（PRE 平均）→ 校準後（HOLD 平均）」，越接近 0 越好；✓ 表示該軸通過。點一列看詳細結果與收斂曲線。</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th>測試</th><th>重複</th><th class="wrap">注入的失配</th>
+          ${JOINT_AXES.map(a => `<th>${a.label} (${a.unit})</th>`).join("")}<th class="l">結果</th></tr></thead>
+        <tbody>${rows.map(r => {
+          const inj = jointInjection(r);
+          return `<tr tabindex="0" data-k="${keyOf(r)}" aria-selected="${keyOf(r) === state.selected}">
+            <td>#${fmtU(r.point, 0)}</td><td>${fmtU(r.repeat + 1, 0)}</td>
+            <td class="wrap">offset：${esc(inj.offset)}<br>gain：${esc(inj.gain)}<br>skew：${esc(inj.skew)}</td>
+            ${JOINT_AXES.map(a => cell(a, r)).join("")}<td class="l">${statusPill(r.pass)}</td></tr>`;
+        }).join("")}</tbody></table></div>
+    </section>
+    <section class="card" id="detail"></section>`;
+  view.querySelectorAll("tbody tr").forEach(tr => {
+    const go = () => { state.selected = tr.dataset.k; render(); document.getElementById("detail").scrollIntoView({ block: "nearest" }); };
+    tr.addEventListener("click", go); tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
+  renderJointDetail(document.getElementById("detail"), d);
+}
+function renderJointDetail(host, d) {
+  const r = d.rows.find(x => x.point + "|" + x.repeat === state.selected);
+  if (!r) { host.innerHTML = `<h2>單次測試</h2><p class="note">點上面表格的一列。</p>`; return; }
+  const inj = jointInjection(r);
+  const rej = Object.entries(r.rejects).map(([a, b]) => a + " " + b).join(", ") || "無";
+  const frames = d.runs.get(state.selected);
+  host.innerHTML = `
+    <div class="detailhead"><div><h2>測試 #${fmtU(r.point, 0)} · 重複 ${fmtU(r.repeat + 1, 0)} ${statusPill(r.pass)}</h2>
+      <p class="note">HOLD 合格幀 ${fmtU(r.holdAcc, 0)} / ${fmtU(r.holdBudget, 0)} · 拒收：${esc(rej)} · 結束時延遲 code ${fmtU(r.lastCode, 0)}
+      ${r.signal ? ` · dither 抵消：${r.signal === "cancelled" ? "成功" : esc(r.signal)}` : ""}</p></div></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>軸</th><th class="wrap">注入的失配</th><th>校準前 PRE</th><th>校準後 HOLD</th><th>95% 不確定度</th><th>容差</th><th>TRAIN 收斂於</th><th class="l">結果</th><th class="wrap">說明</th></tr></thead>
+      <tbody>${JOINT_AXES.map(a => {
+        const x = r.axes[a.k];
+        return `<tr><td>${a.label}<br><span class="why">${a.what}</span></td><td class="wrap">${esc(inj[a.k])}</td>
+          <td>${fmt(x.pre, a.dp)} ${a.unit}</td><td>${fmt(x.mean, a.dp)} ${a.unit}</td>
+          <td>± ${fmtU(1.96 * x.se, a.dp)}</td><td>± ${fmtU(x.tol, a.dp)}</td>
+          <td>${fin(x.conv) ? "第 " + fmtU(x.conv, 0) + " 幀" : "未判定"}</td>
+          <td class="l">${statusPill(x.pass)}</td><td class="wrap why">${esc(jointWhy(a, r))}</td></tr>`;
+      }).join("")}</tbody></table></div>
+    <p class="note" style="margin-top:8px">「TRAIN 收斂於」：TRAIN 期間連續 20 幀的平均（含不確定度）從此一直在容差內的位置；「未判定」表示 TRAIN 太吵、沒有滿足這個條件，不代表校準失敗，最後仍以 HOLD 為準。</p>
+    <div class="detailhead" style="margin-top:14px"><div><h2>收斂曲線</h2>
+      <p class="note">底色：灰 = PRE（校準前）、藍 = TRAIN（三軸同時校準）、綠 = HOLD（凍結驗證）。前三張是殘差，越接近 0 越好：灰點是每一幀的量測，藍線是 20 幀平均，綠帶是容差。後面是 A/B 的修正係數，最後是 skew 的延遲 code（每一階是一次移動）。滑鼠移到圖上，所有圖會對齊同一幀。</p></div>
+      ${frames ? zoomControl() : ""}</div>
+    ${frames ? `<div class="traj"></div>` : `<p class="empty">沒有 frames.csv，所以沒有逐幀曲線。</p>`}`;
+  if (!frames) return;
+  bindZoom(host);
+  const band = k => ({ y0: -r.axes[k].tol, y1: r.axes[k].tol });
+  trajectory(host.querySelector(".traj"), frames, { group: "detail", xName: "幀",
+    skewBand: band("skew"), gainBand: band("gain"), offBand: band("offset") });
+}
+
 function render() {
   groups.clear();
   renderChips();
@@ -986,6 +1136,7 @@ function render() {
   const d = state.datasets[state.active];
   if (!d) { view.innerHTML = `<div class="empty">還沒有資料。用右上角的按鈕，或把 <code>calibration_out</code> 裡的檔案／資料夾拖進來。</div>`; return; }
   if (d.kind === "signal") renderSignal(view, d);
+  else if (d.kind === "joint") renderJoint(view, d);
   else if (d.kind === "sweep") renderSweep(view, d); else renderRun(view, d);
 }
 let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 120); });

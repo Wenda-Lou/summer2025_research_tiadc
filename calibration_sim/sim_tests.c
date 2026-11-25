@@ -6793,6 +6793,19 @@ int sim_tests_run(const sim_run_options_t *options, sim_run_summary_t *summary)
     if (options->run_loop_tests) {
         sim_loop_tests_run_native(&asserts, summary_file);
     }
+    if (options->run_joint_test) {
+        char trace_path[1024];
+        FILE *trace;
+        (void)snprintf(trace_path, sizeof(trace_path), "%s/joint_trace.csv", output_dir);
+        trace = fopen(trace_path, "w");
+        if (trace == NULL) {
+            fprintf(stderr, "Failed to open %s\n", trace_path);
+        }
+        sim_loop_tests_run_joint(&asserts, summary_file, trace);
+        if (trace != NULL) {
+            (void)fclose(trace);
+        }
+    }
     if (options->loop_golden_path != NULL) {
         sim_loop_tests_run_golden(&asserts, summary_file, options->loop_golden_path);
     }

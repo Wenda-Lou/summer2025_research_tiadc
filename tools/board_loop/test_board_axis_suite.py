@@ -29,7 +29,8 @@ class FirmwarePort:
         self.corrupt_signal = corrupt_signal
         self.missing_snapshot = missing_snapshot
         self.rejected_axis = rejected_axis
-        self.features = 'spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1'
+        self.features = ('spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1 '
+                         'joint_run=1')
         self.acquire_phase_mrad = 150
         self.config = '200000 500 1000 1910 20'
         self.commands = []
@@ -80,17 +81,17 @@ class FirmwarePort:
         lines = []
         for phase, budget in zip(names, budgets):
             train = phase.endswith('train')
-            bits = {'baseline': 7, 'offset': 1, 'gain': 2, 'skew': 4}[axis] if train else 0
-            if axis == 'skew' and train:
+            bits = {'baseline': 7, 'offset': 1, 'gain': 2, 'skew': 4, 'all': 7}[axis] if train else 0
+            if axis in ('skew', 'all') and train:
                 self.code = self.base_code
             lines.append(f'LOOP-TEST-PHASE phase={phase} axes={bits} budget={budget} code={self.code}')
             for attempt in range(budget):
                 corrected = phase != 'pre'
-                offa = self.offsets['A'] * 1000 if axis == 'offset' and corrected else 0
-                offb = self.offsets['B'] * 1000 if axis == 'offset' and corrected else 0
-                gain_state = 70000 if axis == 'gain' and corrected else 0
+                offa = self.offsets['A'] * 1000 if axis in ('offset', 'all') and corrected else 0
+                offb = self.offsets['B'] * 1000 if axis in ('offset', 'all') and corrected else 0
+                gain_state = 70000 if axis in ('gain', 'all') and corrected else 0
                 error = 2000 if axis == self.bad_hold and phase == 'hold' else 0
-                if phase == 'pre' and axis == 'offset':
+                if phase == 'pre' and axis in ('offset', 'all'):
                     error = (self.offsets['B'] - self.offsets['A'])*1000
                 status = 'gain_range' if rejected else 'ok'
                 lines.append(f'LOOP-TEST-ROW phase={phase} attempt={attempt} code={self.code} '
@@ -483,6 +484,111 @@ class SuiteTests(unittest.TestCase):
             self.assertNotIn('adc -cal loop output', port.commands)
             self.assertFalse(list(out.rglob('*.html')))
             self.assertFalse(list(out.rglob('*_signal.csv')))
+
+    def joint_arguments(self, out, *extra):
+        return parser().parse_args(['suite', '--uart', 'COM5', '--joint', '--pre', '4', '--train', '4',
+                                    '--hold', '4', '--baseline-train', '4', '--baseline-hold', '4',
+                                    '--offset-points=32', '--gain-points=13,0',
+                                    '--skew-points=0,32', '--gain-gate-ppm=200000',
+                                    '--out', str(out), '--execute', *extra])
+
+    def test_joint_injects_all_three_then_runs_all_on_every_combination(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)/'joint'
+            port = FirmwarePort()
+            self.assertEqual(self.execute(port, self.joint_arguments(out))[0], 0)
+            runs = [i for i, c in enumerate(port.commands) if c.startswith('adc -cal loop test run ')]
+            self.assertEqual(len(runs), 4)
+            self.assertTrue(all(port.commands[i].startswith('adc -cal loop test run all 4 4 4')
+                                for i in runs))
+            combos = []
+            for i in runs:
+                # restore, then exactly the three injections, then the joint run.
+                self.assertEqual(port.commands[i-4], 'adc -cal loop test restore')
+                self.assertEqual(port.commands[i-3], 'adc -cal loop test offset B 32')
+                self.assertTrue(port.commands[i-2].startswith('adc -cal loop test ifc B '))
+                self.assertTrue(port.commands[i-1].startswith('adc -cal loop test park '))
+                combos.append((port.commands[i-2].split()[-1], port.commands[i-1].split()[-1]))
+            self.assertEqual(combos, [('13', '0'), ('13', '32'), ('0', '0'), ('0', '32')])
+            self.assertEqual(port.commands[-1], 'adc -cal loop test restore')
+            self.assertFalse(any(c.startswith(('adc -cal loop test run offset', 'adc -cal loop test run gain',
+                                               'adc -cal loop test run skew')) for c in port.commands))
+            meta = json.loads((out/'meta.json').read_text())
+            self.assertTrue(meta['joint'])
+            self.assertEqual(meta['joint_points'], [[32, 13, 0], [32, 13, 32], [32, 0, 0], [32, 0, 32]])
+            self.assertEqual(meta['requested_tests'], 4)
+            self.assertTrue(meta['completed'] and meta['restored'])
+            with (out/'summary.csv').open() as fh:
+                rows = list(csv.DictReader(fh))
+            self.assertEqual([r['axis'] for r in rows], ['joint'] * 4)
+            self.assertEqual([r['point'] for r in rows], ['0', '1', '2', '3'])
+            for r in rows:
+                self.assertEqual(r['pass'], 'True')
+                for axis in ('offset', 'gain', 'skew'):
+                    self.assertEqual(r[f'{axis}_pass'], 'True')
+                self.assertEqual(r['offset_point'], '32')
+            self.assertEqual(rows[3]['target_code'], '32')
+            self.assertEqual(rows[3]['nominal_ifc_vpp'], '2.04')
+            saved = json.loads((out/'joint'/'joint_point3_off32_ifc0_code32_repeat1.json').read_text())
+            self.assertEqual(saved['axis'], 'joint')
+            self.assertTrue(saved['assessment']['pass'])
+            self.assertTrue(saved['assessment']['signal_downloaded'])
+            viewer = (out/'viewer.html').read_text(encoding='utf-8')
+            # One joint dataset (all three axes per test), not three per-axis sweeps.
+            self.assertNotIn('/ joint offset', viewer)
+            self.assertIn('offset_pre_mean', viewer)
+            self.assertIn('function renderJoint', viewer)
+
+    def test_joint_requires_joint_firmware_before_writes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            port = FirmwarePort()
+            port.features = 'spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1'
+            with self.assertRaisesRegex(ValueError, 'joint_run=1'):
+                self.execute(port, self.joint_arguments(Path(folder)/'old'))
+            self.assertEqual(port.commands, ['adc -cal loop test status'])
+
+    def test_joint_hold_failure_names_the_failing_axis_and_continues(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)/'joint'
+            port = FirmwarePort(bad_hold='all')
+            args = self.joint_arguments(out, '--reuse-baseline', '--no-viewer', '--gain-points=13',
+                                        '--skew-points=0')
+            self.assertEqual(self.execute(port, args)[0], 1)
+            meta = json.loads((out/'meta.json').read_text())
+            self.assertTrue(meta['completed'] and meta['restored'])
+            point = json.loads((out/'joint'/'joint_point0_off32_ifc13_code0_repeat1.json').read_text())
+            assessment = point['assessment']
+            self.assertFalse(assessment['pass'])
+            self.assertFalse(assessment['offset_pass'])
+            self.assertTrue(assessment['gain_pass'])
+            self.assertTrue(assessment['skew_pass'])
+
+    def test_joint_unreachable_skew_skips_each_combination(self):
+        with tempfile.TemporaryDirectory() as folder:
+            out = Path(folder)/'joint'
+            port = FirmwarePort(code=12)
+            args = self.joint_arguments(out, '--reuse-baseline', '--no-viewer', '--skew-mode=relative',
+                                        '--skew-points=0,40')
+            self.assertEqual(self.execute(port, args)[0], 0)
+            self.assertEqual(sum(c.startswith('adc -cal loop test run all') for c in port.commands), 2)
+            self.assertNotIn('adc -cal loop test park 52', port.commands)
+            meta = json.loads((out/'meta.json').read_text())
+            self.assertEqual(meta['requested_tests'], 4)
+            self.assertEqual(meta['skipped_tests'], 2)
+            self.assertEqual({(s['gain_point'], s['target_code']) for s in meta['skipped_points']},
+                             {(13, 52), (0, 52)})
+
+    def test_joint_plan_counts_default_corners_and_rejects_axes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            args = parser().parse_args(['suite', '--joint', '--out', str(Path(folder)/'plan')])
+            stdout = io.StringIO()
+            with patch.dict('sys.modules', serial=types.SimpleNamespace(Serial=lambda *a, **kw: self.fail('serial opened'))):
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(run(args), 0)
+            self.assertIn('Requested tests per repeat: 8', stdout.getvalue())
+            self.assertEqual(suite_points(args), {'offset': [-32, 32], 'gain': [10, 0], 'skew': [0, 32]})
+            with self.assertRaisesRegex(ValueError, '--joint'):
+                suite_points(parser().parse_args(['suite', '--joint', '--axes=gain']))
 
     def test_plan_and_invalid_points_do_not_open_serial(self):
         with tempfile.TemporaryDirectory() as folder:

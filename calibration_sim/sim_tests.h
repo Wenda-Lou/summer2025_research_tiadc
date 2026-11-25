@@ -12,6 +12,7 @@ typedef struct {
     bool run_scenarios;
     bool run_pipeline_scenarios;
     bool run_loop_tests;
+    bool run_joint_test; /* joint three-axis matrix only, writes joint_trace.csv */
     const char *loop_golden_path;
     const char *scenario;
     const char *pipeline_scenario;

@@ -196,10 +196,11 @@ static int loop_test_phase(const char *name, unsigned axes, unsigned frames,
     unsigned failures = 0U;
     loop_test_phase_t window = {0};
     loop_test_stat_t freeze_a = {0}, freeze_b = {0}, freeze_log_gain = {0};
+    /* Joint runs (axes=all) freeze both training means, like the baseline. */
     const bool refine_offset = strcmp(name, "baseline_train") == 0 ||
-        (strcmp(name, "train") == 0 && axes == ADC_CAL_LOOP_AXIS_OFFSET);
+        (strcmp(name, "train") == 0 && (axes & ADC_CAL_LOOP_AXIS_OFFSET) != 0U);
     const bool refine_gain = strcmp(name, "baseline_train") == 0 ||
-        (strcmp(name, "train") == 0 && axes == ADC_CAL_LOOP_AXIS_GAIN);
+        (strcmp(name, "train") == 0 && (axes & ADC_CAL_LOOP_AXIS_GAIN) != 0U);
     const unsigned freeze_frames = frames / 2U < 100U ? frames / 2U : 100U;
     const bool quiet = g_quiet_calibration_capture;
     memset(out, 0, sizeof(*out));
@@ -381,7 +382,7 @@ static void loop_test_status(void)
     xil_printf("\r\n");
     xil_printf("LOOP-TEST-QUALITY acquisition_phase_mrad=%ld hold_phase_mrad=150\r\n",
                g_loop_test_acquire_phase_mrad);
-    xil_printf("LOOP-TEST-ROUTES gain=%s skew=%s tone_free=%u reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1 output_revision=%u\r\n",
+    xil_printf("LOOP-TEST-ROUTES gain=%s skew=%s tone_free=%u reference_free=1 spectral_line_rejection=1 gain_freeze=training_mean acquisition_phase_gate=1 joint_run=1 output_revision=%u\r\n",
                "dither_spectrum",
                "dither_cross_spectrum",
                1U, (unsigned)ADC_CAL_LOOP_OUTPUT_REVISION);
@@ -475,21 +476,23 @@ static int loop_test_restore(void)
     return loop_test_goto(g_loop_test_code);
 }
 
-/* Refuse unintended extra hardware perturbations on supposedly frozen axes. */
+/* Refuse unintended extra hardware perturbations on supposedly frozen axes.
+ * AXES is a bit set: a joint run (all) may perturb every axis, still on one
+ * channel only. */
 static int loop_test_check_isolation(unsigned axes)
 {
     int code = -1;
     unsigned changed_channels = 0U;
+    const bool offset = (axes & ADC_CAL_LOOP_AXIS_OFFSET) != 0U;
+    const bool gain = (axes & ADC_CAL_LOOP_AXIS_GAIN) != 0U;
     if (adc_skew_actuator_read_value(&code) != 0) return -1;
-    if (axes != ADC_CAL_LOOP_AXIS_SKEW && code != g_loop_test_code) return -1;
-    if (axes != ADC_CAL_LOOP_AXIS_OFFSET &&
-        (g_loop_test_offset[0] != 0.0 || g_loop_test_offset[1] != 0.0)) return -1;
+    if ((axes & ADC_CAL_LOOP_AXIS_SKEW) == 0U && code != g_loop_test_code) return -1;
+    if (!offset && (g_loop_test_offset[0] != 0.0 || g_loop_test_offset[1] != 0.0)) return -1;
     for (unsigned c = 0U; c < 2U; ++c) {
-        bool changed = axes == ADC_CAL_LOOP_AXIS_OFFSET && g_loop_test_offset[c] != 0.0;
+        bool changed = offset && g_loop_test_offset[c] != 0.0;
         for (unsigned r = 0U; r < 3U; ++r) {
             uint8_t value;
-            const bool allowed = (axes == ADC_CAL_LOOP_AXIS_GAIN && r == 0U) ||
-                                 (axes == ADC_CAL_LOOP_AXIS_OFFSET && r != 0U);
+            const bool allowed = (gain && r == 0U) || (offset && r != 0U);
             if (loop_test_reg(c, k_loop_test_registers[r], &value, false) != 0) return -1;
             if (!allowed && value != g_loop_test_registers[c][r]) return -1;
             if (allowed && value != g_loop_test_registers[c][r]) changed = true;
@@ -523,7 +526,8 @@ static void loop_test_help(void)
 {
     xil_printf("LOOP-TEST-HELP (reference-free dither-only; no waveform selection)\r\n");
     xil_printf("  adc -cal loop test baseline TRAIN HOLD   Calibrate all; save state, code and registers.\r\n");
-    xil_printf("  adc -cal loop test run offset|gain|skew PRE TRAIN HOLD\r\n");
+    xil_printf("  adc -cal loop test run offset|gain|skew|all PRE TRAIN HOLD\r\n");
+    xil_printf("      all: joint run; offset, IFC and park may all be injected (one channel).\r\n");
     xil_printf("      Manual mismatch first; run ends with a separate frozen signal snapshot (loop output).\r\n");
     xil_printf("  adc -cal loop test offset A|B CODES     SOFTWARE post-ADC offset, -4096..4096.\r\n");
     xil_printf("  adc -cal loop test ifc A|B CODE         Local 0x1910: 0,10,11,12,13,14,15.\r\n");
@@ -579,7 +583,8 @@ static void board_loop_test_command(void)
                loop_test_number(args[4], 2L, BOARD_LOOP_MAX_SAMPLES, &c) == 0) {
         const unsigned axes = strcmp(args[1], "offset") == 0 ? ADC_CAL_LOOP_AXIS_OFFSET :
                               strcmp(args[1], "gain") == 0 ? ADC_CAL_LOOP_AXIS_GAIN :
-                              strcmp(args[1], "skew") == 0 ? ADC_CAL_LOOP_AXIS_SKEW : 0U;
+                              strcmp(args[1], "skew") == 0 ? ADC_CAL_LOOP_AXIS_SKEW :
+                              strcmp(args[1], "all") == 0 ? ADC_CAL_LOOP_AXIS_ALL : 0U;
         if (axes != 0U) rc = loop_test_run(axes, (unsigned)a, (unsigned)b, (unsigned)c);
     } else if (n == 1U && strcmp(args[0], "restore") == 0) {
         rc = loop_test_restore();
